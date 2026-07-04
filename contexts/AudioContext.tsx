@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useMemo, useCallback } from 'react';
+import { AppState } from 'react-native';
+import TrackPlayer, { useProgress, useTrackPlayerEvents, Event } from 'react-native-track-player';
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { fetchPlayUrlBySong, fetchLyric } from '../services/musicApi';
@@ -14,21 +16,66 @@ export function useSharedAudio(): AudioControls {
 
 export function AudioProvider({ children }: { children: React.ReactNode }) {
   const controls = useAudio();
-  const { play, pause, load, unload, state, setOnFinish } = controls;
+  const { play, load, unload } = controls;
   const currentSong = usePlayerStore((s) => s.currentSong);
   const playbackId = usePlayerStore((s) => s.playbackId);
   const setIsPlaying = usePlayerStore((s) => s.setIsPlaying);
+  const syncProgress = usePlayerStore((s) => s.syncProgress);
   const next = usePlayerStore((s) => s.next);
   const lastKey = useRef<string>('');
   const generation = useRef(0);
   const isUpdatingTrack = useRef(false);
-  const audioOpRef = useRef<Promise<void>>(Promise.resolve());
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const lastAdvancedSongId = useRef<string | null>(null);
+  const pendingSeekUntil = useRef(0);
+
+  const { position, duration, buffered } = useProgress(500);
+  useEffect(() => {
+    if (Date.now() < pendingSeekUntil.current) return;
+    syncProgress(position, duration, buffered);
+    if (currentSong?.id && duration > 1 && position >= duration - 1 && !isUpdatingTrack.current && lastAdvancedSongId.current !== currentSong.id) {
+      lastAdvancedSongId.current = currentSong.id;
+      next();
+    }
+  }, [position, duration, buffered, currentSong?.id, next]);
+
+  const notifyBeforeSeek = useCallback(() => {
+    pendingSeekUntil.current = Date.now() + 2000;
+  }, []);
+
+  useTrackPlayerEvents([Event.PlaybackActiveTrackChanged], async (event) => {
+    if (event.track == null || event.track <= 0) return;
+    const { currentIndex, queue } = usePlayerStore.getState();
+    const actualIndex = currentIndex + event.track;
+    if (actualIndex < queue.length && actualIndex !== currentIndex) {
+      usePlayerStore.setState({
+        currentIndex: actualIndex,
+        currentSong: queue[actualIndex],
+      });
+    }
+  });
 
   useEffect(() => {
-    setOnFinish(() => next());
-  }, [next, setOnFinish]);
+    const sub = AppState.addEventListener('change', async (state) => {
+      if (state === 'active' && currentSong?.id) {
+        try {
+          const activeIdx = await TrackPlayer.getActiveTrackIndex();
+          const { currentIndex, queue } = usePlayerStore.getState();
+          if (activeIdx != null && activeIdx >= 0 && currentIndex + activeIdx < queue.length) {
+            const actualIndex = currentIndex + activeIdx;
+            if (actualIndex !== currentIndex) {
+              usePlayerStore.setState({
+                currentIndex: actualIndex,
+                currentSong: queue[actualIndex],
+              });
+            }
+          } else if (activeIdx == null || activeIdx < 0) {
+            usePlayerStore.getState().playIndex(currentIndex);
+          }
+        } catch {}
+      }
+    });
+    return () => sub.remove();
+  }, [currentSong?.id]);
 
   useEffect(() => {
     const key = `${currentSong?.id || ''}:${playbackId}`;
@@ -40,19 +87,6 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
 
     (async () => {
       try {
-        await unload().catch(() => {});
-
-        let url = currentSong.playUrl;
-        if (!url) {
-          console.log('[audio] fetching playUrl for', currentSong.id);
-          url = await fetchPlayUrlBySong(currentSong);
-          usePlayerStore.getState().updateSongPlayUrl(currentSong.id, url);
-        }
-        if (generation.current !== myGen) return;
-        try {
-          url = await fetchAndCacheAudio(url, currentSong.id);
-        } catch {}
-        if (generation.current !== myGen) return;
         const lyricGen = generation.current;
         if (currentSong.lyric === undefined) {
           fetchLyric(currentSong.id, currentSong.title, currentSong.artist).then((lyric) => {
@@ -61,13 +95,54 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
             }
           }).catch(() => {});
         }
-        console.log('[audio] streaming:', currentSong.id);
+
+        const activeIdx = await TrackPlayer.getActiveTrackIndex().catch(() => -1);
+        if (activeIdx != null && activeIdx >= 0 && generation.current === myGen) {
+          const activeTrack = await TrackPlayer.getTrack(activeIdx).catch(() => null);
+          if (activeTrack?.id === currentSong?.id && generation.current === myGen) {
+            const ps = await TrackPlayer.getPlaybackState().catch(() => ({ state: 'unknown' }));
+            if (ps.state !== 'ended' && ps.state !== 'stopped' && ps.state !== 'none') {
+              isUpdatingTrack.current = false;
+              return;
+            }
+          }
+        }
+
+        await unload().catch(() => {});
+
+        let url = currentSong.playUrl;
+        if (!url) {
+          url = await fetchPlayUrlBySong(currentSong);
+          usePlayerStore.getState().updateSongPlayUrl(currentSong.id, url);
+        }
+        if (generation.current !== myGen) return;
+        try {
+          url = await fetchAndCacheAudio(url, currentSong.id);
+        } catch {}
+        if (generation.current !== myGen) return;
         await load(url);
-        console.log('[audio] load ok');
         if (generation.current !== myGen) return;
         if (usePlayerStore.getState().isPlaying) {
           await play();
-          console.log('[audio] play after load');
+        }
+        if (generation.current !== myGen) return;
+
+        const { queue, currentIndex, loopMode } = usePlayerStore.getState();
+        if (loopMode !== 'single') {
+          for (let i = currentIndex + 1; i < queue.length; i++) {
+            if (generation.current !== myGen) break;
+            const song = queue[i];
+            let songUrl = song.playUrl;
+            if (!songUrl) {
+              try {
+                songUrl = await fetchPlayUrlBySong(song);
+                usePlayerStore.getState().updateSongPlayUrl(song.id, songUrl);
+              } catch { continue; }
+            }
+            try {
+              await TrackPlayer.add({ id: song.id, url: songUrl });
+            } catch { break; }
+          }
         }
       } catch (e) {
         console.warn('[audio] operation failed:', e);
@@ -79,39 +154,24 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [currentSong?.id, playbackId]);
 
-  useEffect(() => {
-    if (isUpdatingTrack.current) return;
-    if (state.status === 'playing') setIsPlaying(true);
-    else if (state.status === 'paused') setIsPlaying(false);
-  }, [state.status]);
-
   const togglePlay = useCallback(() => {
     const shouldPlay = !usePlayerStore.getState().isPlaying;
-    audioOpRef.current = audioOpRef.current.then(async () => {
+    (async () => {
       if (shouldPlay) {
-        try {
-          await play();
-        } catch (e) {
-          console.warn('[audio] play failed:', e);
-          return;
-        }
+        try { await TrackPlayer.play(); } catch { return; }
         setIsPlaying(true);
       } else {
-        try {
-          await pause();
-        } catch (e) {
-          console.warn('[audio] pause failed:', e);
-          return;
-        }
+        try { await TrackPlayer.pause(); } catch { return; }
         setIsPlaying(false);
       }
-    });
-  }, [pause, play, setIsPlaying]);
+    })();
+  }, [setIsPlaying]);
 
   const api = useMemo(() => ({
     ...controls,
     togglePlay,
-  }), [controls, togglePlay]);
+    notifyBeforeSeek,
+  }), [controls, togglePlay, notifyBeforeSeek]);
 
   return <AudioCtx.Provider value={api}>{children}</AudioCtx.Provider>;
 }

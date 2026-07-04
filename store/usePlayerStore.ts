@@ -66,19 +66,19 @@ export const usePlayerStore = create<PlayerState>()(
         const newIndex = index < currentIndex ? currentIndex - 1 : currentIndex;
         set({ queue: newQueue, currentIndex: Math.min(newIndex, newQueue.length - 1), currentSong: newQueue[Math.min(newIndex, newQueue.length - 1)] || null });
       },
-      next: () => {
+      next: (forceNext?: boolean) => {
         const { queue, currentIndex, loopMode, playbackId } = get();
         if (queue.length === 0) return;
         let nextIndex;
         if (loopMode === 'shuffle') {
           const available = queue.map((_, i) => i).filter((i) => i !== currentIndex);
           nextIndex = available.length > 0 ? available[Math.floor(Math.random() * available.length)] : currentIndex;
-        } else if (loopMode === 'single') {
+        } else if (loopMode === 'single' && !forceNext) {
           nextIndex = currentIndex;
         } else {
           nextIndex = (currentIndex + 1) % queue.length;
         }
-        set({ currentIndex: nextIndex, currentSong: queue[nextIndex], playbackId: playbackId + 1 });
+        set({ currentIndex: nextIndex, currentSong: queue[nextIndex], playbackId: playbackId + 1, isPlaying: true });
       },
       previous: () => {
         const { queue, currentIndex, playbackId } = get();
@@ -90,7 +90,7 @@ export const usePlayerStore = create<PlayerState>()(
         } else {
           prevIndex = (currentIndex - 1 + queue.length) % queue.length;
         }
-        set({ currentIndex: prevIndex, currentSong: queue[prevIndex], playbackId: playbackId + 1 });
+        set({ currentIndex: prevIndex, currentSong: queue[prevIndex], playbackId: playbackId + 1, isPlaying: true });
       },
       seekTo: (index) => {
         const { queue } = get();

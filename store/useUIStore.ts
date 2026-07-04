@@ -16,7 +16,7 @@ interface UIState {
   pickerSong: Song | null;
   contactVisible: boolean;
   isDragging: boolean;
-  seekTime: number;
+  seekRatio: number;
   albumDetailVisible: boolean;
   albumDetailData: AlbumDetailData | null;
   downloadQueueVisible: boolean;
@@ -25,7 +25,7 @@ interface UIState {
   setDrawerVisible: (visible: boolean) => void;
   setPicker: (visible: boolean, song?: Song | null) => void;
   setContactVisible: (visible: boolean) => void;
-  setDragging: (dragging: boolean, seekTime?: number) => void;
+  setDragging: (dragging: boolean, seekRatio?: number) => void;
   setAlbumDetailVisible: (visible: boolean, data?: AlbumDetailData | null) => void;
   setDownloadQueueVisible: (visible: boolean) => void;
 }
@@ -38,7 +38,7 @@ export const useUIStore = create<UIState>()((set) => ({
   pickerSong: null,
   contactVisible: false,
   isDragging: false,
-  seekTime: 0,
+  seekRatio: 0,
   albumDetailVisible: false,
   albumDetailData: null,
   downloadQueueVisible: false,
@@ -47,7 +47,7 @@ export const useUIStore = create<UIState>()((set) => ({
   setDrawerVisible: (visible) => set({ drawerVisible: visible }),
   setPicker: (visible, song) => set({ pickerVisible: visible, pickerSong: song ?? null }),
   setContactVisible: (visible) => set({ contactVisible: visible }),
-  setDragging: (dragging, seekTime) => set({ isDragging: dragging, seekTime: seekTime ?? 0 }),
+  setDragging: (dragging, seekRatio) => set({ isDragging: dragging, seekRatio: seekRatio ?? 0 }),
   setAlbumDetailVisible: (visible, data) => set({ albumDetailVisible: visible, albumDetailData: data ?? null }),
   setDownloadQueueVisible: (visible) => set({ downloadQueueVisible: visible }),
 }));

@@ -125,7 +125,6 @@ async function fetchKuwoMusicUrl(songId: string, br: string): Promise<string> {
     headers: { 'User-Agent': MOBILE_UA, 'Accept': 'application/json' },
   });
   const text = await resp.text();
-  console.log('[musicApi] mobi.s raw response:', text.substring(0, 200));
   try {
     const data = JSON.parse(text);
     if (data?.code === 200 && data?.data?.url) return data.data.url;
