@@ -1,0 +1,53 @@
+import { create } from 'zustand';
+import type { Song } from '../types';
+
+interface AlbumDetailData {
+  id: string;
+  cover: string;
+  name: string;
+  artist: string;
+}
+
+interface UIState {
+  playerOverlayVisible: boolean;
+  queueVisible: boolean;
+  drawerVisible: boolean;
+  pickerVisible: boolean;
+  pickerSong: Song | null;
+  contactVisible: boolean;
+  isDragging: boolean;
+  seekTime: number;
+  albumDetailVisible: boolean;
+  albumDetailData: AlbumDetailData | null;
+  downloadQueueVisible: boolean;
+  setPlayerOverlayVisible: (visible: boolean) => void;
+  setQueueVisible: (visible: boolean) => void;
+  setDrawerVisible: (visible: boolean) => void;
+  setPicker: (visible: boolean, song?: Song | null) => void;
+  setContactVisible: (visible: boolean) => void;
+  setDragging: (dragging: boolean, seekTime?: number) => void;
+  setAlbumDetailVisible: (visible: boolean, data?: AlbumDetailData | null) => void;
+  setDownloadQueueVisible: (visible: boolean) => void;
+}
+
+export const useUIStore = create<UIState>()((set) => ({
+  playerOverlayVisible: false,
+  queueVisible: false,
+  drawerVisible: false,
+  pickerVisible: false,
+  pickerSong: null,
+  contactVisible: false,
+  isDragging: false,
+  seekTime: 0,
+  albumDetailVisible: false,
+  albumDetailData: null,
+  downloadQueueVisible: false,
+  setPlayerOverlayVisible: (visible) => set({ playerOverlayVisible: visible }),
+  setQueueVisible: (visible) => set({ queueVisible: visible }),
+  setDrawerVisible: (visible) => set({ drawerVisible: visible }),
+  setPicker: (visible, song) => set({ pickerVisible: visible, pickerSong: song ?? null }),
+  setContactVisible: (visible) => set({ contactVisible: visible }),
+  setDragging: (dragging, seekTime) => set({ isDragging: dragging, seekTime: seekTime ?? 0 }),
+  setAlbumDetailVisible: (visible, data) => set({ albumDetailVisible: visible, albumDetailData: data ?? null }),
+  setDownloadQueueVisible: (visible) => set({ downloadQueueVisible: visible }),
+}));

@@ -1,0 +1,19 @@
+node_modules/
+.expo/
+dist/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+.DS_Store
+*.log
+
+# build artifacts
+android/.gradle/
+android/app/build/
+android/build/
+modules/*/android/build/
