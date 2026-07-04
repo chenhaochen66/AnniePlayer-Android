@@ -119,7 +119,8 @@ const PlayerProgressBar = React.memo(() => {
       const x = e.nativeEvent?.locationX ?? e.nativeEvent?.x ?? 0;
       const w = seekWidthRef.current;
       const ratio = Math.max(0, Math.min(1, x / w));
-      const t = ratio * duration;
+      const d = duration > 0 ? duration : (state.duration > 0 ? state.duration : 0);
+      const t = ratio * d;
       dragTimeRef.current = t;
       const now = Date.now();
       if (now - lastSeekFrameRef.current > 80) {
@@ -127,11 +128,12 @@ const PlayerProgressBar = React.memo(() => {
         setSeekTime(t);
       }
     },
-    [duration],
+    [duration, state.duration],
   );
 
   const handleSeekRelease = useCallback(() => {
     const t = dragTimeRef.current;
+    if (t <= 0) return;
     setCurrentTime(t);
     seek(t);
     pendingSeekRef.current = true;
@@ -152,9 +154,9 @@ const PlayerProgressBar = React.memo(() => {
   return (
     <View style={[styles.progressWrap, { paddingHorizontal: screenPadding.horizontal }]}>
       <View
-        onStartShouldSetResponder={() => { setIsDragging(true); setDragging(true); return true; }}
+        onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
-        onResponderGrant={(e) => { handleSeekMove(e); }}
+        onResponderGrant={(e) => { setIsDragging(true); setDragging(true); handleSeekMove(e); }}
         onResponderMove={handleSeekMove}
         onResponderRelease={() => { handleSeekRelease(); }}
         style={styles.seekTouch}
