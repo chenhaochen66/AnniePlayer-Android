@@ -90,60 +90,51 @@ const PlayerGradient = React.memo(({ children }: { children: React.ReactNode }) 
 const PlayerProgressBar = React.memo(() => {
   const currentTime = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
-  const bufferedTime = usePlayerStore((s) => s.bufferedTime);
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
-  const syncProgress = usePlayerStore((s) => s.syncProgress);
   const setDragging = useUIStore((s) => s.setDragging);
-  const { seek, state } = useSharedAudio();
+  const seekRatio = useUIStore((s) => s.seekRatio);
+  const { seek, notifyBeforeSeek } = useSharedAudio();
 
+  const seekViewRef = useRef<View>(null);
   const seekWidthRef = useRef(SCREEN_WIDTH - screenPadding.horizontal * 2);
-  const dragTimeRef = useRef(0);
+  const seekLeftRef = useRef(screenPadding.horizontal);
+  const dragRatioRef = useRef(0);
   const lastSeekFrameRef = useRef(0);
-  const pendingSeekRef = useRef(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [seekTime, setSeekTime] = useState(0);
 
   useEffect(() => {
-    if (!isDragging) {
-      if (!pendingSeekRef.current) {
-        syncProgress(state.currentTime, state.duration, state.buffered);
-      } else if (Math.abs(state.currentTime - usePlayerStore.getState().currentTime) < 0.3) {
-        pendingSeekRef.current = false;
-        syncProgress(state.currentTime, state.duration, state.buffered);
-      }
-    }
-  }, [state.currentTime, state.duration, state.buffered, isDragging]);
+    seekViewRef.current?.measureInWindow((x) => {
+      if (x != null) seekLeftRef.current = x;
+    });
+  }, []);
+
+  const isDragging = useUIStore((s) => s.isDragging);
 
   const handleSeekMove = useCallback(
     (e: any) => {
-      const x = e.nativeEvent?.locationX ?? e.nativeEvent?.x ?? 0;
-      const w = seekWidthRef.current;
-      const ratio = Math.max(0, Math.min(1, x / w));
-      const d = duration > 0 ? duration : (state.duration > 0 ? state.duration : 0);
-      const t = ratio * d;
-      dragTimeRef.current = t;
+      const pageX = e.nativeEvent?.pageX ?? 0;
+      const localX = pageX - seekLeftRef.current;
+      const ratio = Math.max(0, Math.min(1, localX / seekWidthRef.current));
+      dragRatioRef.current = ratio;
       const now = Date.now();
-      if (now - lastSeekFrameRef.current > 80) {
+      if (now - lastSeekFrameRef.current > 16) {
         lastSeekFrameRef.current = now;
-        setSeekTime(t);
+        setDragging(true, ratio);
       }
     },
-    [duration, state.duration],
+    [setDragging],
   );
 
   const handleSeekRelease = useCallback(() => {
-    const t = dragTimeRef.current;
-    if (t <= 0) return;
+    const ratio = dragRatioRef.current;
+    const d = usePlayerStore.getState().duration;
+    const t = ratio * d;
     setCurrentTime(t);
+    notifyBeforeSeek?.();
     seek(t);
-    pendingSeekRef.current = true;
-    setIsDragging(false);
     setDragging(false);
-  }, [setCurrentTime, seek, setDragging]);
+  }, [setCurrentTime, seek, setDragging, notifyBeforeSeek]);
 
-  const progress = isDragging
-    ? (duration > 0 ? seekTime / duration : 0)
-    : (duration > 0 ? currentTime / duration : 0);
+  const progress = isDragging ? seekRatio : (duration > 0 ? currentTime / duration : 0);
 
   const formatTime = (s: number) => {
     const m = Math.floor(Math.max(0, s) / 60);
@@ -154,22 +145,22 @@ const PlayerProgressBar = React.memo(() => {
   return (
     <View style={[styles.progressWrap, { paddingHorizontal: screenPadding.horizontal }]}>
       <View
-        onStartShouldSetResponder={() => true}
-        onMoveShouldSetResponder={() => true}
-        onResponderGrant={(e) => { setIsDragging(true); setDragging(true); handleSeekMove(e); }}
-        onResponderMove={handleSeekMove}
+        onStartShouldSetResponderCapture={() => true}
+        onMoveShouldSetResponderCapture={() => true}
+        ref={seekViewRef}
+        onResponderGrant={(e) => { handleSeekMove(e); }}
+        onResponderMove={(e) => { handleSeekMove(e); }}
         onResponderRelease={() => { handleSeekRelease(); }}
         style={styles.seekTouch}
-        onLayout={(e) => { seekWidthRef.current = e.nativeEvent.layout.width; }}
+        onLayout={(e) => { seekWidthRef.current = e.nativeEvent.layout.width; seekViewRef.current?.measureInWindow((x) => { if (x != null) seekLeftRef.current = x; }); }}
       >
         <View style={styles.track}>
-          <View style={[styles.bufferedFill, { width: `${duration > 0 ? bufferedTime / duration * 100 : 0}%` }]} />
           <View style={[styles.fill, { width: `${progress * 100}%` }]} />
           <View style={[styles.thumb, { left: `${progress * 100}%` }]} />
         </View>
       </View>
       <View style={styles.timeRow}>
-        <Text style={styles.timeText}>{formatTime(isDragging ? seekTime : currentTime)}</Text>
+        <Text style={styles.timeText}>{formatTime(isDragging ? seekRatio * duration : currentTime)}</Text>
         <Text style={[styles.timeText, { color: 'rgba(255,255,255,0.2)' }]}>
           {formatTime(duration)}
         </Text>
@@ -212,7 +203,7 @@ const PlayerControls = React.memo(() => {
           <Ionicons name={isPlaying ? 'pause' : 'play'} size={26} color="#1a1a2e" style={{ marginLeft: isPlaying ? 0 : 3 }} />
         </View>
       </TouchableOpacity>
-      <TouchableOpacity onPress={next} activeOpacity={0.7}>
+      <TouchableOpacity onPress={() => next(true)} activeOpacity={0.7}>
         <Ionicons name="play-skip-forward" size={24} color="rgba(255,255,255,0.7)" />
       </TouchableOpacity>
       <QueueSection />
@@ -261,9 +252,10 @@ const PlayerVolumeSlider = React.memo(() => {
 const PlayerLyricsList = React.memo(() => {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const currentTime = usePlayerStore((s) => s.currentTime);
+  const duration = usePlayerStore((s) => s.duration);
   const palette = useColorStore((s) => s.colors);
   const isDragging = useUIStore((s) => s.isDragging);
-  const seekTime = useUIStore((s) => s.seekTime);
+  const seekRatio = useUIStore((s) => s.seekRatio);
   const [flatListReady, setFlatListReady] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const [userScrolling, setUserScrolling] = useState(false);
@@ -275,8 +267,8 @@ const PlayerLyricsList = React.memo(() => {
   }, [currentSong?.lyric]);
 
   const currentLineIndex = useMemo(
-    () => findCurrentLineIndex(lyricsData, isDragging ? seekTime : currentTime),
-    [lyricsData, seekTime, currentTime, isDragging],
+    () => findCurrentLineIndex(lyricsData, isDragging ? seekRatio * duration : currentTime),
+    [lyricsData, seekRatio, currentTime, duration, isDragging],
   );
 
   const handleMeasure = useCallback((index: number, height: number) => {
@@ -658,14 +650,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: 2,
     position: 'relative',
-  },
-  bufferedFill: {
-    height: 4,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 2,
-    position: 'absolute',
-    top: 0,
-    left: 0,
   },
   fill: {
     height: 4,

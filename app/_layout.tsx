@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StatusBar, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
+import TrackPlayer from 'react-native-track-player';
 import { queryClient } from '../services/queryClient';
+import { PlaybackService } from '../services/playbackService';
 import { colors } from '../constants/tokens';
 import { AuroraBackground } from '../components/AuroraBackground';
 import { MiniPlayerWrapper } from '../components/MiniPlayer';
@@ -15,9 +17,16 @@ import { AudioProvider } from '../contexts/AudioContext';
 import SplashScreen from '../components/SplashScreen';
 import { ContactModal } from '../components/ContactModal';
 
+TrackPlayer.registerPlaybackService(() => PlaybackService);
+
 export default function RootLayout() {
   const [showMain, setShowMain] = useState(false);
   const [splashDone, setSplashDone] = useState(false);
+
+  useEffect(() => {
+    TrackPlayer.setupPlayer({}).catch(() => {});
+    return () => { TrackPlayer.reset().catch(() => {}); };
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

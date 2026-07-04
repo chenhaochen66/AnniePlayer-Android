@@ -16,7 +16,7 @@ export default function PlayerScreen() {
   const next = usePlayerStore((s) => s.next);
   const previous = usePlayerStore((s) => s.previous);
 
-  const { play, pause, state } = useSharedAudio();
+  const { play, pause } = useSharedAudio();
   const { extractColors } = useColorExtractor();
 
   useBackHandler();
@@ -38,12 +38,12 @@ export default function PlayerScreen() {
   }, [currentSong?.cover]);
 
   const handlePlayPause = useCallback(() => {
-    if (state.status === 'playing') {
+    if (usePlayerStore.getState().isPlaying) {
       pause().catch(() => {});
     } else {
       play().catch(() => {});
     }
-  }, [state.status, play, pause]);
+  }, [play, pause]);
 
   const handleVolumeUp = useCallback(() => {
     const v = Math.min(1, volume + 0.1);
@@ -57,27 +57,11 @@ export default function PlayerScreen() {
 
   useKeyboardControls({
     onPlayPause: handlePlayPause,
-    onNext: next,
+    onNext: () => next(true),
     onPrevious: previous,
     onVolumeUp: handleVolumeUp,
     onVolumeDown: handleVolumeDown,
   });
-
-  useEffect(() => {
-    if (Platform.OS === 'web' && currentSong) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: currentSong.title,
-          artist: currentSong.artist,
-          artwork: [{ src: currentSong.cover, sizes: '400x400', type: 'image/jpeg' }],
-        });
-        navigator.mediaSession.setActionHandler('play', () => play().catch(() => {}));
-        navigator.mediaSession.setActionHandler('pause', () => pause().catch(() => {}));
-        navigator.mediaSession.setActionHandler('nexttrack', () => next());
-        navigator.mediaSession.setActionHandler('previoustrack', () => previous());
-      } catch {}
-    }
-  }, [currentSong]);
 
   return <FullPlayer />;
 }
