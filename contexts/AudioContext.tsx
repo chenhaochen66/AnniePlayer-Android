@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useMemo, useCallback } from 'react';
-import { AppState } from 'react-native';
+import { AppState, NativeModules } from 'react-native';
 import TrackPlayer, { useProgress, useTrackPlayerEvents, Event } from 'react-native-track-player';
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
@@ -30,28 +30,39 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const nativeQueueBaseIndex = useRef(0);
 
   const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const lastPlaybackId = useRef(playbackId);
   const { position, duration, buffered } = useProgress(500);
   useEffect(() => {
     if (Date.now() < pendingSeekUntil.current) return;
     if (!isPlaying) return;
+    if (position === 0 && duration === 0) return;
+    if (isUpdatingTrack.current) return;
+    if (playbackId !== lastPlaybackId.current) {
+      lastPlaybackId.current = playbackId;
+      return;
+    }
     syncProgress(position, duration, buffered);
-    if (currentSong?.id && duration > 1 && position >= duration - 1 && !isUpdatingTrack.current && lastAdvancedSongId.current !== currentSong.id) {
+    const nearEnd = currentSong?.id && duration > 1 && position >= duration - 1;
+    if (nearEnd) console.log('[adv] progress nearEnd', currentSong?.id?.slice(0,12), 'updating:', isUpdatingTrack.current, 'lastAdv:', lastAdvancedSongId.current?.slice(0,12));
+    if (nearEnd && lastAdvancedSongId.current !== currentSong.id) {
+      console.log('[adv] progress -> next()', currentSong?.id?.slice(0,12));
       isUpdatingTrack.current = true;
       lastAdvancedSongId.current = currentSong.id;
       next();
     }
-  }, [position, duration, buffered, currentSong?.id, next, isPlaying]);
+  }, [position, duration, buffered, currentSong?.id, playbackId, next, isPlaying]);
 
   const notifyBeforeSeek = useCallback(() => {
     pendingSeekUntil.current = Date.now() + 2000;
   }, []);
 
   useTrackPlayerEvents([Event.PlaybackActiveTrackChanged], async (event) => {
-    if (event.track == null || event.track <= 0) return;
+    if (event.index == null || event.index < 0) return;
     const { queue, currentIndex } = usePlayerStore.getState();
-    const actualIndex = nativeQueueBaseIndex.current + event.track;
+    const actualIndex = nativeQueueBaseIndex.current + event.index;
     if (actualIndex < queue.length && actualIndex !== currentIndex) {
       isUpdatingTrack.current = true;
+      console.log('[adv] event update', queue[actualIndex]?.id?.slice(0,12), 'idx', actualIndex);
       usePlayerStore.setState({
         currentIndex: actualIndex,
         currentSong: queue[actualIndex],
@@ -59,21 +70,33 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     }
   });
 
+  useTrackPlayerEvents([Event.PlaybackPlayWhenReadyChanged], (event) => {
+    usePlayerStore.getState().setIsPlaying(event.playWhenReady);
+  });
+
+
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', async (state) => {
       if (state === 'active' && currentSong?.id) {
         try {
           const activeIdx = await TrackPlayer.getActiveTrackIndex();
           const { currentIndex, queue } = usePlayerStore.getState();
+          if (isUpdatingTrack.current) {
+            console.log('[adv] foreground skip, loading in progress');
+            return;
+          }
           if (activeIdx != null && activeIdx >= 0 && nativeQueueBaseIndex.current + activeIdx < queue.length) {
             const actualIndex = nativeQueueBaseIndex.current + activeIdx;
             if (actualIndex !== currentIndex) {
+              console.log('[adv] foreground sync', queue[actualIndex]?.id?.slice(0,12), 'activeIdx', activeIdx);
               usePlayerStore.setState({
                 currentIndex: actualIndex,
                 currentSong: queue[actualIndex],
               });
             }
           } else if (activeIdx == null || activeIdx < 0) {
+            console.log('[adv] foreground no active track, restart', currentSong?.id?.slice(0,12));
             usePlayerStore.getState().playIndex(currentIndex);
           }
         } catch {}
@@ -91,8 +114,8 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     const myGen = generation.current;
     (async () => {
       try {
-        const lyricGen = generation.current;
         if (currentSong.lyric === undefined) {
+          const lyricGen = generation.current;
           fetchLyric(currentSong.id, currentSong.title, currentSong.artist).then((lyric) => {
             if (generation.current === lyricGen) {
               usePlayerStore.getState().updateSongLyric(currentSong.id, lyric);
@@ -100,57 +123,41 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
           }).catch(() => {});
         }
 
-        const activeIdx = await TrackPlayer.getActiveTrackIndex().catch(() => -1);
-        if (activeIdx != null && activeIdx >= 0 && generation.current === myGen) {
-          const activeTrack = await TrackPlayer.getTrack(activeIdx).catch(() => null);
-          if (activeTrack?.id === currentSong?.id && generation.current === myGen) {
-            const ps = await TrackPlayer.getPlaybackState().catch(() => ({ state: 'unknown' }));
-            if (ps.state !== 'ended' && ps.state !== 'stopped' && ps.state !== 'none') {
-              isUpdatingTrack.current = false;
-              return;
-            }
-          }
+        const { queue, loopMode } = usePlayerStore.getState();
+        const items = queue.map(s => ({
+          id: s.id, platform: s.platform || 'kuwo',
+          title: s.title || '', artist: s.artist || '',
+          cover: s.cover || '', album: s.album || '',
+        }));
+        await NativeModules.TrackPlayerModule.setPreloadQueue(items);
+        await NativeModules.TrackPlayerModule.stopPreloadChain();
+        if (generation.current !== myGen) return;
+
+        const idx = usePlayerStore.getState().currentIndex;
+        await NativeModules.TrackPlayerModule.playIndex(idx);
+        nativeQueueBaseIndex.current = idx;
+        if (generation.current !== myGen) return;
+
+        if (loopMode !== 'single' && items.length > 1) {
+          await NativeModules.TrackPlayerModule.startPreloadChain();
         }
-
-        await unload().catch(() => {});
-
+      } catch (e) {
+        console.warn('[audio] native failed, JS fallback:', e);
         let url = currentSong.playUrl;
         if (!url) {
           url = await fetchPlayUrlBySong(currentSong);
           usePlayerStore.getState().updateSongPlayUrl(currentSong.id, url);
         }
         if (generation.current !== myGen) return;
-        try {
-          url = await fetchAndCacheAudio(url, currentSong.id);
-        } catch {}
+        fetchAndCacheAudio(url, currentSong.id).catch(() => {});
         if (generation.current !== myGen) return;
+        await unload().catch(() => {});
         await load(url);
         nativeQueueBaseIndex.current = usePlayerStore.getState().currentIndex;
         if (generation.current !== myGen) return;
         if (usePlayerStore.getState().isPlaying) {
           await play();
         }
-        if (generation.current !== myGen) return;
-
-        const { queue, currentIndex, loopMode } = usePlayerStore.getState();
-        if (loopMode !== 'single') {
-          for (let i = currentIndex + 1; i < queue.length; i++) {
-            if (generation.current !== myGen) break;
-            const song = queue[i];
-            let songUrl = song.playUrl;
-            if (!songUrl) {
-              try {
-                songUrl = await fetchPlayUrlBySong(song);
-                usePlayerStore.getState().updateSongPlayUrl(song.id, songUrl);
-              } catch { continue; }
-            }
-            try {
-              await TrackPlayer.add({ id: song.id, url: songUrl });
-            } catch { break; }
-          }
-        }
-      } catch (e) {
-        console.warn('[audio] operation failed:', e);
       } finally {
         if (generation.current === myGen) {
           isUpdatingTrack.current = false;

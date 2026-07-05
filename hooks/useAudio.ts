@@ -30,8 +30,7 @@ export function useAudio(): AudioControls {
 
   const load = useCallback(async (uri: string) => {
     try {
-      await TrackPlayer.reset();
-      await TrackPlayer.add({ id: 'current', url: uri });
+      await TrackPlayer.load({ id: 'current', url: uri });
     } catch {}
   }, []);
 
