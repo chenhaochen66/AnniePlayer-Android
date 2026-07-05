@@ -93,7 +93,7 @@ const PlayerProgressBar = React.memo(() => {
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
   const setDragging = useUIStore((s) => s.setDragging);
   const seekRatio = useUIStore((s) => s.seekRatio);
-  const { seek, notifyBeforeSeek } = useSharedAudio();
+  const { seek } = useSharedAudio();
 
   const seekViewRef = useRef<View>(null);
   const seekWidthRef = useRef(SCREEN_WIDTH - screenPadding.horizontal * 2);
@@ -129,10 +129,9 @@ const PlayerProgressBar = React.memo(() => {
     const d = usePlayerStore.getState().duration;
     const t = ratio * d;
     setCurrentTime(t);
-    notifyBeforeSeek?.();
     seek(t);
     setDragging(false);
-  }, [setCurrentTime, seek, setDragging, notifyBeforeSeek]);
+  }, [setCurrentTime, seek, setDragging]);
 
   const progress = isDragging ? seekRatio : (duration > 0 ? currentTime / duration : 0);
 
