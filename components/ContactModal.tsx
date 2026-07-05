@@ -110,6 +110,9 @@ export const ContactModal = React.memo(() => {
         <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 16, textAlign: 'center', lineHeight: 16 }}>
           声明：本软件仅供学习交流使用，完全免费，不涉及任何商业用途。所有资源请在下载后24小时内删除。
         </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 6, textAlign: 'center', lineHeight: 16 }}>
+          鸣谢：IKUN MUSIC提供的公益网易解析源
+        </Text>
       </View>
 
       {previewImage && (

@@ -43,6 +43,10 @@ export const MiniPlayer = React.memo(() => {
     translateY.value = withTiming(isVisible ? 0 : HIDDEN_TRANSLATE_Y, { duration: 200 });
   }, [isVisible]);
 
+  useEffect(() => {
+    setCoverError(false);
+  }, [currentSong?.id]);
+
   const containerStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
   }));

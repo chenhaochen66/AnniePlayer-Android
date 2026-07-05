@@ -379,6 +379,10 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
   }, [currentSong]);
 
   useEffect(() => {
+    setCoverError(false);
+  }, [currentSong?.id]);
+
+  useEffect(() => {
     if (!isPlaying) {
       cancelAnimation(rotation);
     } else {

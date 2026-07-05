@@ -27,16 +27,20 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const isUpdatingTrack = useRef(false);
   const lastAdvancedSongId = useRef<string | null>(null);
   const pendingSeekUntil = useRef(0);
+  const nativeQueueBaseIndex = useRef(0);
 
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
   const { position, duration, buffered } = useProgress(500);
   useEffect(() => {
     if (Date.now() < pendingSeekUntil.current) return;
+    if (!isPlaying) return;
     syncProgress(position, duration, buffered);
     if (currentSong?.id && duration > 1 && position >= duration - 1 && !isUpdatingTrack.current && lastAdvancedSongId.current !== currentSong.id) {
+      isUpdatingTrack.current = true;
       lastAdvancedSongId.current = currentSong.id;
       next();
     }
-  }, [position, duration, buffered, currentSong?.id, next]);
+  }, [position, duration, buffered, currentSong?.id, next, isPlaying]);
 
   const notifyBeforeSeek = useCallback(() => {
     pendingSeekUntil.current = Date.now() + 2000;
@@ -44,9 +48,10 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
 
   useTrackPlayerEvents([Event.PlaybackActiveTrackChanged], async (event) => {
     if (event.track == null || event.track <= 0) return;
-    const { currentIndex, queue } = usePlayerStore.getState();
-    const actualIndex = currentIndex + event.track;
+    const { queue, currentIndex } = usePlayerStore.getState();
+    const actualIndex = nativeQueueBaseIndex.current + event.track;
     if (actualIndex < queue.length && actualIndex !== currentIndex) {
+      isUpdatingTrack.current = true;
       usePlayerStore.setState({
         currentIndex: actualIndex,
         currentSong: queue[actualIndex],
@@ -60,8 +65,8 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
         try {
           const activeIdx = await TrackPlayer.getActiveTrackIndex();
           const { currentIndex, queue } = usePlayerStore.getState();
-          if (activeIdx != null && activeIdx >= 0 && currentIndex + activeIdx < queue.length) {
-            const actualIndex = currentIndex + activeIdx;
+          if (activeIdx != null && activeIdx >= 0 && nativeQueueBaseIndex.current + activeIdx < queue.length) {
+            const actualIndex = nativeQueueBaseIndex.current + activeIdx;
             if (actualIndex !== currentIndex) {
               usePlayerStore.setState({
                 currentIndex: actualIndex,
@@ -84,7 +89,6 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     generation.current++;
     isUpdatingTrack.current = true;
     const myGen = generation.current;
-
     (async () => {
       try {
         const lyricGen = generation.current;
@@ -121,6 +125,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
         } catch {}
         if (generation.current !== myGen) return;
         await load(url);
+        nativeQueueBaseIndex.current = usePlayerStore.getState().currentIndex;
         if (generation.current !== myGen) return;
         if (usePlayerStore.getState().isPlaying) {
           await play();
