@@ -5,7 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import TrackPlayer, { Capability } from 'react-native-track-player';
+import TrackPlayer, { Capability, AppKilledPlaybackBehavior } from 'react-native-track-player';
 import { queryClient } from '../services/queryClient';
 import { PlaybackService } from '../services/playbackService';
 import { colors } from '../constants/tokens';
@@ -26,7 +26,7 @@ export default function RootLayout() {
   useEffect(() => {
     TrackPlayer.setupPlayer({}).then(() => {
       TrackPlayer.updateOptions({
-        android: { appKilledPlaybackBehavior: 'continue-playback' },
+        android: { appKilledPlaybackBehavior: AppKilledPlaybackBehavior.ContinuePlayback },
         capabilities: [Capability.Play, Capability.Pause, Capability.SkipToNext, Capability.SkipToPrevious, Capability.SeekTo],
         compactCapabilities: [Capability.Play, Capability.Pause, Capability.SkipToNext],
       }).catch(() => {});

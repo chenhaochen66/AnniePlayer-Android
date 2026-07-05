@@ -15,11 +15,8 @@ export interface AudioControls {
   play: () => Promise<void>;
   pause: () => Promise<void>;
   seek: (time: number) => Promise<void>;
-  load: (uri: string) => Promise<void>;
-  unload: () => Promise<void>;
   setVolume: (volume: number) => Promise<void>;
   togglePlay?: () => void;
-  notifyBeforeSeek?: () => void;
   state: AudioState;
 }
 
@@ -27,12 +24,6 @@ export function useAudio(): AudioControls {
   const state: AudioState = {
     status: 'idle', currentTime: 0, duration: 0, buffered: 0, isLoaded: false,
   };
-
-  const load = useCallback(async (uri: string) => {
-    try {
-      await TrackPlayer.load({ id: 'current', url: uri });
-    } catch {}
-  }, []);
 
   const play = useCallback(async () => {
     try { await TrackPlayer.play(); } catch {}
@@ -46,13 +37,9 @@ export function useAudio(): AudioControls {
     try { await TrackPlayer.seekTo(time); } catch {}
   }, []);
 
-  const unload = useCallback(async () => {
-    try { await TrackPlayer.reset(); } catch {}
-  }, []);
-
   const setVolume = useCallback(async (volume: number) => {
     try { await TrackPlayer.setVolume(Math.max(0, Math.min(1, volume))); } catch {}
   }, []);
 
-  return { state, load, play, pause, seek, unload, setVolume };
+  return { state, play, pause, seek, setVolume };
 }

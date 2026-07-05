@@ -511,10 +511,10 @@ index b2409a0..cf6874a 100644
  }
 +
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-index afa6b0f..06e7bbe 100644
+index afa6b0f..d26b12a 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-@@ -36,16 +36,32 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
+@@ -36,16 +36,36 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
  import com.google.android.exoplayer2.ui.R as ExoPlayerR
  import kotlinx.coroutines.*
  import kotlinx.coroutines.flow.flow
@@ -523,6 +523,7 @@ index afa6b0f..06e7bbe 100644
 +import org.json.JSONObject
 +import java.net.HttpURLConnection
 +import java.net.URL
++import java.util.concurrent.ConcurrentHashMap
  import java.util.concurrent.TimeUnit
  import kotlin.system.exitProcess
  import timber.log.Timber
@@ -544,10 +545,13 @@ index afa6b0f..06e7bbe 100644
      private var progressUpdateJob: Job? = null
 +    private var preloadQueue: List<PreloadItem> = emptyList()
 +    private var preloadJob: Job? = null
++    private var prefetchJob: Job? = null
++    private var preloadBaseIndex: Int = 0
++    private val urlCache = ConcurrentHashMap<Int, String>()
  
      /**
       * Use [appKilledPlaybackBehavior] instead.
-@@ -141,7 +157,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -141,7 +161,7 @@ class MusicService : HeadlessJsTaskService() {
  
          val cacheConfig = CacheConfig(playerOptions?.getDouble(MAX_CACHE_SIZE_KEY)?.toLong())
          val playerConfig = PlayerConfig(
@@ -556,13 +560,15 @@ index afa6b0f..06e7bbe 100644
              handleAudioBecomingNoisy = true,
              handleAudioFocus = playerOptions?.getBoolean(AUTO_HANDLE_INTERRUPTIONS) ?: false,
              audioContentType = when(playerOptions?.getString(ANDROID_AUDIO_CONTENT_TYPE)) {
-@@ -340,6 +356,159 @@ class MusicService : HeadlessJsTaskService() {
+@@ -340,6 +360,160 @@ class MusicService : HeadlessJsTaskService() {
          player.stop()
      }
  
 +    @MainThread
 +    fun setPreloadQueue(items: List<PreloadItem>) {
 +        preloadQueue = items
++        prefetchJob?.cancel()
++        urlCache.clear()
 +    }
 +
 +    @MainThread
@@ -570,41 +576,9 @@ index afa6b0f..06e7bbe 100644
 +        preloadJob?.cancel()
 +        preloadJob = scope.launch {
 +            while (true) {
-+                delay(1000)
++                delay(3000)
 +                if (!::player.isInitialized || !playWhenReady) continue
-+                if (player.items.isEmpty() || player.currentIndex < 0) continue
-+                val nextIndex = player.currentIndex + 1
-+                if (nextIndex >= preloadQueue.size) {
-+                    Timber.d("[preloader] no more tracks in queue")
-+                    continue
-+                }
-+                if (nextIndex < player.items.size) {
-+                    Timber.d("[preloader] track $nextIndex already in player")
-+                    continue
-+                }
-+                val dur = player.duration
-+                if (dur <= 0 || dur - player.position > 30000) continue
-+                val nextItem = preloadQueue[nextIndex]
-+                Timber.d("[preloader] fetching url for ${nextItem.id}")
-+                val url = withContext(Dispatchers.IO) {
-+                    fetchPreloadUrl(nextItem)
-+                }
-+                if (url == null) {
-+                    Timber.d("[preloader] fetch failed for ${nextItem.id}")
-+                    continue
-+                }
-+                val currentNextIdx = player.currentIndex + 1
-+                if (currentNextIdx >= preloadQueue.size || currentNextIdx < player.items.size) continue
-+                if (currentNextIdx != nextIndex) continue
-+                Timber.d("[preloader] adding track ${nextItem.id} url=${url.take(60)}")
-+                add(Track(this@MusicService, Bundle().apply {
-+                    putString("id", nextItem.id)
-+                    putString("url", url)
-+                    putString("title", nextItem.title)
-+                    putString("artist", nextItem.artist)
-+                    putString("artwork", nextItem.cover)
-+                    putString("album", nextItem.album)
-+                }, this@MusicService.ratingType))
++                fillPlayerQueue(10)
 +            }
 +        }
 +    }
@@ -615,36 +589,67 @@ index afa6b0f..06e7bbe 100644
 +        preloadJob = null
 +    }
 +
++    private fun prefetchAllUrls() {
++        prefetchJob = scope.launch {
++            for (absIdx in preloadBaseIndex until preloadQueue.size) {
++                if (urlCache.containsKey(absIdx)) continue
++                val item = preloadQueue[absIdx] ?: continue
++                val url = withContext(Dispatchers.IO) { fetchPreloadUrl(item) }
++                if (url != null) urlCache[absIdx] = url
++            }
++        }
++    }
++
++    @MainThread
++    private fun fillPlayerQueue(maxCount: Int) {
++        val nextRelIdx = player.items.size
++        val nextAbsIdx = preloadBaseIndex + nextRelIdx
++        var count = 0
++        for (absIdx in nextAbsIdx until preloadQueue.size) {
++            if (count >= maxCount) break
++            val url = urlCache[absIdx]
++            if (url == null) break
++            val item = preloadQueue[absIdx] ?: continue
++            add(Track(this@MusicService, Bundle().apply {
++                putString("id", item.id)
++                putString("url", url)
++                putString("title", item.title)
++                putString("artist", item.artist)
++                putString("album", item.album)
++                if (item.cover.isNotEmpty()) putString("artwork", item.cover)
++            }, this@MusicService.ratingType))
++            count++
++        }
++    }
++
++    @MainThread
++    private fun refillQueueOnTransition() {
++        val remaining = player.items.size - (player.currentIndex + 1)
++        if (remaining < 5) {
++            fillPlayerQueue(15)
++        }
++    }
++
 +    @MainThread
 +    suspend fun playIndex(index: Int): Boolean {
++        prefetchJob?.cancel()
++        preloadBaseIndex = index
 +        val item = preloadQueue.getOrNull(index) ?: return false
-+        val url = withContext(Dispatchers.IO) { fetchPreloadUrl(item) } ?: return false
++        val url = withContext(Dispatchers.IO) { fetchPreloadUrl(item) }
++        if (url == null) return false
++        urlCache[index] = url
++        player.clear()
 +        load(Track(this, Bundle().apply {
 +            putString("id", item.id)
 +            putString("url", url)
 +            putString("title", item.title)
 +            putString("artist", item.artist)
-+            putString("artwork", item.cover)
 +            putString("album", item.album)
++            if (item.cover.isNotEmpty()) putString("artwork", item.cover)
 +        }, ratingType))
 +        play()
-+        val nextIdx = index + 1
-+        if (nextIdx < preloadQueue.size) {
-+            scope.launch {
-+                val nextItem = preloadQueue[nextIdx]
-+                val nextUrl = withContext(Dispatchers.IO) { fetchPreloadUrl(nextItem) }
-+                if (nextUrl != null && player.currentIndex + 1 >= player.items.size) {
-+                    add(Track(this@MusicService, Bundle().apply {
-+                        putString("id", nextItem.id)
-+                        putString("url", nextUrl)
-+                        putString("title", nextItem.title)
-+                        putString("artist", nextItem.artist)
-+                        putString("artwork", nextItem.cover)
-+                        putString("album", nextItem.album)
-+                    }, ratingType))
-+                }
-+            }
-+        }
++        prefetchAllUrls()
++        fillPlayerQueue(20)
 +        return true
 +    }
 +
@@ -716,3 +721,11 @@ index afa6b0f..06e7bbe 100644
      @MainThread
      fun removeUpcomingTracks() {
          player.removeUpcomingItems()
+@@ -621,6 +795,7 @@ class MusicService : HeadlessJsTaskService() {
+                         (it?.oldPosition ?: 0).toSeconds()
+                     )
+                 }
++                refillQueueOnTransition()
+             }
+         }
+ 

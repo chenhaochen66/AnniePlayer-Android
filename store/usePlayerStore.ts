@@ -19,7 +19,7 @@ interface PlayerState {
   setQueue: (songs: Song[], startIndex?: number) => void;
   addToQueue: (song: Song) => void;
   removeFromQueue: (index: number) => void;
-  next: () => void;
+  next: (forceNext?: boolean) => void;
   previous: () => void;
   seekTo: (index: number) => void;
   playIndex: (index: number) => void;
