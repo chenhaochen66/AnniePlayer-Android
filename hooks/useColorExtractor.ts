@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
 import { Platform } from 'react-native';
 
+const colorCache = new Map<string, string[]>();
+
 function getColorThiefColors(imageUrl: string): Promise<string[]> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -59,13 +61,16 @@ export function useColorExtractor() {
 
   const extractColors = useCallback(
     async (imageUrl: string): Promise<string[]> => {
+      const cached = colorCache.get(imageUrl);
+      if (cached) return cached;
       try {
-        if (isWeb) {
-          return await getColorThiefColors(imageUrl);
-        }
-        return await extractColorsNative(imageUrl);
+        const colors = isWeb ? await getColorThiefColors(imageUrl) : await extractColorsNative(imageUrl);
+        colorCache.set(imageUrl, colors);
+        return colors;
       } catch {
-        return ['#6366f1', '#8b5cf6', '#1e1b4b'];
+        const fallback = ['#6366f1', '#8b5cf6', '#1e1b4b'];
+        colorCache.set(imageUrl, fallback);
+        return fallback;
       }
     },
     [isWeb],
