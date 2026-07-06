@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useRef, useMemo, useCallback } from 'react';
-import { NativeModules, AppState } from 'react-native';
+import React, { createContext, useContext, useEffect, useMemo, useCallback } from 'react';
+import { AppState } from 'react-native';
 import TrackPlayer, { useProgress, useTrackPlayerEvents, Event } from 'react-native-track-player';
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
@@ -19,37 +19,23 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const playbackId = usePlayerStore((s) => s.playbackId);
   const setIsPlaying = usePlayerStore((s) => s.setIsPlaying);
   const syncProgress = usePlayerStore((s) => s.syncProgress);
-  const lastKey = useRef<string>('');
-  const generation = useRef(0);
-  const isUpdatingTrack = useRef(false);
-  const nativeQueueBaseIndex = useRef(0);
 
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const lastPlaybackId = useRef(playbackId);
   const { position, duration, buffered } = useProgress(500);
   useEffect(() => {
-    if (!isPlaying) return;
-    if (position === 0 && duration === 0) return;
-    if (isUpdatingTrack.current) return;
-    if (playbackId !== lastPlaybackId.current) {
-      lastPlaybackId.current = playbackId;
-      return;
-    }
     syncProgress(position, duration, buffered);
-  }, [position, duration, buffered, playbackId, isPlaying]);
+  }, [position, duration, buffered, syncProgress]);
 
   const onTrackChanged = useCallback(async (event: any) => {
-    if (event.index == null || event.index < 0) return;
-    if (isUpdatingTrack.current) return;
+    const absoluteIndex = event.absoluteIndex;
+    if (absoluteIndex == null || absoluteIndex < 0) return;
     const { queue, currentIndex, playbackId } = usePlayerStore.getState();
-    const actualIndex = nativeQueueBaseIndex.current + event.index;
-    if (actualIndex < queue.length && actualIndex !== currentIndex) {
-      const song = queue[actualIndex];
+    if (absoluteIndex < queue.length && absoluteIndex !== currentIndex) {
+      const song = queue[absoluteIndex];
       usePlayerStore.setState({
-        currentIndex: actualIndex,
+        currentIndex: absoluteIndex,
         currentSong: song,
+        playbackId: playbackId + 1,
       });
-      lastKey.current = `${song?.id || ''}:${playbackId}`;
     }
   }, []);
 
@@ -66,17 +52,15 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     const sub = AppState.addEventListener('change', async (state) => {
       if (state !== 'active') return;
       try {
+        const { queue, currentIndex } = usePlayerStore.getState();
         const activeIdx = await TrackPlayer.getActiveTrackIndex();
         if (activeIdx == null || activeIdx < 0) return;
-        const actualIndex = nativeQueueBaseIndex.current + activeIdx;
-        const { queue, currentIndex, playbackId } = usePlayerStore.getState();
-        if (actualIndex < queue.length && actualIndex !== currentIndex) {
-          const song = queue[actualIndex];
+        if (activeIdx < queue.length && activeIdx !== currentIndex) {
+          const song = queue[activeIdx];
           usePlayerStore.setState({
-            currentIndex: actualIndex,
+            currentIndex: activeIdx,
             currentSong: song,
           });
-          lastKey.current = `${song?.id || ''}:${playbackId}`;
         }
       } catch {}
     });
@@ -92,43 +76,6 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       }
     }).catch(() => {});
   }, [currentSong?.id]);
-
-  useEffect(() => {
-    const key = `${currentSong?.id || ''}:${playbackId}`;
-    if (!currentSong?.id || key === lastKey.current) return;
-    lastKey.current = key;
-    generation.current++;
-    isUpdatingTrack.current = true;
-    const myGen = generation.current;
-    (async () => {
-      try {
-        const { queue, loopMode } = usePlayerStore.getState();
-        const items = queue.map(s => ({
-          id: s.id, platform: s.platform || 'kuwo',
-          title: s.title || '', artist: s.artist || '',
-          cover: s.cover || '', album: s.album || '',
-        }));
-        await NativeModules.TrackPlayerModule.setPreloadQueue(items);
-        await NativeModules.TrackPlayerModule.stopPreloadChain();
-        if (generation.current !== myGen) return;
-
-        const idx = usePlayerStore.getState().currentIndex;
-        await NativeModules.TrackPlayerModule.playIndex(idx);
-        nativeQueueBaseIndex.current = idx;
-        if (generation.current !== myGen) return;
-
-        if (loopMode !== 'single' && items.length > 1) {
-          await NativeModules.TrackPlayerModule.startPreloadChain();
-        }
-      } catch (e) {
-        console.warn('[audio] native playback failed:', e);
-      } finally {
-        if (generation.current === myGen) {
-          isUpdatingTrack.current = false;
-        }
-      }
-    })();
-  }, [currentSong?.id, playbackId]);
 
   const togglePlay = useCallback(() => {
     const shouldPlay = !usePlayerStore.getState().isPlaying;
