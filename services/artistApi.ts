@@ -1,5 +1,6 @@
 import type { Artist, Song, Quality, Album } from '../types';
 import { cacheService } from './cacheService';
+import { decodeHtmlEntities } from '../utils/stringUtils';
 
 const API_BASE = 'https://www.kuwo.cn/api/www';
 const API_BASE_ALBUM = 'https://wapi.kuwo.cn/api/www';
@@ -53,7 +54,7 @@ async function searchArtistNew(keyword: string): Promise<Artist[] | null> {
     const list = json.data?.artistList || json.data?.list || [];
     return list.map((item: any) => ({
       id: String(item.id || ''),
-      name: item.name || '未知歌手',
+      name: decodeHtmlEntities(item.name || '未知歌手'),
       picture: item.pic300 || item.pic || '',
       musicNum: item.musicNum || 0,
     }));
