@@ -80,3 +80,34 @@ export interface Artist {
   picture: string;
   musicNum: number;
 }
+
+export interface QobuzTrack {
+  id: string;
+  title: string;
+  artist: string;
+  cover: string;
+  album: string;
+  albumId: string;
+  trackNumber: number;
+  duration: number;
+  streamable: boolean;
+  label: string;
+  year: number;
+}
+
+export interface QobuzAlbum {
+  id: string;
+  title: string;
+  artist: string;
+  cover: string;
+  year: number;
+  label: string;
+  tracks: QobuzTrack[];
+}
+
+export interface QobuzToken {
+  id: string;
+  name: string;
+  token: string;
+  isActive: boolean;
+}

@@ -32,6 +32,13 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const playWhenReadyEvents = useMemo(() => [Event.PlaybackPlayWhenReadyChanged], []);
   useTrackPlayerEvents(playWhenReadyEvents, onPlayWhenReadyChanged);
 
+  const remoteNextPrevEvents = useMemo(() => [Event.RemoteNext, Event.RemotePrevious], []);
+  const onRemoteNextPrev = useCallback((event: any) => {
+    if (event.type === Event.RemoteNext) usePlayerStore.getState().next();
+    else usePlayerStore.getState().previous();
+  }, []);
+  useTrackPlayerEvents(remoteNextPrevEvents, onRemoteNextPrev);
+
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -51,11 +58,18 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       if (state !== 'active') return;
       try {
         const idx = await NativeModules.TrackPlayerModule.getQueueIndex();
-        if (idx == null || idx < 0) return;
-        const { queue, currentIndex } = usePlayerStore.getState();
-        if (idx < queue.length && idx !== currentIndex) {
-          const song = queue[idx];
-          usePlayerStore.setState({ currentIndex: idx, currentSong: song });
+        if (idx != null && idx >= 0) {
+          const { queue, currentIndex } = usePlayerStore.getState();
+          if (idx < queue.length && idx !== currentIndex) {
+            usePlayerStore.setState({ currentIndex: idx, currentSong: queue[idx] });
+          }
+        }
+      } catch {}
+      try {
+        const playbackState = await NativeModules.TrackPlayerModule.getPlaybackState();
+        if (playbackState?.state) {
+          const s = playbackState.state;
+          usePlayerStore.getState().setIsPlaying(s === 'playing' || s === 'ready' || s === 'buffering' || s === 'loading');
         }
       } catch {}
     });

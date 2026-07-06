@@ -32,6 +32,8 @@ import { screenPadding } from '../constants/tokens';
 import { LoopMode, Quality } from '../types';
 import { parseLrc, LyricLine, findCurrentLineIndex } from '../utils/lrcParser';
 import { fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
+import { getFileUrl as getQobuzFileUrl } from '../services/qobuzApi';
+import { useQobuzStore } from '../store/useQobuzStore';
 import { enqueueDownload } from '../utils/downloadQueue';
 import { QualityPicker } from './QualityPicker';
 import { QueueModal } from './QueueModal';
@@ -404,8 +406,33 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
 
   const handleDownload = useCallback(() => {
     if (!currentSong) return;
-    setShowQualityPicker(true);
-  }, [currentSong]);
+    if ((currentSong as any).platform === 'qobuz') {
+      const token = useQobuzStore.getState().getActiveToken();
+      if (!token) return;
+      setDownloadingQuality('flac');
+      addTask(currentSong, 'flac');
+      enqueueDownload(async () => {
+        try {
+          const rawId = currentSong.id.replace(/^qobuz:/, '');
+          const info = await getQobuzFileUrl(rawId, 27, token);
+          const filePath = await downloadSong(
+            currentSong.id, currentSong.title, currentSong.artist,
+            currentSong.cover, currentSong.album, info.url, 'flac',
+            (p) => updateProgress(currentSong.id, p * 100),
+            currentSong.lyric || '',
+          );
+          completeTask(currentSong.id, filePath);
+          addDownloadedId(currentSong.id);
+          addToQueue(currentSong);
+        } catch {
+          failTask(currentSong.id);
+        }
+        setDownloadingQuality(null);
+      });
+    } else {
+      setShowQualityPicker(true);
+    }
+  }, [currentSong, addTask, updateProgress, completeTask, addDownloadedId, addToQueue, failTask]);
 
   const handleDownloadWithQuality = useCallback((quality: Quality) => {
     if (!currentSong) return;

@@ -102,6 +102,25 @@ export const SettingsDrawer = React.memo(() => {
           </Text>
         </View>
 
+          <TouchableOpacity
+            onPress={() => useUIStore.getState().setQobuzTokenVisible(true)}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255,255,255,0.03)',
+              borderRadius: 12,
+              padding: 16,
+              marginBottom: 12,
+            }}
+          >
+            <Ionicons name="key-outline" size={18} color="rgba(255,255,255,0.5)" />
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
+              配置Qobuz Token
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
+          </TouchableOpacity>
+
         <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '600', marginBottom: 12, letterSpacing: 0.5 }}>
           下载
         </Text>
