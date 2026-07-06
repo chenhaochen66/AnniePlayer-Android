@@ -92,7 +92,10 @@ export const usePlayerStore = create<PlayerState>()(
       },
       togglePlay: () => set((state) => ({ isPlaying: !state.isPlaying })),
       setIsPlaying: (playing) => set({ isPlaying: playing }),
-      setLoopMode: (mode) => set({ loopMode: mode }),
+      setLoopMode: (mode) => {
+        set({ loopMode: mode });
+        NativeModules.TrackPlayerModule.setAppLoopMode(mode);
+      },
       setCurrentTime: (time) => set({ currentTime: time }),
       setDuration: (duration) => set({ duration }),
       setBufferedTime: (time) => set({ bufferedTime: time }),
