@@ -9,7 +9,7 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { getArtistSongs, getArtistAlbums } from '../services/artistApi';
-import { fetchPlayUrl, fetchDownloadUrl, fetchLyric } from '../services/musicApi';
+import { fetchPlayUrl, fetchDownloadUrl, fetchLyric } from '../services/cnmusicApi';
 import { downloadSong } from '../services/downloadService';
 import { AlbumCard } from './AlbumCard';
 import { QualityPicker } from './QualityPicker';
