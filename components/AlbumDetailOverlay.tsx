@@ -12,7 +12,7 @@ import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { useUIStore } from '../store/useUIStore';
 import { getAlbumSongs } from '../services/albumApi';
-import { fetchPlayUrl, fetchDownloadUrl, fetchLyric } from '../services/musicApi';
+import { fetchPlayUrl, fetchDownloadUrl, fetchLyric } from '../services/cnmusicApi';
 import { downloadSong } from '../services/downloadService';
 import { QualityPicker } from '../components/QualityPicker';
 import { enqueueDownload } from '../utils/downloadQueue';

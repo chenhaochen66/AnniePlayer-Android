@@ -3,7 +3,7 @@ import { NativeModules, AppState } from 'react-native';
 import TrackPlayer, { useProgress, useTrackPlayerEvents, Event } from 'react-native-track-player';
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { fetchLyric } from '../services/musicApi';
+import { fetchLyric } from '../services/cnmusicApi';
 
 const AudioCtx = createContext<AudioControls | null>(null);
 

@@ -31,7 +31,7 @@ import { MovingText } from './MovingText';
 import { screenPadding } from '../constants/tokens';
 import { LoopMode, Quality } from '../types';
 import { parseLrc, LyricLine, findCurrentLineIndex } from '../utils/lrcParser';
-import { fetchDownloadUrlBySong, fetchLyric } from '../services/musicApi';
+import { fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
 import { enqueueDownload } from '../utils/downloadQueue';
 import { QualityPicker } from './QualityPicker';
 import { QueueModal } from './QueueModal';
