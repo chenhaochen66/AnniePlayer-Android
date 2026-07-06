@@ -11,6 +11,7 @@ import { useColorExtractor } from '../hooks/useColorExtractor';
 
 import { searchMusic, searchNeteaseMusic, fetchDownloadUrlBySong, fetchLyric } from '../services/musicApi';
 import { searchAlbum, buildAlbumCoverUrl } from '../services/albumApi';
+import { searchArtist } from '../services/artistApi';
 import { downloadSong } from '../services/downloadService';
 import { SearchBar } from '../components/SearchBar';
 import { ResultItem } from '../components/ResultItem';
@@ -18,19 +19,20 @@ import { AlbumCard } from '../components/AlbumCard';
 import { SkeletonLoader } from '../components/SkeletonLoader';
 import { DrawerController, SettingsDrawer } from '../components/SettingsDrawer';
 import { AlbumDetailOverlay } from '../components/AlbumDetailOverlay';
+import { SingerDetailOverlay } from '../components/SingerDetailOverlay';
 import { DownloadsOverlay } from '../components/DownloadsOverlay';
 import { QualityPicker } from '../components/QualityPicker';
-import { Song, Quality, Album } from '../types';
+import { Song, Quality, Album, Artist } from '../types';
 import { enqueueDownload } from '../utils/downloadQueue';
 
-type SearchMode = 'song' | 'album';
+type SearchMode = 'song' | 'album' | 'singer';
 
 export default function HomeScreen() {
   const [mode, setMode] = useState<SearchMode>('song');
   const [query, setQuery] = useState('');
   const [songSubmitted, setSongSubmitted] = useState('');
   const [albumSubmitted, setAlbumSubmitted] = useState('');
-
+  const [artistSubmitted, setArtistSubmitted] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const setPicker = useUIStore((s) => s.setPicker);
 
@@ -48,7 +50,8 @@ export default function HomeScreen() {
   const handleSearch = useCallback(() => {
     const q = query.trim();
     if (mode === 'song') setSongSubmitted(q);
-    else setAlbumSubmitted(q);
+    else if (mode === 'album') setAlbumSubmitted(q);
+    else setArtistSubmitted(q);
   }, [query, mode]);
 
   const songQuery = useQuery({
@@ -63,6 +66,12 @@ export default function HomeScreen() {
     enabled: mode === 'album' && albumSubmitted.length > 0,
   });
 
+  const artistQuery = useQuery({
+    queryKey: ['artist_search', artistSubmitted],
+    queryFn: () => searchArtist(artistSubmitted),
+    enabled: mode === 'singer' && artistSubmitted.length > 0,
+  });
+
   const neteaseQuery = useQuery({
     queryKey: ['netease_search', songSubmitted],
     queryFn: () => searchNeteaseMusic(songSubmitted),
@@ -72,6 +81,7 @@ export default function HomeScreen() {
   const allSongs = (songQuery.data?.kuwo || []);
   const allNeteaseSongs = (neteaseQuery.data ?? []);
   const allAlbums = (albumQuery.data ?? []);
+  const allArtists = (artistQuery.data ?? []);
   const songsRef = useRef<Song[]>(allSongs);
   songsRef.current = allSongs;
   const neteaseSongsRef = useRef<Song[]>(allNeteaseSongs);
@@ -92,6 +102,10 @@ export default function HomeScreen() {
   const handleAlbumPress = useCallback((album: Album) => {
     const cover = buildAlbumCoverUrl(album);
     useUIStore.getState().setAlbumDetailVisible(true, { id: album.albumid, cover, name: album.name, artist: album.artist });
+  }, []);
+
+  const handleArtistPress = useCallback((artist: Artist) => {
+    useUIStore.getState().setSingerDetailVisible(true, { id: artist.id, name: artist.name, picture: artist.picture });
   }, []);
 
   const handleDownload = useCallback((song: Song) => {
@@ -158,6 +172,33 @@ export default function HomeScreen() {
     [handleAlbumPress],
   );
 
+  const renderArtistItem = useCallback(
+    ({ item }: { item: Artist }) => (
+      <TouchableOpacity
+        onPress={() => handleArtistPress(item)}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row', alignItems: 'center',
+          paddingVertical: 10, paddingHorizontal: 12,
+        }}
+      >
+        <Image
+          source={{ uri: item.picture }}
+          style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.03)' }}
+        />
+        <View style={{ marginLeft: 14, flex: 1 }}>
+          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginTop: 2 }}>
+            {item.musicNum} 首歌曲
+          </Text>
+        </View>
+      </TouchableOpacity>
+    ),
+    [handleArtistPress],
+  );
+
   const searchContent = useMemo(() => (
     mode === 'song' ? (
       <View style={{ flex: 1 }}>
@@ -213,6 +254,30 @@ export default function HomeScreen() {
           </View>
         ) : null}
       </View>
+    ) : mode === 'singer' ? (
+      <View style={{ flex: 1 }}>
+        {artistQuery.isLoading ? (
+          <SkeletonLoader />
+        ) : allArtists.length > 0 ? (
+          <Animated.View entering={FadeInDown.duration(400)} key={`artist-${artistSubmitted}`} style={{ flex: 1 }}>
+            <FlatList
+              data={allArtists}
+              renderItem={renderArtistItem}
+              keyExtractor={(item) => item.id}
+              windowSize={5}
+              maxToRenderPerBatch={15}
+              initialNumToRender={10}
+              removeClippedSubviews
+              contentContainerStyle={{ paddingBottom: 120, paddingTop: 4 }}
+              showsVerticalScrollIndicator={false}
+            />
+          </Animated.View>
+        ) : artistSubmitted.length > 0 ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
+          </View>
+        ) : null}
+      </View>
     ) : (
       <View style={{ flex: 1 }}>
         {albumQuery.isLoading ? (
@@ -240,7 +305,7 @@ export default function HomeScreen() {
         ) : null}
       </View>
     )
-  ), [mode, songQuery.isLoading, neteaseQuery.isLoading, albumQuery.isLoading, allSongs, allNeteaseSongs, allAlbums, renderSongItem, renderAlbumItem, songSubmitted, albumSubmitted]);
+  ), [mode, songQuery.isLoading, neteaseQuery.isLoading, albumQuery.isLoading, artistQuery.isLoading, allSongs, allNeteaseSongs, allAlbums, allArtists, renderSongItem, renderAlbumItem, renderArtistItem, songSubmitted, albumSubmitted, artistSubmitted]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a1a' }} edges={['top']}>
@@ -255,8 +320,8 @@ export default function HomeScreen() {
         />
       </View>
 
-      <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 8, gap: 8 }}>
-        {(['song', 'album'] as const).map((m) => (
+      <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 8, gap: 6 }}>
+        {(['song', 'album', 'singer'] as const).map((m) => (
           <TouchableOpacity
             key={m}
             onPress={() => { setMode(m); }}
@@ -267,8 +332,8 @@ export default function HomeScreen() {
               backgroundColor: mode === m ? '#818cf8' : 'rgba(255,255,255,0.05)',
             }}
           >
-            <Text style={{ color: mode === m ? '#fff' : 'rgba(255,255,255,0.4)', fontSize: 14, fontWeight: '600' }}>
-              {m === 'song' ? '单曲搜索' : '专辑搜索'}
+            <Text style={{ color: mode === m ? '#fff' : 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '600' }}>
+              {m === 'song' ? '单曲搜索' : m === 'album' ? '专辑搜索' : '歌手搜索'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -279,6 +344,7 @@ export default function HomeScreen() {
       {searchContent}
 
       <SettingsDrawer />
+      <SingerDetailOverlay />
       <AlbumDetailOverlay />
       <DownloadsOverlay />
 
