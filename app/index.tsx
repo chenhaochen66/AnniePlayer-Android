@@ -1,7 +1,9 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
-import { View, FlatList, Text, Image, TouchableOpacity } from 'react-native';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { View, FlatList, Text, Image, TouchableOpacity, TextInput, Alert } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
@@ -13,11 +15,13 @@ import { searchMusic, searchNeteaseMusic, fetchDownloadUrlBySong, fetchLyric } f
 import { searchAlbum, buildAlbumCoverUrl } from '../services/albumApi';
 import { searchArtist } from '../services/artistApi';
 import { downloadSong } from '../services/downloadService';
+import { parseQobuzUrl } from '../services/qobuzApi';
 import { SearchBar } from '../components/SearchBar';
 import { ResultItem } from '../components/ResultItem';
 import { AlbumCard } from '../components/AlbumCard';
 import { SkeletonLoader } from '../components/SkeletonLoader';
 import { DrawerController, SettingsDrawer } from '../components/SettingsDrawer';
+import { QobuzTokenOverlay } from '../components/QobuzTokenOverlay';
 import { AlbumDetailOverlay } from '../components/AlbumDetailOverlay';
 import { SingerDetailOverlay } from '../components/SingerDetailOverlay';
 import { DownloadsOverlay } from '../components/DownloadsOverlay';
@@ -25,7 +29,7 @@ import { QualityPicker } from '../components/QualityPicker';
 import { Song, Quality, Album, Artist } from '../types';
 import { enqueueDownload } from '../utils/downloadQueue';
 
-type SearchMode = 'song' | 'album' | 'singer';
+type SearchMode = 'song' | 'album' | 'singer' | 'qobuz';
 
 export default function HomeScreen() {
   const [mode, setMode] = useState<SearchMode>('song');
@@ -33,8 +37,10 @@ export default function HomeScreen() {
   const [songSubmitted, setSongSubmitted] = useState('');
   const [albumSubmitted, setAlbumSubmitted] = useState('');
   const [artistSubmitted, setArtistSubmitted] = useState('');
+  const [qobuzInput, setQobuzInput] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const setPicker = useUIStore((s) => s.setPicker);
+  const router = useRouter();
 
   const setQueue = usePlayerStore((s) => s.setQueue);
   const addToQueue = usePlayerStore((s) => s.addToQueue);
@@ -48,11 +54,17 @@ export default function HomeScreen() {
   const { extractColors } = useColorExtractor();
 
   const handleSearch = useCallback(() => {
-    const q = query.trim();
-    if (mode === 'song') setSongSubmitted(q);
-    else if (mode === 'album') setAlbumSubmitted(q);
-    else setArtistSubmitted(q);
-  }, [query, mode]);
+    if (mode === 'qobuz') {
+      const parsed = parseQobuzUrl(qobuzInput.trim());
+      if (!parsed) { Alert.alert('提示', '未识别到有效 Qobuz 链接'); return; }
+      router.push(`/qobuz-detail?type=${parsed.type}&id=${parsed.id}`);
+    } else {
+      const q = query.trim();
+      if (mode === 'song') setSongSubmitted(q);
+      else if (mode === 'album') setAlbumSubmitted(q);
+      else setArtistSubmitted(q);
+    }
+  }, [query, mode, qobuzInput, router]);
 
   const songQuery = useQuery({
     queryKey: ['search', songSubmitted],
@@ -200,7 +212,52 @@ export default function HomeScreen() {
   );
 
   const searchContent = useMemo(() => (
-    mode === 'song' ? (
+    mode === 'qobuz' ? (
+      <View style={{ flex: 1, alignItems: 'center', paddingHorizontal: 32, paddingTop: 60 }}>
+        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 24, fontWeight: '700', marginBottom: 24 }}>
+          Qobuz解析
+        </Text>
+        <View style={{
+          flexDirection: 'row', alignItems: 'center',
+          backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 14,
+          width: '100%', height: 52,
+        }}>
+          <TextInput
+            value={qobuzInput}
+            onChangeText={setQobuzInput}
+            placeholder="请粘贴 Qobuz 单曲链接或者专辑链接"
+            placeholderTextColor="rgba(255,255,255,0.3)"
+            autoCapitalize="none"
+            autoCorrect={false}
+            onSubmitEditing={handleSearch}
+            returnKeyType="go"
+            style={{
+              flex: 1, color: '#fff', fontSize: 15,
+              paddingHorizontal: 16, height: '100%',
+            }}
+          />
+          {qobuzInput.length > 0 && (
+            <TouchableOpacity onPress={() => setQobuzInput('')} activeOpacity={0.7} style={{ paddingHorizontal: 6, marginLeft: -10 }}>
+              <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.2)" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={handleSearch}
+            activeOpacity={0.7}
+            style={{
+              width: 48, height: 48, borderRadius: 12,
+              backgroundColor: '#818cf8', alignItems: 'center', justifyContent: 'center',
+              marginRight: 2,
+            }}
+          >
+            <Ionicons name="arrow-forward" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+        <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 12, textAlign: 'center', marginTop: 12 }}>
+          请在设置页面配置 Token 再使用
+        </Text>
+      </View>
+    ) : mode === 'song' ? (
       <View style={{ flex: 1 }}>
         {(songQuery.isLoading || neteaseQuery.isLoading) ? (
           <SkeletonLoader />
@@ -305,7 +362,7 @@ export default function HomeScreen() {
         ) : null}
       </View>
     )
-  ), [mode, songQuery.isLoading, neteaseQuery.isLoading, albumQuery.isLoading, artistQuery.isLoading, allSongs, allNeteaseSongs, allAlbums, allArtists, renderSongItem, renderAlbumItem, renderArtistItem, songSubmitted, albumSubmitted, artistSubmitted]);
+  ), [mode, songQuery.isLoading, neteaseQuery.isLoading, albumQuery.isLoading, artistQuery.isLoading, allSongs, allNeteaseSongs, allAlbums, allArtists, renderSongItem, renderAlbumItem, renderArtistItem, songSubmitted, albumSubmitted, artistSubmitted, handleSearch, qobuzInput]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a1a' }} edges={['top']}>
@@ -321,7 +378,7 @@ export default function HomeScreen() {
       </View>
 
       <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 8, gap: 6 }}>
-        {(['song', 'album', 'singer'] as const).map((m) => (
+        {(['song', 'album', 'singer', 'qobuz'] as const).map((m) => (
           <TouchableOpacity
             key={m}
             onPress={() => { setMode(m); }}
@@ -333,17 +390,18 @@ export default function HomeScreen() {
             }}
           >
             <Text style={{ color: mode === m ? '#fff' : 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '600' }}>
-              {m === 'song' ? '单曲搜索' : m === 'album' ? '专辑搜索' : '歌手搜索'}
+              {m === 'song' ? '单曲搜索' : m === 'album' ? '专辑搜索' : m === 'singer' ? '歌手搜索' : '国外解析'}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      <SearchBar query={query} onQueryChange={setQuery} onSubmit={handleSearch} />
+      {mode !== 'qobuz' && <SearchBar query={query} onQueryChange={setQuery} onSubmit={handleSearch} />}
 
       {searchContent}
 
       <SettingsDrawer />
+      <QobuzTokenOverlay />
       <SingerDetailOverlay />
       <AlbumDetailOverlay />
       <DownloadsOverlay />

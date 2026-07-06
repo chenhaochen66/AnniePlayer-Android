@@ -28,6 +28,7 @@ interface UIState {
   singerDetailVisible: boolean;
   singerDetailData: SingerDetailData | null;
   downloadQueueVisible: boolean;
+  qobuzTokenVisible: boolean;
   setPlayerOverlayVisible: (visible: boolean) => void;
   setQueueVisible: (visible: boolean) => void;
   setDrawerVisible: (visible: boolean) => void;
@@ -37,6 +38,7 @@ interface UIState {
   setAlbumDetailVisible: (visible: boolean, data?: AlbumDetailData | null) => void;
   setSingerDetailVisible: (visible: boolean, data?: SingerDetailData | null) => void;
   setDownloadQueueVisible: (visible: boolean) => void;
+  setQobuzTokenVisible: (visible: boolean) => void;
 }
 
 export const useUIStore = create<UIState>()((set) => ({
@@ -53,6 +55,7 @@ export const useUIStore = create<UIState>()((set) => ({
   singerDetailVisible: false,
   singerDetailData: null,
   downloadQueueVisible: false,
+  qobuzTokenVisible: false,
   setPlayerOverlayVisible: (visible) => set({ playerOverlayVisible: visible }),
   setQueueVisible: (visible) => set({ queueVisible: visible }),
   setDrawerVisible: (visible) => set({ drawerVisible: visible }),
@@ -62,4 +65,5 @@ export const useUIStore = create<UIState>()((set) => ({
   setAlbumDetailVisible: (visible, data) => set({ albumDetailVisible: visible, albumDetailData: data ?? null }),
   setSingerDetailVisible: (visible, data) => set({ singerDetailVisible: visible, singerDetailData: data ?? null }),
   setDownloadQueueVisible: (visible) => set({ downloadQueueVisible: visible }),
+  setQobuzTokenVisible: (visible) => set({ qobuzTokenVisible: visible }),
 }));

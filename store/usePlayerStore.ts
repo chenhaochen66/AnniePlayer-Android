@@ -56,11 +56,15 @@ export const usePlayerStore = create<PlayerState>()(
       setQueue: (songs, startIndex = 0) => {
         const { loopMode } = get();
         set({ queue: songs, currentIndex: startIndex, currentSong: songs[startIndex] || null, isPlaying: true, playbackId: get().playbackId + 1 });
-        const items = songs.map(s => ({
-          id: s.id, platform: s.platform || 'kuwo',
-          title: s.title || '', artist: s.artist || '',
-          cover: s.cover || '', album: s.album || '',
-        }));
+        const items = songs.map(s => {
+          const anyS = s as any;
+          return {
+            id: s.id, platform: anyS.platform || 'kuwo',
+            title: s.title || '', artist: s.artist || '',
+            cover: s.cover || '', album: s.album || '',
+            ...(anyS.platform === 'qobuz' && anyS.qobuzToken ? { token: anyS.qobuzToken } : {}),
+          };
+        });
         NativeModules.TrackPlayerModule.setQueue(items, startIndex, loopMode);
       },
       addToQueue: (song) => {
