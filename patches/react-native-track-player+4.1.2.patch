@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
-index b2409a0..8f8d93d 100644
+index b2409a0..f4c3785 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 @@ -13,6 +13,7 @@ import com.doublesymmetry.trackplayer.model.State
@@ -233,7 +233,7 @@ index b2409a0..8f8d93d 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          musicService.stop()
-@@ -431,135 +512,169 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -431,188 +512,221 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
  
          callback.resolve(null)
      }
@@ -414,18 +414,18 @@ index b2409a0..8f8d93d 100644
      }
 +    }
  
-     @ReactMethod
+-    @ReactMethod
 -    fun setQueue(data: ReadableArray?, callback: Promise) = scope.launch {
-+    fun setQueue(data: ReadableArray?, callback: Promise) {
-+        scope.launch {
-         if (verifyServiceBoundOrReject(callback)) return@launch
+-        if (verifyServiceBoundOrReject(callback)) return@launch
  
-         try {
-@@ -570,49 +685,61 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
-             rejectWithException(callback, exception)
-         }
-     }
-+    }
+-        try {
+-            musicService.clear()
+-            musicService.add(readableArrayToTrackList(data))
+-            callback.resolve(null)
+-        } catch (exception: Exception) {
+-            rejectWithException(callback, exception)
+-        }
+-    }
  
      @ReactMethod
 -    fun getActiveTrackIndex(callback: Promise) = scope.launch {
@@ -490,7 +490,7 @@ index b2409a0..8f8d93d 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
          var bundle = Bundle()
          bundle.putDouble("duration", musicService.getDurationInSeconds());
-@@ -620,10 +747,14 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -620,10 +734,14 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          bundle.putDouble("buffered", musicService.getBufferedPositionInSeconds());
          callback.resolve(Arguments.fromBundle(bundle))
      }
