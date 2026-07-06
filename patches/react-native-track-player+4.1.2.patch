@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
-index b2409a0..f4c3785 100644
+index b2409a0..b706ba1 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 @@ -13,6 +13,7 @@ import com.doublesymmetry.trackplayer.model.State
@@ -233,7 +233,7 @@ index b2409a0..f4c3785 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          musicService.stop()
-@@ -431,188 +512,221 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -431,188 +512,239 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
  
          callback.resolve(null)
      }
@@ -370,6 +370,16 @@ index b2409a0..f4c3785 100644
  
      @ReactMethod
 -    fun setPlayWhenReady(playWhenReady: Boolean, callback: Promise) = scope.launch {
++    fun setAppLoopMode(loopMode: String, callback: Promise) {
++        scope.launch {
++        if (verifyServiceBoundOrReject(callback)) return@launch
++
++        musicService.setAppLoopMode(loopMode)
++        callback.resolve(null)
++    }
++    }
++
++    @ReactMethod
 +    fun setPlayWhenReady(playWhenReady: Boolean, callback: Promise) {
 +        scope.launch {
          if (verifyServiceBoundOrReject(callback)) return@launch
@@ -437,6 +447,14 @@ index b2409a0..f4c3785 100644
          )
      }
 +    }
++
++    @ReactMethod
++    fun getQueueIndex(callback: Promise) {
++        scope.launch {
++        if (verifyServiceBoundOrReject(callback)) return@launch
++        callback.resolve(musicService.getQueueIndex())
++    }
++    }
  
      @ReactMethod
 -    fun getActiveTrack(callback: Promise) = scope.launch {
@@ -490,7 +508,7 @@ index b2409a0..f4c3785 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
          var bundle = Bundle()
          bundle.putDouble("duration", musicService.getDurationInSeconds());
-@@ -620,10 +734,14 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -620,10 +752,14 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          bundle.putDouble("buffered", musicService.getBufferedPositionInSeconds());
          callback.resolve(Arguments.fromBundle(bundle))
      }
@@ -507,10 +525,10 @@ index b2409a0..f4c3785 100644
  }
 +
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-index afa6b0f..5e80888 100644
+index afa6b0f..93f6f81 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-@@ -36,16 +36,38 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
+@@ -36,16 +36,37 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
  import com.google.android.exoplayer2.ui.R as ExoPlayerR
  import kotlinx.coroutines.*
  import kotlinx.coroutines.flow.flow
@@ -543,19 +561,36 @@ index afa6b0f..5e80888 100644
 +    private var preloadJob: Job? = null
 +    private var prefetchJob: Job? = null
 +    private var preloadBaseIndex: Int = 0
-+    private var currentQueueIndex: Int = 0
 +    private var appLoopMode: String = "sequential"
 +    private val urlCache = ConcurrentHashMap<Int, String>()
  
      /**
       * Use [appKilledPlaybackBehavior] instead.
-@@ -340,6 +362,191 @@ class MusicService : HeadlessJsTaskService() {
+@@ -141,7 +162,7 @@ class MusicService : HeadlessJsTaskService() {
+ 
+         val cacheConfig = CacheConfig(playerOptions?.getDouble(MAX_CACHE_SIZE_KEY)?.toLong())
+         val playerConfig = PlayerConfig(
+-            interceptPlayerActionsTriggeredExternally = true,
++            interceptPlayerActionsTriggeredExternally = false,
+             handleAudioBecomingNoisy = true,
+             handleAudioFocus = playerOptions?.getBoolean(AUTO_HANDLE_INTERRUPTIONS) ?: false,
+             audioContentType = when(playerOptions?.getString(ANDROID_AUDIO_CONTENT_TYPE)) {
+@@ -340,6 +361,206 @@ class MusicService : HeadlessJsTaskService() {
          player.stop()
      }
  
 +    @MainThread
-+    suspend fun setQueue(items: List<PreloadItem>, startIndex: Int, loopMode: String): Boolean {
++    fun setAppLoopMode(loopMode: String) {
 +        appLoopMode = loopMode
++        player.playerOptions.repeatMode = when (loopMode) {
++            "single" -> RepeatMode.ONE
++            else -> RepeatMode.OFF
++        }
++    }
++
++    @MainThread
++    suspend fun setQueue(items: List<PreloadItem>, startIndex: Int, loopMode: String): Boolean {
++        setAppLoopMode(loopMode)
 +        prefetchJob?.cancel()
 +        preloadJob?.cancel()
 +        preloadQueue = items
@@ -563,15 +598,21 @@ index afa6b0f..5e80888 100644
 +        return playAbsIndex(startIndex)
 +    }
 +
++    private fun currentAbsIndex(): Int {
++        val rel = player.currentIndex
++        return if (rel < 0) preloadBaseIndex else preloadBaseIndex + rel
++    }
++
 +    @MainThread
 +    fun handleNext() {
 +        scope.launch {
++            val cur = currentAbsIndex()
 +            val next = if (appLoopMode == "shuffle") {
-+                val available = preloadQueue.indices.filter { it != currentQueueIndex }
++                val available = preloadQueue.indices.filter { it != cur }
 +                if (available.isEmpty()) return@launch
 +                available.random()
 +            } else {
-+                (currentQueueIndex + 1) % preloadQueue.size
++                (cur + 1) % preloadQueue.size
 +            }
 +            playAbsIndex(next)
 +        }
@@ -580,12 +621,13 @@ index afa6b0f..5e80888 100644
 +    @MainThread
 +    fun handlePrevious() {
 +        scope.launch {
++            val cur = currentAbsIndex()
 +            val prev = if (appLoopMode == "shuffle") {
-+                val available = preloadQueue.indices.filter { it != currentQueueIndex }
++                val available = preloadQueue.indices.filter { it != cur }
 +                if (available.isEmpty()) return@launch
 +                available.random()
 +            } else {
-+                if (currentQueueIndex <= 0) preloadQueue.size - 1 else currentQueueIndex - 1
++                if (cur <= 0) preloadQueue.size - 1 else cur - 1
 +            }
 +            playAbsIndex(prev)
 +        }
@@ -597,7 +639,6 @@ index afa6b0f..5e80888 100644
 +    }
 +
 +    private suspend fun playAbsIndex(index: Int): Boolean {
-+        currentQueueIndex = index
 +        prefetchJob?.cancel()
 +        preloadBaseIndex = index
 +        val item = preloadQueue.getOrNull(index) ?: return false
@@ -741,15 +782,45 @@ index afa6b0f..5e80888 100644
      @MainThread
      fun removeUpcomingTracks() {
          player.removeUpcomingItems()
-@@ -460,6 +667,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -383,6 +604,9 @@ class MusicService : HeadlessJsTaskService() {
+     @MainThread
+     fun getCurrentTrackIndex(): Int = player.currentIndex
+ 
++    @MainThread
++    fun getQueueIndex(): Int = currentAbsIndex()
++
+     @MainThread
+     fun getRate(): Float = player.playbackSpeed
+ 
+@@ -460,6 +684,7 @@ class MusicService : HeadlessJsTaskService() {
  
          val b = Bundle()
          b.putDouble("lastPosition", oldPosition)
-+        b.putInt("absoluteIndex", currentQueueIndex)
++        b.putInt("absoluteIndex", currentAbsIndex())
          if (tracks.isNotEmpty()) {
              b.putInt("index", player.currentIndex)
              b.putBundle("track", tracks[player.currentIndex].originalItem)
-@@ -621,6 +829,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -606,7 +831,18 @@ class MusicService : HeadlessJsTaskService() {
+             event.stateChange.collect {
+                 emit(MusicEvents.PLAYBACK_STATE, getPlayerStateBundle(it))
+ 
+-                if (it == AudioPlayerState.ENDED && player.nextItem == null) {
++                if (it == AudioPlayerState.ENDED && player.nextItem == null && preloadQueue.size > 1) {
++                    val cur = currentAbsIndex()
++                    val next = if (appLoopMode == "shuffle") {
++                        val available = preloadQueue.indices.filter { idx -> idx != cur }
++                        if (available.isEmpty()) null else available.random()
++                    } else {
++                        (cur + 1) % preloadQueue.size
++                    }
++                    if (next != null) {
++                        this.launch { playAbsIndex(next) }
++                        return@collect
++                    }
+                     emitQueueEndedEvent()
+                 }
+             }
+@@ -621,6 +857,7 @@ class MusicService : HeadlessJsTaskService() {
                          (it?.oldPosition ?: 0).toSeconds()
                      )
                  }
@@ -757,16 +828,12 @@ index afa6b0f..5e80888 100644
              }
          }
  
-@@ -649,10 +858,10 @@ class MusicService : HeadlessJsTaskService() {
-                             emit(MusicEvents.BUTTON_SEEK_TO, this)
-                         }
+@@ -651,8 +888,8 @@ class MusicService : HeadlessJsTaskService() {
                      }
--                    MediaSessionCallback.PLAY -> emit(MusicEvents.BUTTON_PLAY)
--                    MediaSessionCallback.PAUSE -> emit(MusicEvents.BUTTON_PAUSE)
+                     MediaSessionCallback.PLAY -> emit(MusicEvents.BUTTON_PLAY)
+                     MediaSessionCallback.PAUSE -> emit(MusicEvents.BUTTON_PAUSE)
 -                    MediaSessionCallback.NEXT -> emit(MusicEvents.BUTTON_SKIP_NEXT)
 -                    MediaSessionCallback.PREVIOUS -> emit(MusicEvents.BUTTON_SKIP_PREVIOUS)
-+                    MediaSessionCallback.PLAY -> player.play()
-+                    MediaSessionCallback.PAUSE -> player.pause()
 +                    MediaSessionCallback.NEXT -> handleNext()
 +                    MediaSessionCallback.PREVIOUS -> handlePrevious()
                      MediaSessionCallback.STOP -> emit(MusicEvents.BUTTON_STOP)

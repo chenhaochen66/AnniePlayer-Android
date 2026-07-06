@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useCallback } from 'react';
-import { AppState } from 'react-native';
+import { NativeModules, AppState } from 'react-native';
 import TrackPlayer, { useProgress, useTrackPlayerEvents, Event } from 'react-native-track-player';
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
@@ -52,15 +52,12 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     const sub = AppState.addEventListener('change', async (state) => {
       if (state !== 'active') return;
       try {
+        const idx = await NativeModules.TrackPlayerModule.getQueueIndex();
+        if (idx == null || idx < 0) return;
         const { queue, currentIndex } = usePlayerStore.getState();
-        const activeIdx = await TrackPlayer.getActiveTrackIndex();
-        if (activeIdx == null || activeIdx < 0) return;
-        if (activeIdx < queue.length && activeIdx !== currentIndex) {
-          const song = queue[activeIdx];
-          usePlayerStore.setState({
-            currentIndex: activeIdx,
-            currentSong: song,
-          });
+        if (idx < queue.length && idx !== currentIndex) {
+          const song = queue[idx];
+          usePlayerStore.setState({ currentIndex: idx, currentSong: song });
         }
       } catch {}
     });
