@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
-index b2409a0..cf6874a 100644
+index b2409a0..8f8d93d 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
 @@ -13,6 +13,7 @@ import com.doublesymmetry.trackplayer.model.State
@@ -10,12 +10,12 @@ index b2409a0..cf6874a 100644
  import com.doublesymmetry.trackplayer.utils.AppForegroundTracker
  import com.doublesymmetry.trackplayer.utils.RejectionException
  import com.facebook.react.bridge.*
-@@ -159,6 +160,66 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -159,6 +160,62 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          }
      }
  
 +    @ReactMethod
-+    fun setPreloadQueue(data: ReadableArray?, callback: Promise) {
++    fun setQueue(data: ReadableArray?, startIndex: Int, loopMode: String, callback: Promise) {
 +        scope.launch {
 +            if (verifyServiceBoundOrReject(callback)) return@launch
 +            try {
@@ -35,8 +35,8 @@ index b2409a0..cf6874a 100644
 +                        }
 +                    }
 +                }
-+                musicService.setPreloadQueue(items)
-+                callback.resolve(null)
++                if (musicService.setQueue(items, startIndex, loopMode)) callback.resolve(null)
++                else callback.reject("play_failed", "Failed to play index $startIndex")
 +            } catch (e: Exception) {
 +                rejectWithException(callback, e)
 +            }
@@ -44,40 +44,36 @@ index b2409a0..cf6874a 100644
 +    }
 +
 +    @ReactMethod
-+    fun startPreloadChain(callback: Promise) {
++    fun skipNext(callback: Promise) {
 +        scope.launch {
 +            if (verifyServiceBoundOrReject(callback)) return@launch
-+            musicService.startPreloader()
++            musicService.handleNext()
 +            callback.resolve(null)
 +        }
 +    }
 +
 +    @ReactMethod
-+    fun stopPreloadChain(callback: Promise) {
++    fun skipPrevious(callback: Promise) {
 +        scope.launch {
 +            if (verifyServiceBoundOrReject(callback)) return@launch
-+            musicService.stopPreloader()
++            musicService.handlePrevious()
 +            callback.resolve(null)
 +        }
 +    }
 +
 +    @ReactMethod
-+    fun playIndex(index: Int, callback: Promise) {
++    fun skipTo(index: Int, callback: Promise) {
 +        scope.launch {
 +            if (verifyServiceBoundOrReject(callback)) return@launch
-+            try {
-+                if (musicService.playIndex(index)) callback.resolve(null)
-+                else callback.reject("play_failed", "Failed to play index $index")
-+            } catch (e: Exception) {
-+                rejectWithException(callback, e)
-+            }
++            musicService.skipTo(index)
++            callback.resolve(null)
 +        }
 +    }
 +
      @ReactMethod
      fun setupPlayer(data: ReadableMap?, promise: Promise) {
          if (isServiceBound) {
-@@ -251,7 +312,8 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -251,7 +308,8 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
      }
  
      @ReactMethod
@@ -87,7 +83,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          val options = Arguments.toBundle(data)
-@@ -262,9 +324,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -262,9 +320,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
  
          callback.resolve(null)
      }
@@ -100,7 +96,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          try {
-@@ -283,9 +347,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -283,9 +343,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
              rejectWithException(callback, exception)
          }
      }
@@ -113,7 +109,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
          if (data == null) {
              callback.resolve(null)
-@@ -299,16 +365,20 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -299,16 +361,20 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
              callback.reject("invalid_track_object", "Track was not a dictionary type")
          }
      }
@@ -136,7 +132,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
          val inputIndexes = Arguments.toList(data)
          if (inputIndexes != null) {
-@@ -329,9 +399,10 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -329,9 +395,10 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          }
          callback.resolve(null)
      }
@@ -148,7 +144,7 @@ index b2409a0..cf6874a 100644
          scope.launch {
              if (verifyServiceBoundOrReject(callback)) return@launch
  
-@@ -346,9 +417,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -346,9 +413,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
                  callback.resolve(null)
              }
          }
@@ -161,7 +157,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          if (musicService.tracks.isEmpty())
-@@ -362,9 +435,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -362,9 +431,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
  
          callback.resolve(null)
      }
@@ -174,7 +170,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          if (musicService.tracks.isEmpty())
-@@ -373,17 +448,21 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -373,17 +444,21 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          musicService.clearNotificationMetadata()
          callback.resolve(null)
      }
@@ -198,7 +194,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          musicService.skip(index)
-@@ -394,9 +473,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -394,9 +469,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
  
          callback.resolve(null)
      }
@@ -211,7 +207,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          musicService.skipToNext()
-@@ -407,9 +488,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -407,9 +484,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
  
          callback.resolve(null)
      }
@@ -224,7 +220,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          musicService.skipToPrevious()
-@@ -420,9 +503,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -420,9 +499,11 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
  
          callback.resolve(null)
      }
@@ -237,7 +233,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          musicService.stop()
-@@ -431,135 +516,169 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -431,135 +512,169 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
  
          callback.resolve(null)
      }
@@ -425,7 +421,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
  
          try {
-@@ -570,49 +689,61 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -570,49 +685,61 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
              rejectWithException(callback, exception)
          }
      }
@@ -494,7 +490,7 @@ index b2409a0..cf6874a 100644
          if (verifyServiceBoundOrReject(callback)) return@launch
          var bundle = Bundle()
          bundle.putDouble("duration", musicService.getDurationInSeconds());
-@@ -620,10 +751,14 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+@@ -620,10 +747,14 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
          bundle.putDouble("buffered", musicService.getBufferedPositionInSeconds());
          callback.resolve(Arguments.fromBundle(bundle))
      }
@@ -511,10 +507,10 @@ index b2409a0..cf6874a 100644
  }
 +
 diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-index afa6b0f..d26b12a 100644
+index afa6b0f..5e80888 100644
 --- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
 +++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
-@@ -36,16 +36,36 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
+@@ -36,16 +36,38 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
  import com.google.android.exoplayer2.ui.R as ExoPlayerR
  import kotlinx.coroutines.*
  import kotlinx.coroutines.flow.flow
@@ -547,32 +543,85 @@ index afa6b0f..d26b12a 100644
 +    private var preloadJob: Job? = null
 +    private var prefetchJob: Job? = null
 +    private var preloadBaseIndex: Int = 0
++    private var currentQueueIndex: Int = 0
++    private var appLoopMode: String = "sequential"
 +    private val urlCache = ConcurrentHashMap<Int, String>()
  
      /**
       * Use [appKilledPlaybackBehavior] instead.
-@@ -141,7 +161,7 @@ class MusicService : HeadlessJsTaskService() {
- 
-         val cacheConfig = CacheConfig(playerOptions?.getDouble(MAX_CACHE_SIZE_KEY)?.toLong())
-         val playerConfig = PlayerConfig(
--            interceptPlayerActionsTriggeredExternally = true,
-+            interceptPlayerActionsTriggeredExternally = false,
-             handleAudioBecomingNoisy = true,
-             handleAudioFocus = playerOptions?.getBoolean(AUTO_HANDLE_INTERRUPTIONS) ?: false,
-             audioContentType = when(playerOptions?.getString(ANDROID_AUDIO_CONTENT_TYPE)) {
-@@ -340,6 +360,160 @@ class MusicService : HeadlessJsTaskService() {
+@@ -340,6 +362,191 @@ class MusicService : HeadlessJsTaskService() {
          player.stop()
      }
  
 +    @MainThread
-+    fun setPreloadQueue(items: List<PreloadItem>) {
-+        preloadQueue = items
++    suspend fun setQueue(items: List<PreloadItem>, startIndex: Int, loopMode: String): Boolean {
++        appLoopMode = loopMode
 +        prefetchJob?.cancel()
++        preloadJob?.cancel()
++        preloadQueue = items
 +        urlCache.clear()
++        return playAbsIndex(startIndex)
 +    }
 +
 +    @MainThread
-+    fun startPreloader() {
++    fun handleNext() {
++        scope.launch {
++            val next = if (appLoopMode == "shuffle") {
++                val available = preloadQueue.indices.filter { it != currentQueueIndex }
++                if (available.isEmpty()) return@launch
++                available.random()
++            } else {
++                (currentQueueIndex + 1) % preloadQueue.size
++            }
++            playAbsIndex(next)
++        }
++    }
++
++    @MainThread
++    fun handlePrevious() {
++        scope.launch {
++            val prev = if (appLoopMode == "shuffle") {
++                val available = preloadQueue.indices.filter { it != currentQueueIndex }
++                if (available.isEmpty()) return@launch
++                available.random()
++            } else {
++                if (currentQueueIndex <= 0) preloadQueue.size - 1 else currentQueueIndex - 1
++            }
++            playAbsIndex(prev)
++        }
++    }
++
++    @MainThread
++    fun skipTo(index: Int) {
++        scope.launch { playAbsIndex(index) }
++    }
++
++    private suspend fun playAbsIndex(index: Int): Boolean {
++        currentQueueIndex = index
++        prefetchJob?.cancel()
++        preloadBaseIndex = index
++        val item = preloadQueue.getOrNull(index) ?: return false
++        val url = withContext(Dispatchers.IO) { fetchPreloadUrl(item) }
++        if (url == null) return false
++        urlCache[index] = url
++        player.clear()
++        load(Track(this, Bundle().apply {
++            putString("id", item.id)
++            putString("url", url)
++            putString("title", item.title)
++            putString("artist", item.artist)
++            putString("album", item.album)
++            if (item.cover.isNotEmpty()) putString("artwork", item.cover)
++        }, ratingType))
++        play()
++        prefetchAllUrls()
++        fillPlayerQueue(20)
++        startPreloader()
++        return true
++    }
++
++    @MainThread
++    private fun startPreloader() {
 +        preloadJob?.cancel()
 +        preloadJob = scope.launch {
 +            while (true) {
@@ -581,12 +630,6 @@ index afa6b0f..d26b12a 100644
 +                fillPlayerQueue(10)
 +            }
 +        }
-+    }
-+
-+    @MainThread
-+    fun stopPreloader() {
-+        preloadJob?.cancel()
-+        preloadJob = null
 +    }
 +
 +    private fun prefetchAllUrls() {
@@ -628,29 +671,6 @@ index afa6b0f..d26b12a 100644
 +        if (remaining < 5) {
 +            fillPlayerQueue(15)
 +        }
-+    }
-+
-+    @MainThread
-+    suspend fun playIndex(index: Int): Boolean {
-+        prefetchJob?.cancel()
-+        preloadBaseIndex = index
-+        val item = preloadQueue.getOrNull(index) ?: return false
-+        val url = withContext(Dispatchers.IO) { fetchPreloadUrl(item) }
-+        if (url == null) return false
-+        urlCache[index] = url
-+        player.clear()
-+        load(Track(this, Bundle().apply {
-+            putString("id", item.id)
-+            putString("url", url)
-+            putString("title", item.title)
-+            putString("artist", item.artist)
-+            putString("album", item.album)
-+            if (item.cover.isNotEmpty()) putString("artwork", item.cover)
-+        }, ratingType))
-+        play()
-+        prefetchAllUrls()
-+        fillPlayerQueue(20)
-+        return true
 +    }
 +
 +    private fun fetchPreloadUrl(item: PreloadItem): String? {
@@ -721,7 +741,15 @@ index afa6b0f..d26b12a 100644
      @MainThread
      fun removeUpcomingTracks() {
          player.removeUpcomingItems()
-@@ -621,6 +795,7 @@ class MusicService : HeadlessJsTaskService() {
+@@ -460,6 +667,7 @@ class MusicService : HeadlessJsTaskService() {
+ 
+         val b = Bundle()
+         b.putDouble("lastPosition", oldPosition)
++        b.putInt("absoluteIndex", currentQueueIndex)
+         if (tracks.isNotEmpty()) {
+             b.putInt("index", player.currentIndex)
+             b.putBundle("track", tracks[player.currentIndex].originalItem)
+@@ -621,6 +829,7 @@ class MusicService : HeadlessJsTaskService() {
                          (it?.oldPosition ?: 0).toSeconds()
                      )
                  }
@@ -729,3 +757,18 @@ index afa6b0f..d26b12a 100644
              }
          }
  
+@@ -649,10 +858,10 @@ class MusicService : HeadlessJsTaskService() {
+                             emit(MusicEvents.BUTTON_SEEK_TO, this)
+                         }
+                     }
+-                    MediaSessionCallback.PLAY -> emit(MusicEvents.BUTTON_PLAY)
+-                    MediaSessionCallback.PAUSE -> emit(MusicEvents.BUTTON_PAUSE)
+-                    MediaSessionCallback.NEXT -> emit(MusicEvents.BUTTON_SKIP_NEXT)
+-                    MediaSessionCallback.PREVIOUS -> emit(MusicEvents.BUTTON_SKIP_PREVIOUS)
++                    MediaSessionCallback.PLAY -> player.play()
++                    MediaSessionCallback.PAUSE -> player.pause()
++                    MediaSessionCallback.NEXT -> handleNext()
++                    MediaSessionCallback.PREVIOUS -> handlePrevious()
+                     MediaSessionCallback.STOP -> emit(MusicEvents.BUTTON_STOP)
+                     MediaSessionCallback.FORWARD -> {
+                         Bundle().apply {
