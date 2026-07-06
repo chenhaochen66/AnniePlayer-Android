@@ -9,6 +9,7 @@ const GAP = 10;
 const PADDING = 8;
 const CARD_WIDTH = (SCREEN_WIDTH - PADDING * 2 - GAP) / 2;
 const COVER_SIZE = CARD_WIDTH - 12;
+const CARD_HEIGHT = COVER_SIZE + 80;
 
 interface AlbumCardProps {
   album: Album;
@@ -25,6 +26,7 @@ export const AlbumCard = React.memo(({ album, onPress }: AlbumCardProps) => {
       activeOpacity={0.7}
       style={{
         width: CARD_WIDTH,
+        height: CARD_HEIGHT,
         backgroundColor: 'rgba(255,255,255,0.03)',
         borderRadius: 12,
         overflow: 'hidden',

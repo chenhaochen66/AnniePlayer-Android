@@ -2,7 +2,7 @@
   "expo": {
     "name": "安妮音乐盒",
     "slug": "music-player",
-    "version": "2.1.1",
+    "version": "2.2.0-dev",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",

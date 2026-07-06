@@ -8,6 +8,12 @@ interface AlbumDetailData {
   artist: string;
 }
 
+interface SingerDetailData {
+  id: string;
+  name: string;
+  picture: string;
+}
+
 interface UIState {
   playerOverlayVisible: boolean;
   queueVisible: boolean;
@@ -19,6 +25,8 @@ interface UIState {
   seekRatio: number;
   albumDetailVisible: boolean;
   albumDetailData: AlbumDetailData | null;
+  singerDetailVisible: boolean;
+  singerDetailData: SingerDetailData | null;
   downloadQueueVisible: boolean;
   setPlayerOverlayVisible: (visible: boolean) => void;
   setQueueVisible: (visible: boolean) => void;
@@ -27,6 +35,7 @@ interface UIState {
   setContactVisible: (visible: boolean) => void;
   setDragging: (dragging: boolean, seekRatio?: number) => void;
   setAlbumDetailVisible: (visible: boolean, data?: AlbumDetailData | null) => void;
+  setSingerDetailVisible: (visible: boolean, data?: SingerDetailData | null) => void;
   setDownloadQueueVisible: (visible: boolean) => void;
 }
 
@@ -41,6 +50,8 @@ export const useUIStore = create<UIState>()((set) => ({
   seekRatio: 0,
   albumDetailVisible: false,
   albumDetailData: null,
+  singerDetailVisible: false,
+  singerDetailData: null,
   downloadQueueVisible: false,
   setPlayerOverlayVisible: (visible) => set({ playerOverlayVisible: visible }),
   setQueueVisible: (visible) => set({ queueVisible: visible }),
@@ -49,5 +60,6 @@ export const useUIStore = create<UIState>()((set) => ({
   setContactVisible: (visible) => set({ contactVisible: visible }),
   setDragging: (dragging, seekRatio) => set({ isDragging: dragging, seekRatio: seekRatio ?? 0 }),
   setAlbumDetailVisible: (visible, data) => set({ albumDetailVisible: visible, albumDetailData: data ?? null }),
+  setSingerDetailVisible: (visible, data) => set({ singerDetailVisible: visible, singerDetailData: data ?? null }),
   setDownloadQueueVisible: (visible) => set({ downloadQueueVisible: visible }),
 }));

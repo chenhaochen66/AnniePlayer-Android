@@ -73,3 +73,10 @@ export interface AlbumSong {
   artist_name: string;
   duration: number;
 }
+
+export interface Artist {
+  id: string;
+  name: string;
+  picture: string;
+  musicNum: number;
+}
