@@ -226,7 +226,7 @@ export const AlbumDetailOverlay = React.memo(() => {
     if (!pickerSong) return;
     const song = pickerSong;
     setPickerVisible(false);
-    enqueueDownload(async () => {
+    enqueueDownload(song.id, async () => {
       setDownloadingId(song.id);
       addTask(song, quality);
       try {
@@ -270,7 +270,7 @@ export const AlbumDetailOverlay = React.memo(() => {
       addTask(song, quality);
     }
 
-    enqueueDownload(async () => {
+    enqueueDownload('batch_' + Date.now(), async () => {
       let success = 0;
       for (let i = 0; i < selected.length; i++) {
         const s = selected[i];

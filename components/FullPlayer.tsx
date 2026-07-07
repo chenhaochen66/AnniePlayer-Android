@@ -411,7 +411,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
       if (!token) return;
       setDownloadingQuality('flac');
       addTask(currentSong, 'flac');
-      enqueueDownload(async () => {
+      enqueueDownload(currentSong.id, async () => {
         try {
           const rawId = currentSong.id.replace(/^qobuz:/, '');
           const info = await getQobuzFileUrl(rawId, 27, token);
@@ -437,7 +437,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
   const handleDownloadWithQuality = useCallback((quality: Quality) => {
     if (!currentSong) return;
     setShowQualityPicker(false);
-    enqueueDownload(async () => {
+    enqueueDownload(currentSong.id, async () => {
       setDownloadingQuality(quality);
       addTask(currentSong, quality);
       try {

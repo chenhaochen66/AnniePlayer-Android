@@ -1,8 +1,8 @@
-﻿{
+{
   "expo": {
     "name": "安妮音乐盒",
     "slug": "music-player",
-    "version": "2.1.1-dev",
+    "version": "1.0.0-release",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -15,6 +15,7 @@
       "bundleIdentifier": "com.annieplayer.diangoudev",
       "infoPlist": {
         "UIBackgroundModes": [
+          "audio",
           "audio"
         ]
       }
@@ -29,20 +30,36 @@
         "NOTIFICATIONS",
         "WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "NOTIFICATIONS",
+        "WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
-      ],
+      ]
     },
     "web": {
       "bundler": "metro",
       "favicon": "./assets/favicon.png"
     },
+    "runtimeVersion": "1.0.0-release",
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-updates"
     ],
     "extra": {
-      "router": {}
+      "router": {},
+      "eas": {
+        "projectId": "c3f84268-db8e-421a-b163-6a58d4c4056c"
+      }
+    },
+    "owner": "2728322154",
+    "updates": {
+      "url": "https://u.expo.dev/c3f84268-db8e-421a-b163-6a58d4c4056c",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
     }
   }
 }

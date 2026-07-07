@@ -8,10 +8,34 @@ import { scanFile } from '../modules/media-scanner/src/MediaScanner';
 const DBG = '[download]';
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
+interface ActiveDownload {
+  resumable: FileSystem.DownloadResumable;
+  tempPath: string;
+}
+
+const activeDownloads = new Map<string, ActiveDownload>();
+
 function ext(q: Quality): string { return q === 'flac' || q === 'hires' ? '.flac' : '.mp3'; }
 
 function writeFile(uri: string, data: Uint8Array): Promise<void> {
   return ((new NewFile(uri) as any).write(data));
+}
+
+export function pauseDownload(songId: string): boolean {
+  const ad = activeDownloads.get(songId);
+  if (!ad) return false;
+  ad.resumable.pauseAsync().catch(() => {});
+  activeDownloads.delete(songId);
+  return true;
+}
+
+export function cancelDownload(songId: string): void {
+  const ad = activeDownloads.get(songId);
+  if (ad) {
+    ad.resumable.cancelAsync().catch(() => {});
+    FileSystem.deleteAsync(ad.tempPath, { idempotent: true }).catch(() => {});
+    activeDownloads.delete(songId);
+  }
 }
 
 export async function downloadSong(
@@ -33,81 +57,88 @@ export async function downloadSong(
   await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
 
   console.log(DBG, 'downloading...');
-  const dl = await FileSystem.createDownloadResumable(downloadUrl, tempPath,
+  const resumable = FileSystem.createDownloadResumable(downloadUrl, tempPath,
     { headers: { 'User-Agent': CHROME_UA } },
-    (p: any) => { if (p.totalBytesExpectedToWrite > 0) onProgress(p.totalBytesWritten / p.totalBytesExpectedToWrite); },
-  ).downloadAsync();
+    (p: any) => {
+      if (p.totalBytesExpectedToWrite > 0) onProgress(p.totalBytesWritten / p.totalBytesExpectedToWrite);
+    },
+  );
+
+  activeDownloads.set(songId, { resumable, tempPath });
+
+  let dl;
+  try {
+    dl = await resumable.downloadAsync();
+  } finally {
+    if (activeDownloads.get(songId)?.resumable !== resumable) {
+      throw new DOMException('Download cancelled', 'AbortError');
+    }
+  }
   if (!dl?.uri) throw new Error('Download failed');
   const fileSize = ((await FileSystem.getInfoAsync(tempPath)) as any).size || 0;
   console.log(DBG, 'downloaded, size:', fileSize);
   onProgress(0.5);
 
-  // Process metadata
   let outPath = tempPath;
   try {
-    const img = await fetchImageBytes(coverUrl);
-    console.log(DBG, 'processing metadata...');
-
-    if (quality === 'flac' || quality === 'hires') {
-      // FLAC: use manual metadata writer
-      const nf = new NewFile(tempPath);
-      const audio = await nf.bytes();
-      const processed = appendFlacMetadataToBytes(audio, { title, artist, album, lyric, coverUrl, imageBytes: img });
-      const outTemp = tempDir + 'tagged_' + songId + e;
-      await writeFile(outTemp, processed || audio);
-      await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
-      outPath = outTemp;
+    if (fileSize > 100 * 1024 * 1024) {
+      console.log(DBG, 'file too large, skipping metadata');
     } else {
-      // MP3: use existing working code
+      const img = await fetchImageBytes(coverUrl);
+      console.log(DBG, 'processing metadata...');
 
-      const nf = new NewFile(tempPath);
-      const audio = await nf.bytes();
-      const processed = writeId3ToBytes(audio, { title, artist, album, lyric, coverUrl, imageBytes: img });
-      const outTemp = tempDir + 'tagged_' + songId + e;
-      await writeFile(outTemp, processed || audio);
-      await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
-      outPath = outTemp;
+      if (quality === 'flac' || quality === 'hires') {
+        const nf = new NewFile(tempPath);
+        const audio = await nf.bytes();
+        const processed = appendFlacMetadataToBytes(audio, { title, artist, album, lyric, coverUrl, imageBytes: img });
+        const outTemp = tempDir + 'tagged_' + songId + e;
+        await writeFile(outTemp, processed || audio);
+        await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
+        outPath = outTemp;
+      } else {
+        const nf = new NewFile(tempPath);
+        const audio = await nf.bytes();
+        const processed = writeId3ToBytes(audio, { title, artist, album, lyric, coverUrl, imageBytes: img });
+        const outTemp = tempDir + 'tagged_' + songId + e;
+        await writeFile(outTemp, processed || audio);
+        await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
+        outPath = outTemp;
+      }
     }
   } catch (ex: any) {
+    if (activeDownloads.get(songId)?.resumable !== resumable) throw ex;
     console.log(DBG, 'meta failed:', ex.message, 'using raw');
   }
   onProgress(0.8);
 
-  // Rename temp file to proper name before saving
   const finalPath = tempDir + safeName;
   if (outPath !== finalPath) {
     try {
       await FileSystem.moveAsync({ from: outPath, to: finalPath });
       if (outPath !== tempPath) await FileSystem.deleteAsync(outPath, { idempotent: true }).catch(() => {});
     } catch {
-      const nf = new NewFile(outPath);
-      const fb = await (nf as any).bytes();
-      await writeFile(finalPath, fb);
+      await FileSystem.copyAsync({ from: outPath, to: finalPath }).catch(() => {});
       if (outPath !== tempPath) await FileSystem.deleteAsync(outPath, { idempotent: true }).catch(() => {});
     }
     outPath = finalPath;
   }
 
-  // Save to Music via MediaStore (visible to all players + app playback)
   let outUri = '';
   try { await scanFile(outPath.replace(/^file:\/\//, '')); } catch {}
 
-  // Fallback: keep in document dir if MediaStore unavailable
   if (!outUri) {
     const docDir = FileSystem.documentDirectory;
     if (docDir) {
       outUri = docDir + encodeURIComponent(safeName);
       await FileSystem.deleteAsync(outUri, { idempotent: true }).catch(() => {});
-      const nf = new NewFile(outPath);
-      const fb = await (nf as any).bytes();
-      await writeFile(outUri, fb);
+      await FileSystem.moveAsync({ from: outPath, to: outUri }).catch(() => {});
     }
   }
 
-  // Cleanup temp files
   if (outPath !== tempPath) await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
   if (outPath !== tempPath) await FileSystem.deleteAsync(outPath, { idempotent: true }).catch(() => {});
   console.log(DBG, 'done:', outUri);
   onProgress(1);
+  activeDownloads.delete(songId);
   return outUri;
 }

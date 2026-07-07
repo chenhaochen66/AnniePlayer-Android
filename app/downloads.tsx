@@ -13,52 +13,88 @@ import { useRouter } from 'expo-router';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { screenPadding } from '../constants/tokens';
 import { DownloadTask, QUALITY_LABELS } from '../types';
+import { pauseDownload, cancelDownload } from '../services/downloadService';
+import { cancelPending } from '../utils/downloadQueue';
 
 const ITEM_H = 74;
 type Tab = 'downloading' | 'completed';
 
-const TaskItem = React.memo(({ item, onRemove }: { item: DownloadTask; onRemove: (id: string) => void }) => (
-  <View style={styles.taskRow}>
-    <Image source={{ uri: item.cover }} style={styles.taskCover} />
-    <View style={{ flex: 1, marginLeft: 12 }}>
-      <Text style={styles.taskTitle} numberOfLines={1}>{item.title}</Text>
-      <Text style={styles.taskArtist} numberOfLines={1}>{item.artist}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-        <Text style={{ color: 'rgba(255,255,255,0.2)', fontSize: 11 }}>
-          {QUALITY_LABELS[item.quality]}
-        </Text>
-      </View>
-      {item.status === 'downloading' && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${item.progress}%` }]} />
-          </View>
-          <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>
-            {Math.round(item.progress)}%
+const TaskItem = React.memo(({ item, onRemove, onPause, onCancel }: {
+  item: DownloadTask;
+  onRemove: (id: string) => void;
+  onPause: (id: string) => void;
+  onCancel: (id: string) => void;
+}) => {
+  const isActive = item.status === 'downloading' || item.status === 'pending';
+  const isPaused = item.status === 'paused';
+
+  return (
+    <View style={styles.taskRow}>
+      <Image source={{ uri: item.cover }} style={styles.taskCover} />
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={styles.taskTitle} numberOfLines={1}>{item.title}</Text>
+        <Text style={styles.taskArtist} numberOfLines={1}>{item.artist}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.2)', fontSize: 11 }}>
+            {QUALITY_LABELS[item.quality]}
           </Text>
         </View>
+        {(item.status === 'downloading' || isPaused) && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${item.progress}%` }]} />
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>
+              {Math.round(item.progress)}%
+            </Text>
+          </View>
+        )}
+      </View>
+      <View style={{ marginLeft: 8 }}>
+        {item.status === 'pending' && <View style={styles.spinner} />}
+        {item.status === 'downloading' && (
+          <Text style={{ color: '#818cf8', fontSize: 11, fontWeight: '600' }}>下载中</Text>
+        )}
+        {isPaused && (
+          <Text style={{ color: '#fbbf24', fontSize: 11, fontWeight: '600' }}>已暂停</Text>
+        )}
+        {item.status === 'completed' && <Ionicons name="checkmark-circle" size={18} color="#4ade80" />}
+        {item.status === 'error' && (
+          <View style={{ alignItems: 'center' }}>
+            <Ionicons name="alert-circle" size={18} color="#f87171" />
+            <Text style={{ color: '#f87171', fontSize: 10, marginTop: 1 }}>失败</Text>
+          </View>
+        )}
+        {item.status === 'cancelled' && (
+          <View style={{ alignItems: 'center' }}>
+            <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.2)" />
+            <Text style={{ color: 'rgba(255,255,255,0.2)', fontSize: 10, marginTop: 1 }}>已取消</Text>
+          </View>
+        )}
+      </View>
+      {isPaused && (
+        <TouchableOpacity onPress={() => onCancel(item.songId)} activeOpacity={0.7} style={{ marginLeft: 4, padding: 4 }}>
+          <Ionicons name="close" size={16} color="#f87171" />
+        </TouchableOpacity>
       )}
-    </View>
-    <View style={{ marginLeft: 8 }}>
-      {item.status === 'pending' && <View style={styles.spinner} />}
-      {item.status === 'downloading' && (
-        <Text style={{ color: '#818cf8', fontSize: 11, fontWeight: '600' }}>下载中</Text>
-      )}
-      {item.status === 'completed' && <Ionicons name="checkmark-circle" size={18} color="#4ade80" />}
-      {item.status === 'error' && (
-        <View style={{ alignItems: 'center' }}>
-          <Ionicons name="alert-circle" size={18} color="#f87171" />
-          <Text style={{ color: '#f87171', fontSize: 10, marginTop: 1 }}>失败</Text>
+      {isActive && (
+        <View style={{ flexDirection: 'row', marginLeft: 4 }}>
+          <TouchableOpacity onPress={() => onPause(item.songId)} activeOpacity={0.7} style={{ padding: 4 }}>
+            <Ionicons name="pause" size={16} color="#fbbf24" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => onCancel(item.songId)} activeOpacity={0.7} style={{ padding: 4 }}>
+            <Ionicons name="close" size={16} color="#f87171" />
+          </TouchableOpacity>
         </View>
       )}
+      {item.status === 'error' && (
+        <TouchableOpacity onPress={() => onRemove(item.songId)} activeOpacity={0.7} style={{ marginLeft: 6, padding: 4 }}>
+          <Ionicons name="close" size={14} color="rgba(255,255,255,0.2)" />
+        </TouchableOpacity>
+      )}
     </View>
-    {item.status === 'error' && (
-      <TouchableOpacity onPress={() => onRemove(item.songId)} activeOpacity={0.7} style={{ marginLeft: 6, padding: 4 }}>
-        <Ionicons name="close" size={14} color="rgba(255,255,255,0.2)" />
-      </TouchableOpacity>
-    )}
-  </View>
-));
+  );
+});
 
 export default function DownloadsScreen() {
   const router = useRouter();
@@ -67,6 +103,7 @@ export default function DownloadsScreen() {
   const [tab, setTab] = useState<Tab>('downloading');
   const tasks = useDownloadStore((s) => s.tasks);
   const removeTask = useDownloadStore((s) => s.removeTask);
+  const pauseTask = useDownloadStore((s) => s.pauseTask);
 
   const handleBack = useCallback(() => {
     if (closing.current) return;
@@ -75,7 +112,7 @@ export default function DownloadsScreen() {
   }, [router]);
 
   const downloadingTasks = useMemo(
-    () => Object.values(tasks).filter((t) => t.status !== 'completed'),
+    () => Object.values(tasks).filter((t) => t.status !== 'completed' && t.status !== 'cancelled'),
     [tasks],
   );
 
@@ -84,11 +121,28 @@ export default function DownloadsScreen() {
     [tasks],
   );
 
-  const handleRemove = useCallback((id: string) => removeTask(id), [removeTask]);
+  const handleRemove = useCallback((id: string) => {
+    cancelDownload(id);
+    cancelPending(id);
+    removeTask(id);
+  }, [removeTask]);
+
+  const handlePause = useCallback((id: string) => {
+    pauseDownload(id);
+    pauseTask(id);
+  }, [pauseTask]);
+
+  const handleCancel = useCallback((id: string) => {
+    cancelDownload(id);
+    cancelPending(id);
+    removeTask(id);
+  }, [removeTask]);
 
   const renderItem = useCallback(
-    ({ item }: { item: DownloadTask }) => <TaskItem item={item} onRemove={handleRemove} />,
-    [handleRemove],
+    ({ item }: { item: DownloadTask }) => (
+      <TaskItem item={item} onRemove={handleRemove} onPause={handlePause} onCancel={handleCancel} />
+    ),
+    [handleRemove, handlePause, handleCancel],
   );
 
   const getItemLayout = useCallback(

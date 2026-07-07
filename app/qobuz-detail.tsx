@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { View, Text, FlatList, Image, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, FlatList, Image, TouchableOpacity, ActivityIndicator, StyleSheet, BackHandler } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -167,7 +167,7 @@ export default function QobuzDetailPage() {
       platform: 'qobuz' as const,
     };
     addTask(song, 'flac');
-    enqueueDownload(async () => {
+    enqueueDownload(sId, async () => {
       try {
         const info = await getFileUrl(track.id, 27, token);
         const filePath = await downloadSong(
@@ -199,6 +199,13 @@ export default function QobuzDetailPage() {
     });
   }, []);
 
+  useEffect(() => {
+    if (!selectMode) return;
+    const onBack = () => { setSelectMode(false); return true; };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [selectMode]);
+
   const handleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
       if (prev.size === tracks.length) return new Set();
@@ -218,7 +225,7 @@ export default function QobuzDetailPage() {
       };
       addTask(song, 'flac');
     }
-    enqueueDownload(async () => {
+    enqueueDownload('batch_' + Date.now(), async () => {
       let success = 0;
       for (let i = 0; i < selected.length; i++) {
         const t = selected[i];
@@ -314,26 +321,25 @@ export default function QobuzDetailPage() {
       <View style={{ flex: 1 }}>
         <View style={{
           flexDirection: 'row', alignItems: 'center',
-          paddingHorizontal: screenPadding.horizontal,
-          paddingTop: 40, paddingBottom: 8,
+          paddingHorizontal: 12, paddingTop: 40, paddingBottom: 4,
         }}>
-          <TouchableOpacity onPress={handleBack} activeOpacity={0.7} style={{ padding: 4, marginRight: 8 }}>
-            <Ionicons name="arrow-back" size={22} color="rgba(255,255,255,0.7)" />
+          <TouchableOpacity onPress={handleBack} activeOpacity={0.7} style={{ padding: 4 }}>
+            <Ionicons name="chevron-back" size={22} color="rgba(255,255,255,0.7)" />
           </TouchableOpacity>
-          <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', flex: 1 }}>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginLeft: 8, flex: 1 }} numberOfLines={1}>
             {type === 'album' ? 'Qobuz专辑详情' : 'Qobuz单曲详情'}
           </Text>
-          {type === 'album' && tracks.length > 1 && (
-            <TouchableOpacity onPress={toggleSelectMode} activeOpacity={0.7} style={{ padding: 4, marginRight: 4 }}>
-              <Text style={{ color: '#818cf8', fontSize: 13, fontWeight: '500' }}>
-                {selectMode ? '取消' : '选择'}
-              </Text>
-            </TouchableOpacity>
-          )}
           {selectMode && (
             <TouchableOpacity onPress={handleSelectAll} activeOpacity={0.7} style={{ padding: 4 }}>
               <Text style={{ color: '#818cf8', fontSize: 13, fontWeight: '500' }}>
                 {selectedIds.size === tracks.length ? '取消全选' : '全选'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {type === 'album' && tracks.length > 1 && (
+            <TouchableOpacity onPress={toggleSelectMode} activeOpacity={0.7} style={{ padding: 4 }}>
+              <Text style={{ color: '#818cf8', fontSize: 13, fontWeight: '500' }}>
+                {selectMode ? '取消' : '选择'}
               </Text>
             </TouchableOpacity>
           )}

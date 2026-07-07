@@ -92,8 +92,8 @@ android {
         applicationId 'com.annieplayer.diangoudev'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "2.1.1-dev"
+        versionCode 1
+        versionName "1.0.0-release"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

@@ -41,7 +41,7 @@ export function PlayerOverlay() {
         backgroundColor: '#0a0a1a',
       }, animatedStyle]}
     >
-      <FullPlayer onClose={onClose} />
+      {visible && <FullPlayer onClose={onClose} />}
     </Animated.View>
   );
 }

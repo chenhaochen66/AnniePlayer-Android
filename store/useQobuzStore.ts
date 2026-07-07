@@ -6,6 +6,7 @@ import type { QobuzToken } from '../types';
 interface QobuzState {
   tokens: QobuzToken[];
   addToken: (name: string, token: string) => void;
+  updateToken: (id: string, name: string, token: string) => void;
   removeToken: (id: string) => void;
   setActiveToken: (id: string) => void;
   getActiveToken: () => string | undefined;
@@ -26,6 +27,10 @@ export const useQobuzStore = create<QobuzState>()(
               isActive: s.tokens.length === 0,
             },
           ],
+        })),
+      updateToken: (id, name, token) =>
+        set((s) => ({
+          tokens: s.tokens.map((t) => (t.id === id ? { ...t, name, token } : t)),
         })),
       removeToken: (id) =>
         set((s) => {

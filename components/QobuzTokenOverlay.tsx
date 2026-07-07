@@ -20,9 +20,10 @@ function maskToken(token: string): string {
   return token.slice(0, 4) + '****' + token.slice(-4);
 }
 
-const TokenItem = React.memo(({ item, checkingId, onCheck, onSelect, onRemove }: {
+const TokenItem = React.memo(({ item, checkingId, onCheck, onSelect, onEdit, onRemove }: {
   item: QobuzToken; checkingId: string | null;
-  onCheck: (t: QobuzToken) => void; onSelect: (id: string) => void; onRemove: (id: string) => void;
+  onCheck: (t: QobuzToken) => void; onSelect: (id: string) => void;
+  onEdit: (t: QobuzToken) => void; onRemove: (id: string) => void;
 }) => (
   <View style={{
     flexDirection: 'row', alignItems: 'center',
@@ -54,8 +55,11 @@ const TokenItem = React.memo(({ item, checkingId, onCheck, onSelect, onRemove }:
       </View>
       <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14, marginTop: 3 }}>{maskToken(item.token)}</Text>
     </TouchableOpacity>
-    <TouchableOpacity onPress={() => onRemove(item.id)} activeOpacity={0.7} style={{ padding: 8 }}>
-      <Ionicons name="trash-outline" size={22} color="rgba(255,255,255,0.2)" />
+    <TouchableOpacity onPress={() => onEdit(item)} activeOpacity={0.7} style={{ padding: 6, marginLeft: 4 }}>
+      <Ionicons name="pencil-outline" size={20} color="rgba(255,255,255,0.35)" />
+    </TouchableOpacity>
+    <TouchableOpacity onPress={() => onRemove(item.id)} activeOpacity={0.7} style={{ padding: 6 }}>
+      <Ionicons name="trash-outline" size={20} color="rgba(255,255,255,0.25)" />
     </TouchableOpacity>
   </View>
 ));
@@ -65,9 +69,11 @@ export const QobuzTokenOverlay = React.memo(() => {
   const onClose = useCallback(() => useUIStore.getState().setQobuzTokenVisible(false), []);
   const tokens = useQobuzStore((s) => s.tokens);
   const addToken = useQobuzStore((s) => s.addToken);
+  const updateToken = useQobuzStore((s) => s.updateToken);
   const removeToken = useQobuzStore((s) => s.removeToken);
   const setActiveToken = useQobuzStore((s) => s.setActiveToken);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newToken, setNewToken] = useState('');
   const [checkingId, setCheckingId] = useState<string | null>(null);
@@ -90,11 +96,30 @@ export const QobuzTokenOverlay = React.memo(() => {
     const name = newName.trim();
     const token = newToken.trim();
     if (!name || !token) { Alert.alert('提示', '请填写名称和 Token'); return; }
-    addToken(name, token);
+    if (editingId) {
+      updateToken(editingId, name, token);
+    } else {
+      addToken(name, token);
+    }
     setNewName('');
     setNewToken('');
     setShowAdd(false);
-  }, [newName, newToken, addToken]);
+    setEditingId(null);
+  }, [newName, newToken, addToken, updateToken, editingId]);
+
+  const handleEdit = useCallback((item: QobuzToken) => {
+    setEditingId(item.id);
+    setNewName(item.name);
+    setNewToken(item.token);
+    setShowAdd(true);
+  }, []);
+
+  const handleCancelAdd = useCallback(() => {
+    setShowAdd(false);
+    setEditingId(null);
+    setNewName('');
+    setNewToken('');
+  }, []);
 
   const handleCheck = useCallback(async (item: QobuzToken) => {
     setCheckingId(item.id);
@@ -112,6 +137,7 @@ export const QobuzTokenOverlay = React.memo(() => {
     ({ item }: { item: QobuzToken }) => (
       <TokenItem
         item={item} checkingId={checkingId} onCheck={handleCheck} onSelect={setActiveToken}
+        onEdit={handleEdit}
         onRemove={(id) => {
           Alert.alert('删除 Token', `确定删除 "${item.name}" 吗？`, [
             { text: '取消', style: 'cancel' },
@@ -120,7 +146,7 @@ export const QobuzTokenOverlay = React.memo(() => {
         }}
       />
     ),
-    [checkingId, handleCheck, setActiveToken, removeToken],
+    [checkingId, handleCheck, setActiveToken, handleEdit, removeToken],
   );
 
   return (
@@ -138,8 +164,8 @@ export const QobuzTokenOverlay = React.memo(() => {
               <Ionicons name="arrow-back" size={22} color="rgba(255,255,255,0.7)" />
             </TouchableOpacity>
             <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', flex: 1 }}>Qobuz Token 管理</Text>
-            <TouchableOpacity onPress={() => setShowAdd(!showAdd)} activeOpacity={0.7} style={{ padding: 4 }}>
-              <Ionicons name="add" size={24} color="#818cf8" />
+            <TouchableOpacity onPress={() => { if (editingId) { handleCancelAdd(); } else { setShowAdd(!showAdd); } }} activeOpacity={0.7} style={{ padding: 4 }}>
+              <Ionicons name={showAdd ? "close" : "add"} size={24} color="#818cf8" />
             </TouchableOpacity>
           </View>
 
@@ -150,11 +176,11 @@ export const QobuzTokenOverlay = React.memo(() => {
               <TextInput value={newToken} onChangeText={setNewToken} placeholder="Token" placeholderTextColor="rgba(255,255,255,0.3)"
                 autoCapitalize="none" autoCorrect={false}
                 style={{ color: '#fff', fontSize: 15, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 12, marginBottom: 12 }} />
-              <TouchableOpacity onPress={handleAdd} activeOpacity={0.7}
-                style={{ backgroundColor: '#818cf8', borderRadius: 8, paddingVertical: 10, alignItems: 'center' }}>
-                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>保存</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity onPress={handleAdd} activeOpacity={0.7}
+              style={{ backgroundColor: '#818cf8', borderRadius: 8, paddingVertical: 10, alignItems: 'center' }}>
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>{editingId ? '更新' : '保存'}</Text>
+            </TouchableOpacity>
+          </View>
           )}
 
           {tokens.length === 0 ? (
@@ -172,7 +198,7 @@ export const QobuzTokenOverlay = React.memo(() => {
               initialNumToRender={12}
               maxToRenderPerBatch={10}
               windowSize={5}
-              contentContainerStyle={{ paddingBottom: 40 }}
+                contentContainerStyle={{ paddingBottom: 100 }}
             />
           )}
         </SafeAreaView>
