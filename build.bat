@@ -31,6 +31,7 @@ if exist "android\build\generated\autolinking\autolinking.json" (
 
 :release_prebuilt
 call :set_arm64_only
+call :sync_version
 echo === Build Release APK ===
 cd android
 call gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
@@ -51,6 +52,7 @@ if not exist android\ goto :dev_prebuild
 
 :dev_prebuilt
 call :set_arm64_only
+call :sync_version
 echo === Install Dev APK via npx expo run:android ===
 set RCT_ARCH=arm64-v8a
 call npx expo run:android --variant debug
@@ -75,6 +77,7 @@ call :set_arm64_only
 
 :debug_prebuilt
 call :set_arm64_only
+call :sync_version
 echo === Build Debug APK ===
 cd android
 call gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a
@@ -86,6 +89,12 @@ echo APK: android\app\build\outputs\apk\debug\app-debug.apk
 echo Install: adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 echo === Done! ===
 pause
+exit /b 0
+
+:sync_version
+rem Sync version from app.json to build.gradle and strings.xml
+powershell -ExecutionPolicy Bypass -File sync-version.ps1
+exit /b 0
 exit /b 0
 
 :set_arm64_only

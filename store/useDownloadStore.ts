@@ -8,7 +8,7 @@ interface DownloadTaskState {
   cover: string;
   quality: Quality;
   progress: number;
-  status: 'pending' | 'downloading' | 'completed' | 'error';
+  status: 'pending' | 'downloading' | 'completed' | 'error' | 'paused' | 'cancelled';
   filePath?: string;
 }
 
@@ -20,6 +20,8 @@ interface DownloadStore {
   failTask: (songId: string) => void;
   removeTask: (songId: string) => void;
   clearCompleted: () => void;
+  pauseTask: (songId: string) => void;
+  cancelTask: (songId: string) => void;
 }
 
 export const useDownloadStore = create<DownloadStore>()(
@@ -97,6 +99,31 @@ export const useDownloadStore = create<DownloadStore>()(
         }
       }
       set({ tasks: newTasks });
+    },
+
+    pauseTask: (songId) => {
+      const { tasks } = get();
+      const task = tasks[songId];
+      if (!task || (task.status !== 'downloading' && task.status !== 'pending')) return;
+      set({
+        tasks: {
+          ...tasks,
+          [songId]: { ...task, status: 'paused' },
+        },
+      });
+    },
+
+    cancelTask: (songId) => {
+      const { tasks } = get();
+      const task = tasks[songId];
+      if (!task) return;
+      const cancelledStatus: DownloadTaskState['status'] = 'cancelled';
+      set({
+        tasks: {
+          ...tasks,
+          [songId]: { ...task, status: cancelledStatus },
+        },
+      });
     },
   }),
 );

@@ -236,7 +236,7 @@ export const SingerDetailOverlay = React.memo(() => {
     if (!song) return;
     setPickerVisible(false);
     setPickerSong(null);
-    enqueueDownload(async () => {
+    enqueueDownload(song.id, async () => {
       setDownloadingId(song.id);
       addTask(song, quality);
       try {

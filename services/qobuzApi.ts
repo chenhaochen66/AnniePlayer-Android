@@ -89,14 +89,20 @@ export async function checkToken(token: string): Promise<{ region: string; valid
   const params: Record<string, string> = { app_id: APP_ID };
   const { ts, sig } = createSignature('user/get', params);
   const url = `${BASE_URL}user/get?app_id=${APP_ID}&request_ts=${ts}&request_sig=${sig}`;
-  const resp = await fetch(url, { headers: headers(token) });
-  if (!resp.ok) {
-    if (resp.status === 401) return { region: '', valid: false };
-    throw new Error(`HTTP ${resp.status}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  try {
+    const resp = await fetch(url, { headers: headers(token), signal: controller.signal });
+    if (!resp.ok) {
+      if (resp.status === 401) return { region: '', valid: false };
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    const region = data?.region ?? data?.country ?? '';
+    return { region, valid: !!region };
+  } finally {
+    clearTimeout(timeoutId);
   }
-  const data = await resp.json();
-  const region = data?.region ?? data?.country ?? '';
-  return { region, valid: !!region };
 }
 
 export async function getTrack(trackId: string, token: string): Promise<any> {

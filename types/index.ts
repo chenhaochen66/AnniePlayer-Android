@@ -39,7 +39,7 @@ export interface DownloadTask {
   cover: string;
   quality: Quality;
   progress: number;
-  status: 'pending' | 'downloading' | 'completed' | 'error';
+  status: 'pending' | 'downloading' | 'completed' | 'error' | 'paused' | 'cancelled';
   filePath?: string;
 }
 

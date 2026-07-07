@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { StatusBar, View } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { StatusBar, View, Alert } from 'react-native';
 import { Stack } from 'expo-router';
+import { useUpdates } from 'expo-updates';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -22,6 +23,8 @@ TrackPlayer.registerPlaybackService(() => PlaybackService);
 export default function RootLayout() {
   const [showMain, setShowMain] = useState(false);
   const [splashDone, setSplashDone] = useState(false);
+  const { isUpdatePending, downloadedUpdate } = useUpdates();
+  const alertedRef = useRef(false);
 
   useEffect(() => {
     TrackPlayer.setupPlayer({}).then(() => {
@@ -33,6 +36,14 @@ export default function RootLayout() {
     }).catch(() => {});
     return () => { TrackPlayer.reset().catch(() => {}); };
   }, []);
+
+  useEffect(() => {
+    if (isUpdatePending && !alertedRef.current && downloadedUpdate) {
+      alertedRef.current = true;
+      const time = downloadedUpdate.createdAt?.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) ?? '';
+      Alert.alert('更新已下载', `发布于 ${time}，重启后生效`);
+    }
+  }, [isUpdatePending, downloadedUpdate]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
