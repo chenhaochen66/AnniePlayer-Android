@@ -1,9 +1,7 @@
 ﻿import * as FileSystem from 'expo-file-system/legacy';
-import { File as NewFile } from 'expo-file-system';
 import type { Quality } from '../types';
-import { writeId3ToBytes, appendFlacMetadataToBytes, fetchImageBytes } from '../utils/id3Writer';
 import { decodeHtmlEntities as decodeEntities } from '../utils/stringUtils';
-import { scanFile, saveSidecar } from '../modules/media-scanner/src/MediaScanner';
+import { scanFile, tagAudioFile } from '../modules/media-scanner/src/MediaScanner';
 
 const DBG = '[download]';
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
@@ -16,10 +14,6 @@ interface ActiveDownload {
 const activeDownloads = new Map<string, ActiveDownload>();
 
 function ext(q: Quality): string { return q === 'flac' || q === 'hires' ? '.flac' : '.mp3'; }
-
-function writeFile(uri: string, data: Uint8Array): Promise<void> {
-  return ((new NewFile(uri) as any).write(data));
-}
 
 export function pauseDownload(songId: string): boolean {
   const ad = activeDownloads.get(songId);
@@ -75,84 +69,52 @@ export async function downloadSong(
     }
   }
   if (!dl?.uri) throw new Error('Download failed');
-  const fileSize = ((await FileSystem.getInfoAsync(tempPath)) as any).size || 0;
-  console.log(DBG, 'downloaded, size:', fileSize);
+  console.log(DBG, 'downloaded');
   onProgress(0.5);
 
-  let outPath = tempPath;
-  let sidecarCover: Uint8Array | null = null;
+  // Tag audio file with metadata
+  let coverBase64 = '';
   try {
-    if (fileSize > 100 * 1024 * 1024) {
-      console.log(DBG, 'file too large, skipping metadata');
-      sidecarCover = await fetchImageBytes(coverUrl);
-    } else {
-      const img = await fetchImageBytes(coverUrl);
-      console.log(DBG, 'processing metadata...');
+    const ext = (coverUrl.split('.').pop()?.split('?')[0] || 'jpg');
+    const coverTmp = FileSystem.cacheDirectory + 'cover_' + songId + '.' + ext;
+    await FileSystem.deleteAsync(coverTmp, { idempotent: true }).catch(() => {});
+    const cr = await FileSystem.downloadAsync(coverUrl, coverTmp);
+    coverBase64 = await FileSystem.readAsStringAsync(cr.uri, { encoding: FileSystem.EncodingType.Base64 });
+    await FileSystem.deleteAsync(coverTmp, { idempotent: true }).catch(() => {});
+  } catch { console.log(DBG, 'cover fetch failed'); }
 
-      if (quality === 'flac' || quality === 'hires') {
-        const nf = new NewFile(tempPath);
-        const audio = await nf.bytes();
-        const processed = appendFlacMetadataToBytes(audio, { title, artist, album, lyric, coverUrl, imageBytes: img });
-        const outTemp = tempDir + 'tagged_' + songId + e;
-        await writeFile(outTemp, processed || audio);
-        await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
-        outPath = outTemp;
-      } else {
-        const nf = new NewFile(tempPath);
-        const audio = await nf.bytes();
-        const processed = writeId3ToBytes(audio, { title, artist, album, lyric, coverUrl, imageBytes: img });
-        const outTemp = tempDir + 'tagged_' + songId + e;
-        await writeFile(outTemp, processed || audio);
-        await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
-        outPath = outTemp;
-      }
-    }
+  try {
+    console.log(DBG, 'tagging audio...');
+    await tagAudioFile(tempPath.replace(/^file:\/\//, ''), title, artist, album || '', lyric || '', coverBase64, coverUrl);
+    console.log(DBG, 'tag done');
   } catch (ex: any) {
     if (activeDownloads.get(songId)?.resumable !== resumable) throw ex;
-    console.log(DBG, 'meta failed:', ex.message, 'using raw');
+    console.log(DBG, 'tag failed:', ex.message, 'using raw');
   }
   onProgress(0.8);
 
   const finalPath = tempDir + safeName;
-  if (outPath !== finalPath) {
+  if (tempPath !== finalPath) {
     try {
-      await FileSystem.moveAsync({ from: outPath, to: finalPath });
-      if (outPath !== tempPath) await FileSystem.deleteAsync(outPath, { idempotent: true }).catch(() => {});
+      await FileSystem.moveAsync({ from: tempPath, to: finalPath });
     } catch {
-      await FileSystem.copyAsync({ from: outPath, to: finalPath }).catch(() => {});
-      if (outPath !== tempPath) await FileSystem.deleteAsync(outPath, { idempotent: true }).catch(() => {});
+      await FileSystem.copyAsync({ from: tempPath, to: finalPath }).catch(() => {});
     }
-    outPath = finalPath;
   }
 
   let outUri = '';
-  try { outUri = await scanFile(outPath.replace(/^file:\/\//, '')) || ''; } catch {}
-
-  if (outUri && fileSize > 100 * 1024 * 1024 && (sidecarCover || lyric)) {
-    const baseName = safeName.replace(/\.(flac|mp3)$/, '');
-    try {
-      if (sidecarCover) {
-        let binary = '';
-        for (let i = 0; i < sidecarCover.length; i++) binary += String.fromCharCode(sidecarCover[i]);
-        await saveSidecar(baseName + '.jpg', btoa(binary));
-      }
-      if (lyric) {
-        await saveSidecar(baseName + '.lrc', btoa(unescape(encodeURIComponent(lyric))));
-      }
-    } catch {}
-  }
+  try { outUri = await scanFile(finalPath.replace(/^file:\/\//, '')) || ''; } catch {}
 
   if (!outUri) {
     const docDir = FileSystem.documentDirectory;
     if (docDir) {
       outUri = docDir + encodeURIComponent(safeName);
       await FileSystem.deleteAsync(outUri, { idempotent: true }).catch(() => {});
-      await FileSystem.moveAsync({ from: outPath, to: outUri }).catch(() => {});
+      await FileSystem.moveAsync({ from: finalPath, to: outUri }).catch(() => {});
     }
   }
 
-  if (outPath !== tempPath) await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
-  if (outPath !== tempPath) await FileSystem.deleteAsync(outPath, { idempotent: true }).catch(() => {});
+  await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
   console.log(DBG, 'done:', outUri);
   onProgress(1);
   activeDownloads.delete(songId);
