@@ -15,10 +15,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import Animated, {
   useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-  Easing,
-  cancelAnimation,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -71,7 +67,7 @@ const LyricItem = React.memo(
 );
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const COVER_SIZE = Math.min(SCREEN_WIDTH * 0.68, SCREEN_HEIGHT * 0.38, 320);
+const COVER_SIZE = Math.min(SCREEN_WIDTH * 0.78, SCREEN_HEIGHT * 0.44);
 const PAGER_HEIGHT = SCREEN_HEIGHT * 0.5;
 const TARGET_LINE_Y = SCREEN_HEIGHT * 0.205;
 
@@ -364,8 +360,6 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
   const completeTask = useDownloadStore((s) => s.completeTask);
   const failTask = useDownloadStore((s) => s.failTask);
 
-  const rotation = useSharedValue(0);
-
   const animatedContentStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: 0 }],
   }));
@@ -384,25 +378,10 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
   }, [currentSong?.id]);
 
   useEffect(() => {
-    if (!isPlaying) {
-      cancelAnimation(rotation);
-    } else {
-      rotation.value = withTiming(360 * 1000, {
-        duration: 8000 * 1000,
-        easing: Easing.linear,
-      });
-    }
-  }, [isPlaying]);
-
-  useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({ x: pageIndex * SCREEN_WIDTH, animated: true });
     }
   }, [pageIndex]);
-
-  const coverStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${rotation.value}deg` }],
-  }));
 
   const handleDownload = useCallback(() => {
     if (!currentSong) return;
@@ -542,7 +521,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
           >
             <View style={{ width: SCREEN_WIDTH, justifyContent: 'center', alignItems: 'center' }}>
               <View style={[styles.cover, styles.coverShadow]}>
-                <Animated.View style={coverStyle}>
+                <View>
                   {coverError ? (
                     <View style={[styles.cover, styles.coverFallback]}>
                       <Ionicons name="musical-note" size={44} color="rgba(255,255,255,0.15)" />
@@ -550,7 +529,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
                   ) : (
                     <Image source={{ uri: currentSong.cover }} style={styles.coverImage} onError={() => setCoverError(true)} />
                   )}
-                </Animated.View>
+                </View>
               </View>
             </View>
 
