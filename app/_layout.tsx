@@ -4,7 +4,7 @@ import { Stack } from 'expo-router';
 import { useUpdates } from 'expo-updates';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import TrackPlayer, { Capability, AppKilledPlaybackBehavior } from 'react-native-track-player';
 import { queryClient } from '../services/queryClient';
@@ -21,6 +21,7 @@ import { ContactModal } from '../components/ContactModal';
 TrackPlayer.registerPlaybackService(() => PlaybackService);
 
 export default function RootLayout() {
+  const insets = useSafeAreaInsets();
   const [showMain, setShowMain] = useState(false);
   const [splashDone, setSplashDone] = useState(false);
   const { isUpdatePending, downloadedUpdate } = useUpdates();
@@ -54,15 +55,17 @@ export default function RootLayout() {
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             <View style={{ flex: 1, backgroundColor: colors.background }}>
               <AuroraBackground />
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: 'transparent' },
-                }}
-              >
-                <Stack.Screen name="index" />
-                <Stack.Screen name="player" options={{ animation: 'none' }} />
-              </Stack>
+              <View style={{ flex: 1, paddingBottom: insets.bottom }}>
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: 'transparent' },
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="player" options={{ animation: 'none' }} />
+                </Stack>
+              </View>
               <MiniPlayerWrapper />
               <LyricsModal />
               <PlayerOverlay />

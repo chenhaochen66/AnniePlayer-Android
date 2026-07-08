@@ -6,7 +6,7 @@ import {
   Image,
   TouchableOpacity,
   StyleSheet,
-  Dimensions,
+  useWindowDimensions,
   BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,7 +19,6 @@ import { DownloadTask, QUALITY_LABELS } from '../types';
 import { pauseDownload, cancelDownload } from '../services/downloadService';
 import { cancelPending } from '../utils/downloadQueue';
 
-const SCREEN_H = Dimensions.get('window').height;
 const ITEM_H = 74;
 type Tab = 'downloading' | 'completed';
 
@@ -101,14 +100,15 @@ const TaskItem = React.memo(({ item, onRemove, onPause, onCancel }: {
 });
 
 export const DownloadsOverlay = React.memo(() => {
+  const { height: winH } = useWindowDimensions();
   const isOpen = useUIStore((s) => s.downloadQueueVisible);
   const onClose = useCallback(() => useUIStore.getState().setDownloadQueueVisible(false), []);
 
-  const translateY = useSharedValue(SCREEN_H);
+  const translateY = useSharedValue(winH);
 
   useEffect(() => {
-    translateY.value = withTiming(isOpen ? 0 : SCREEN_H, { duration: 150 });
-  }, [isOpen]);
+    translateY.value = withTiming(isOpen ? 0 : winH, { duration: 150 });
+  }, [isOpen, winH]);
 
   useEffect(() => {
     if (!isOpen) return;

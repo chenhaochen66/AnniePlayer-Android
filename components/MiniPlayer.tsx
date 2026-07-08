@@ -5,7 +5,6 @@ import {
   Text,
   Image,
   TouchableOpacity,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
@@ -13,6 +12,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
 import { useColorStore } from '../store/useColorStore';
@@ -22,6 +22,7 @@ import { MovingText } from './MovingText';
 const HIDDEN_TRANSLATE_Y = 120;
 
 export const MiniPlayer = React.memo(() => {
+  const insets = useSafeAreaInsets();
   const segments = useSegments();
   const currentSong = usePlayerStore((s) => s.currentSong);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
@@ -40,7 +41,7 @@ export const MiniPlayer = React.memo(() => {
   const translateY = useSharedValue(isVisible ? 0 : HIDDEN_TRANSLATE_Y);
 
   useEffect(() => {
-    translateY.value = withTiming(isVisible ? 0 : HIDDEN_TRANSLATE_Y, { duration: 200 });
+    translateY.value = isVisible ? withTiming(0, { duration: 200 }) : HIDDEN_TRANSLATE_Y;
   }, [isVisible]);
 
   useEffect(() => {
@@ -68,9 +69,9 @@ export const MiniPlayer = React.memo(() => {
       style={[{
         position: 'absolute',
         bottom: 0,
-        left: 8,
-        right: 8,
-        paddingBottom: Platform.OS === 'ios' ? 30 : 12,
+        left: 0,
+        right: 0,
+        paddingBottom: insets.bottom || 12,
       }, containerStyle]}
     >
       <TouchableOpacity
@@ -79,7 +80,7 @@ export const MiniPlayer = React.memo(() => {
         style={{
           flexDirection: 'row',
           alignItems: 'center',
-          paddingHorizontal: 14,
+          paddingHorizontal: 16,
           paddingVertical: 14,
           backgroundColor: 'rgba(28,28,48,0.94)',
           borderRadius: 16,
@@ -101,7 +102,7 @@ export const MiniPlayer = React.memo(() => {
 
         <View style={{
           position: 'absolute',
-          bottom: 0, left: 0, height: 3,
+          bottom: 0, left: 0, height: 4,
           width: `${progress}%`,
           backgroundColor: palette.primary,
           opacity: 0.4,
@@ -147,12 +148,12 @@ export const MiniPlayer = React.memo(() => {
             backgroundColor: 'rgba(255,255,255,0.08)',
             alignItems: 'center',
             justifyContent: 'center',
-            marginLeft: 10,
+            marginLeft: 12,
           }}
         >
           <Ionicons
             name={isPlaying ? 'pause' : 'play'}
-            size={18}
+            size={20}
             color="#fff"
             style={{ marginLeft: isPlaying ? 0 : 2 }}
           />

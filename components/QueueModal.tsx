@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, FlatList, Dimensions, BackHandler } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, useWindowDimensions, BackHandler } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   useAnimatedStyle,
@@ -11,10 +11,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const PANEL_HEIGHT = SCREEN_HEIGHT * 0.6;
-
 export const QueueModal = React.memo(() => {
+  const { height: winH } = useWindowDimensions();
+  const panelHeight = winH * 0.6;
   const visible = useUIStore((s) => s.queueVisible);
   const onClose = useCallback(() => useUIStore.getState().setQueueVisible(false), []);
   const { bottom } = useSafeAreaInsets();
@@ -22,7 +21,7 @@ export const QueueModal = React.memo(() => {
   const currentIndex = usePlayerStore((s) => s.currentIndex);
   const playIndex = usePlayerStore((s) => s.playIndex);
   const removeFromQueue = usePlayerStore((s) => s.removeFromQueue);
-  const translateY = useSharedValue(PANEL_HEIGHT);
+  const translateY = useSharedValue(panelHeight);
   const overlayOpacity = useSharedValue(0);
 
   useEffect(() => {
@@ -31,10 +30,10 @@ export const QueueModal = React.memo(() => {
       translateY.value = withTiming(0, config);
       overlayOpacity.value = withTiming(1, config);
     } else {
-      translateY.value = withTiming(PANEL_HEIGHT, config);
+      translateY.value = withTiming(panelHeight, config);
       overlayOpacity.value = withTiming(0, config);
     }
-  }, [visible]);
+  }, [visible, panelHeight]);
 
   useEffect(() => {
     if (!visible) return;
@@ -122,7 +121,7 @@ export const QueueModal = React.memo(() => {
           backgroundColor: '#1a1a2e',
           borderTopLeftRadius: 20,
           borderTopRightRadius: 20,
-          maxHeight: PANEL_HEIGHT,
+          maxHeight: panelHeight,
           paddingTop: 20,
           paddingBottom: bottom + 16,
         }, panelStyle]}

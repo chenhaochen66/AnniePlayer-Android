@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { View, Text, FlatList, Image, TouchableOpacity, ActivityIndicator, Dimensions, StyleSheet } from 'react-native';
+import { View, Text, FlatList, Image, TouchableOpacity, ActivityIndicator, useWindowDimensions, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,7 +15,6 @@ import { QualityPicker } from '../components/QualityPicker';
 import { enqueueDownload } from '../utils/downloadQueue';
 import type { AlbumSong, Song, Quality } from '../types';
 
-const SCREEN_H = Dimensions.get('window').height;
 const ROW_H = 60;
 
 const AlbumSongRow = React.memo(
@@ -100,18 +99,19 @@ const stylesMini = StyleSheet.create({
 });
 
 export default function AlbumDetailPage() {
+  const { height: winH } = useWindowDimensions();
   const { id, cover, name, artist } = useLocalSearchParams<{ id: string; cover?: string; name?: string; artist?: string }>();
   const router = useRouter();
-  const translateY = useSharedValue(SCREEN_H);
+  const translateY = useSharedValue(winH);
   const closing = useRef(false);
   useEffect(() => { translateY.value = withTiming(0, { duration: 150 }); }, []);
   const animatedStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
   const handleBack = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
-    translateY.value = withTiming(SCREEN_H, { duration: 150 });
+    translateY.value = withTiming(winH, { duration: 150 });
     setTimeout(() => router.back(), 200);
-  }, [router]);
+  }, [router, winH]);
   const albumCover = cover ? decodeURIComponent(cover) : '';
   const albumName = name ? decodeURIComponent(name) : '';
   const albumArtist = artist ? decodeURIComponent(artist) : '';

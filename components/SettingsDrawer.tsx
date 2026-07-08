@@ -3,6 +3,7 @@ import {
   View,
   Text,
   TouchableOpacity,
+  ScrollView,
   Dimensions,
   Alert,
   BackHandler,
@@ -88,19 +89,19 @@ export const SettingsDrawer = React.memo(() => {
             height: '100%',
             backgroundColor: '#12122a',
             paddingTop: 40 + insets.top,
-            paddingHorizontal: 20,
           },
           drawerStyle,
         ]}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 32 }}>
-          <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={{ padding: 4 }}>
-            <Ionicons name="close" size={22} color="rgba(255,255,255,0.7)" />
-          </TouchableOpacity>
-          <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', marginLeft: 12 }}>
-            设置
-          </Text>
-        </View>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 90, paddingHorizontal: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 32 }}>
+            <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={{ padding: 4 }}>
+              <Ionicons name="close" size={22} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
+            <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', marginLeft: 12 }}>
+              设置
+            </Text>
+          </View>
 
           <TouchableOpacity
             onPress={() => useUIStore.getState().setQobuzTokenVisible(true)}
@@ -121,110 +122,111 @@ export const SettingsDrawer = React.memo(() => {
             <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
           </TouchableOpacity>
 
-        <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '600', marginBottom: 12, letterSpacing: 0.5 }}>
-          下载
-        </Text>
-
-        <TouchableOpacity
-          onPress={() => {
-            useUIStore.getState().setDownloadQueueVisible(true);
-          }}
-          activeOpacity={0.7}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: 'rgba(255,255,255,0.03)',
-            borderRadius: 12,
-            padding: 16,
-            marginBottom: 12,
-          }}
-        >
-          <Ionicons name="list-outline" size={18} color="rgba(255,255,255,0.5)" />
-          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
-            下载任务
+          <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '600', marginBottom: 12, letterSpacing: 0.5 }}>
+            下载
           </Text>
-          <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
-        </TouchableOpacity>
 
-        <View style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 16, marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <Ionicons name="folder-outline" size={18} color="rgba(255,255,255,0.5)" />
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10 }}>
-              保存位置
+          <TouchableOpacity
+            onPress={() => {
+              useUIStore.getState().setDownloadQueueVisible(true);
+            }}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255,255,255,0.03)',
+              borderRadius: 12,
+              padding: 16,
+              marginBottom: 12,
+            }}
+          >
+            <Ionicons name="list-outline" size={18} color="rgba(255,255,255,0.5)" />
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
+              下载任务
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
+          </TouchableOpacity>
+
+          <View style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <Ionicons name="folder-outline" size={18} color="rgba(255,255,255,0.5)" />
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10 }}>
+                保存位置
+              </Text>
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 13, lineHeight: 20 }}>
+              音频文件自动保存到 Music/Annieplayer 文件夹。
             </Text>
           </View>
-          <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 13, lineHeight: 20 }}>
-            音频文件自动保存到 Music/Annieplayer 文件夹。
+
+          <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '600', marginBottom: 12, letterSpacing: 0.5 }}>
+            缓存
           </Text>
-        </View>
 
-        <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '600', marginBottom: 12, letterSpacing: 0.5 }}>
-          缓存
-        </Text>
+          <TouchableOpacity
+            onPress={handleClearCache}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255,255,255,0.03)',
+              borderRadius: 12,
+              padding: 16,
+            }}
+          >
+            <Ionicons name="trash-outline" size={18} color="rgba(255,255,255,0.5)" />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
+                清除缓存
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, marginTop: 1 }}>
+                {cacheSize > 0 ? `当前缓存 ${formatSize(cacheSize)}` : '暂无缓存'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={handleClearCache}
-          activeOpacity={0.7}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: 'rgba(255,255,255,0.03)',
-            borderRadius: 12,
-            padding: 16,
-          }}
-        >
-          <Ionicons name="trash-outline" size={18} color="rgba(255,255,255,0.5)" />
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
-              清除缓存
+          <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '600', marginBottom: 12, letterSpacing: 0.5, marginTop: 8 }}>
+            关于
+          </Text>
+
+          <TouchableOpacity
+            onPress={() => Linking.openURL('https://www.hifiindex.tech/')}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255,255,255,0.03)',
+              borderRadius: 12,
+              padding: 16,
+            }}
+          >
+            <Ionicons name="globe-outline" size={18} color="rgba(255,255,255,0.5)" />
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
+              HIFI 科普网站
             </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, marginTop: 1 }}>
-              {cacheSize > 0 ? `当前缓存 ${formatSize(cacheSize)}` : '暂无缓存'}
+            <Ionicons name="open-outline" size={16} color="rgba(255,255,255,0.2)" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => useUIStore.getState().setContactVisible(true)}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255,255,255,0.03)',
+              borderRadius: 12,
+              padding: 16,
+              marginTop: 8,
+            }}
+          >
+            <Ionicons name="mail-outline" size={18} color="rgba(255,255,255,0.5)" />
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
+              联系我们
             </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
-        </TouchableOpacity>
-
-        <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '600', marginBottom: 12, letterSpacing: 0.5, marginTop: 8 }}>
-          关于
-        </Text>
-
-        <TouchableOpacity
-          onPress={() => Linking.openURL('https://www.hifiindex.tech/')}
-          activeOpacity={0.7}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: 'rgba(255,255,255,0.03)',
-            borderRadius: 12,
-            padding: 16,
-          }}
-        >
-          <Ionicons name="globe-outline" size={18} color="rgba(255,255,255,0.5)" />
-          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
-            HIFI 科普网站
-          </Text>
-           <Ionicons name="open-outline" size={16} color="rgba(255,255,255,0.2)" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => useUIStore.getState().setContactVisible(true)}
-          activeOpacity={0.7}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: 'rgba(255,255,255,0.03)',
-            borderRadius: 12,
-            padding: 16,
-            marginTop: 8,
-          }}
-        >
-          <Ionicons name="mail-outline" size={18} color="rgba(255,255,255,0.5)" />
-          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
-            联系我们
-          </Text>
-          <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
-        </TouchableOpacity>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
+          </TouchableOpacity>
+        </ScrollView>
       </Animated.View>
     </View>
   );

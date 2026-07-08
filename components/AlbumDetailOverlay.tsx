@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity, ActivityIndicator,
-  Dimensions, StyleSheet, BackHandler,
+  useWindowDimensions, StyleSheet, BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, FadeInDown } from 'react-native-reanimated';
@@ -18,7 +18,6 @@ import { QualityPicker } from '../components/QualityPicker';
 import { enqueueDownload } from '../utils/downloadQueue';
 import type { AlbumSong, Song, Quality } from '../types';
 
-const SCREEN_H = Dimensions.get('window').height;
 const ROW_H = 60;
 
 const AlbumSongRow = React.memo(
@@ -103,15 +102,16 @@ const stylesMini = StyleSheet.create({
 });
 
 export const AlbumDetailOverlay = React.memo(() => {
+  const { height: winH } = useWindowDimensions();
   const isOpen = useUIStore((s) => s.albumDetailVisible);
   const data = useUIStore((s) => s.albumDetailData);
   const onClose = useCallback(() => useUIStore.getState().setAlbumDetailVisible(false), []);
 
-  const translateY = useSharedValue(SCREEN_H);
+  const translateY = useSharedValue(winH);
 
   useEffect(() => {
-    translateY.value = withTiming(isOpen ? 0 : SCREEN_H, { duration: 150 });
-  }, [isOpen]);
+    translateY.value = withTiming(isOpen ? 0 : winH, { duration: 150 });
+  }, [isOpen, winH]);
 
   useEffect(() => {
     if (!isOpen) return;

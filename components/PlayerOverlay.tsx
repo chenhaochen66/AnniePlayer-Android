@@ -1,15 +1,14 @@
 import React, { useEffect, useCallback } from 'react';
-import { Dimensions, BackHandler } from 'react-native';
+import { useWindowDimensions, BackHandler } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { useUIStore } from '../store/useUIStore';
 import { FullPlayer } from './FullPlayer';
 
-const SCREEN_H = Dimensions.get('window').height;
-
 export function PlayerOverlay() {
+  const { height: winH } = useWindowDimensions();
   const visible = useUIStore((s) => s.playerOverlayVisible);
   const setVisible = useUIStore((s) => s.setPlayerOverlayVisible);
-  const translateY = useSharedValue(SCREEN_H);
+  const translateY = useSharedValue(winH);
   const onClose = useCallback(() => setVisible(false), [setVisible]);
 
   useEffect(() => {
@@ -26,8 +25,8 @@ export function PlayerOverlay() {
   }, [visible, setVisible]);
 
   useEffect(() => {
-    translateY.value = withTiming(visible ? 0 : SCREEN_H, { duration: 150 });
-  }, [visible]);
+    translateY.value = withTiming(visible ? 0 : winH, { duration: 150 });
+  }, [visible, winH]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
@@ -41,7 +40,7 @@ export function PlayerOverlay() {
         backgroundColor: '#0a0a1a',
       }, animatedStyle]}
     >
-      {visible && <FullPlayer onClose={onClose} />}
+      <FullPlayer onClose={onClose} />
     </Animated.View>
   );
 }
