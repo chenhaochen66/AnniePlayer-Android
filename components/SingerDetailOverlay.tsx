@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { View, Text, FlatList, Image, TouchableOpacity, Dimensions, StyleSheet, BackHandler } from 'react-native';
+import { View, Text, FlatList, Image, TouchableOpacity, useWindowDimensions, StyleSheet, BackHandler } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,12 +17,8 @@ import { SkeletonLoader } from './SkeletonLoader';
 import { enqueueDownload } from '../utils/downloadQueue';
 import type { Song, Album, Quality } from '../types';
 
-const SCREEN_H = Dimensions.get('window').height;
 const ROW_H = 60;
 const ALBUM_GAP = 10;
-const SCREEN_W = Dimensions.get('window').width;
-const ALBUM_CARD_W = (SCREEN_W - 8 * 2 - ALBUM_GAP) / 2;
-const ALBUM_CARD_H = Math.round(ALBUM_CARD_W + 68);
 
 const SongRow = React.memo(({ item, index, activeSongId, downloadingId, downloadTask, onPlay, onDownload }: {
   item: Song; index: number; activeSongId?: string; downloadingId: string | null;
@@ -104,16 +100,19 @@ function getPageRange(current: number, total: number): (number | 'ellipsis')[] {
 }
 
 export const SingerDetailOverlay = React.memo(() => {
+  const { width: winW, height: winH } = useWindowDimensions();
+  const albumCardW = (winW - 8 * 2 - ALBUM_GAP) / 2;
+  const albumCardH = Math.round(albumCardW + 68);
   const isOpen = useUIStore((s) => s.singerDetailVisible);
   const data = useUIStore((s) => s.singerDetailData);
   const albumOpen = useUIStore((s) => s.albumDetailVisible);
   const onClose = useCallback(() => useUIStore.getState().setSingerDetailVisible(false), []);
 
-  const translateY = useSharedValue(SCREEN_H);
+  const translateY = useSharedValue(winH);
 
   useEffect(() => {
-    translateY.value = withTiming(isOpen ? 0 : SCREEN_H, { duration: 150 });
-  }, [isOpen]);
+    translateY.value = withTiming(isOpen ? 0 : winH, { duration: 150 });
+  }, [isOpen, winH]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -285,7 +284,7 @@ export const SingerDetailOverlay = React.memo(() => {
 
   const renderAlbumItem = useCallback(
     ({ item }: { item: Album }) => (
-      <View style={{ height: ALBUM_CARD_H, marginBottom: ALBUM_GAP }}>
+      <View style={{ height: albumCardH, marginBottom: ALBUM_GAP }}>
         <AlbumCard album={item} onPress={handleAlbumPress} />
       </View>
     ),
@@ -372,7 +371,7 @@ export const SingerDetailOverlay = React.memo(() => {
           renderItem={renderAlbumItem}
           keyExtractor={(item) => item.albumid}
           numColumns={2}
-          getItemLayout={(_, i) => ({ length: ALBUM_CARD_H + ALBUM_GAP, offset: (ALBUM_CARD_H + ALBUM_GAP) * Math.floor(i / 2), index: i })}
+          getItemLayout={(_, i) => ({ length: albumCardH + ALBUM_GAP, offset: (albumCardH + ALBUM_GAP) * Math.floor(i / 2), index: i })}
           windowSize={5}
           maxToRenderPerBatch={10}
           initialNumToRender={6}

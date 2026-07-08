@@ -39,19 +39,29 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   }, []);
   useTrackPlayerEvents(remoteNextPrevEvents, onRemoteNextPrev);
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const idx = await NativeModules.TrackPlayerModule.getQueueIndex();
-        if (idx == null || idx < 0) return;
-        const { queue, currentIndex, playbackId } = usePlayerStore.getState();
-        if (idx < queue.length && idx !== currentIndex) {
-          usePlayerStore.setState({ currentIndex: idx, currentSong: queue[idx], playbackId: playbackId + 1 });
-        }
-      } catch {}
-    }, 1000);
-    return () => clearInterval(interval);
+  const syncFromNative = useCallback(async () => {
+    try {
+      const idx = await NativeModules.TrackPlayerModule.getQueueIndex();
+      if (idx == null || idx < 0) return;
+      const { queue, currentIndex } = usePlayerStore.getState();
+      if (idx < queue.length && idx !== currentIndex) {
+        usePlayerStore.setState({ currentIndex: idx, currentSong: queue[idx], playbackId: usePlayerStore.getState().playbackId + 1 });
+      }
+      const playbackState = await NativeModules.TrackPlayerModule.getPlaybackState();
+      if (playbackState?.state) {
+        const s = playbackState.state;
+        usePlayerStore.getState().setIsPlaying(s === 'playing' || s === 'ready' || s === 'buffering' || s === 'loading');
+      }
+    } catch {}
   }, []);
+
+  const trackChangeEvents = useMemo(() => [Event.PlaybackActiveTrackChanged], []);
+  useTrackPlayerEvents(trackChangeEvents, syncFromNative);
+
+  useEffect(() => {
+    const interval = setInterval(syncFromNative, 5000);
+    return () => clearInterval(interval);
+  }, [syncFromNative]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', async (state) => {

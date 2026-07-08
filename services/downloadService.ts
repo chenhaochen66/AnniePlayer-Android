@@ -3,7 +3,7 @@ import { File as NewFile } from 'expo-file-system';
 import type { Quality } from '../types';
 import { writeId3ToBytes, appendFlacMetadataToBytes, fetchImageBytes } from '../utils/id3Writer';
 import { decodeHtmlEntities as decodeEntities } from '../utils/stringUtils';
-import { scanFile } from '../modules/media-scanner/src/MediaScanner';
+import { scanFile, saveSidecar } from '../modules/media-scanner/src/MediaScanner';
 
 const DBG = '[download]';
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
@@ -80,9 +80,11 @@ export async function downloadSong(
   onProgress(0.5);
 
   let outPath = tempPath;
+  let sidecarCover: Uint8Array | null = null;
   try {
     if (fileSize > 100 * 1024 * 1024) {
       console.log(DBG, 'file too large, skipping metadata');
+      sidecarCover = await fetchImageBytes(coverUrl);
     } else {
       const img = await fetchImageBytes(coverUrl);
       console.log(DBG, 'processing metadata...');
@@ -124,7 +126,21 @@ export async function downloadSong(
   }
 
   let outUri = '';
-  try { await scanFile(outPath.replace(/^file:\/\//, '')); } catch {}
+  try { outUri = await scanFile(outPath.replace(/^file:\/\//, '')) || ''; } catch {}
+
+  if (outUri && fileSize > 100 * 1024 * 1024 && (sidecarCover || lyric)) {
+    const baseName = safeName.replace(/\.(flac|mp3)$/, '');
+    try {
+      if (sidecarCover) {
+        let binary = '';
+        for (let i = 0; i < sidecarCover.length; i++) binary += String.fromCharCode(sidecarCover[i]);
+        await saveSidecar(baseName + '.jpg', btoa(binary));
+      }
+      if (lyric) {
+        await saveSidecar(baseName + '.lrc', btoa(unescape(encodeURIComponent(lyric))));
+      }
+    } catch {}
+  }
 
   if (!outUri) {
     const docDir = FileSystem.documentDirectory;

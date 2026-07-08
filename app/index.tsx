@@ -38,6 +38,12 @@ export default function HomeScreen() {
   const [albumSubmitted, setAlbumSubmitted] = useState('');
   const [artistSubmitted, setArtistSubmitted] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const downloadTimer = useRef<ReturnType<typeof setTimeout>>();
+  const setDownloadingIdAuto = useCallback((id: string | null) => {
+    if (downloadTimer.current) clearTimeout(downloadTimer.current);
+    setDownloadingId(id);
+    if (id) downloadTimer.current = setTimeout(() => setDownloadingId(null), 2000);
+  }, []);
   const setPicker = useUIStore((s) => s.setPicker);
   const router = useRouter();
 
@@ -130,7 +136,7 @@ export default function HomeScreen() {
     const sId = song.id;
     console.log('[dl] enqueue', sId, quality);
     addTask(song, quality);
-    setDownloadingId(sId);
+    setDownloadingIdAuto(sId);
     enqueueDownload(sId, async () => {
       try {
         console.log('[dl] starting download for', sId);
@@ -155,7 +161,6 @@ export default function HomeScreen() {
         console.log('[dl] error:', e);
         failTask(sId);
       }
-      setDownloadingId(null);
     });
   }, [addTask, updateProgress, completeTask, addDownloadedId, addToQueue, failTask]);
 
@@ -355,6 +360,7 @@ export default function HomeScreen() {
       {mode !== 'qobuz' && <SearchBar query={query} onQueryChange={setQuery} onSubmit={handleSearch} />}
 
       {searchContent}
+
 
       <SettingsDrawer />
       <QobuzTokenOverlay />

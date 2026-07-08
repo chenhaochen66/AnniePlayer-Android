@@ -4,7 +4,7 @@ import {
   Text,
   Image,
   TouchableOpacity,
-  Dimensions,
+  useWindowDimensions,
   StyleSheet,
   FlatList,
   NativeSyntheticEvent,
@@ -66,10 +66,8 @@ const LyricItem = React.memo(
     prev.primaryColor === next.primaryColor,
 );
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const COVER_SIZE = Math.min(SCREEN_WIDTH * 0.78, SCREEN_HEIGHT * 0.44);
-const PAGER_HEIGHT = SCREEN_HEIGHT * 0.5;
-const TARGET_LINE_Y = SCREEN_HEIGHT * 0.205;
+function coverSize(w: number, h: number) { return Math.min(w * 0.78, h * 0.44); }
+function targetLineY(h: number) { return h * 0.205; }
 
 const PlayerGradient = React.memo(({ children }: { children: React.ReactNode }) => {
   const palette = useColorStore((s) => s.colors);
@@ -86,6 +84,7 @@ const PlayerGradient = React.memo(({ children }: { children: React.ReactNode }) 
 });
 
 const PlayerProgressBar = React.memo(() => {
+  const { width: winW } = useWindowDimensions();
   const currentTime = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
@@ -94,7 +93,7 @@ const PlayerProgressBar = React.memo(() => {
   const { seek } = useSharedAudio();
 
   const seekViewRef = useRef<View>(null);
-  const seekWidthRef = useRef(SCREEN_WIDTH - screenPadding.horizontal * 2);
+  const seekWidthRef = useRef(winW - screenPadding.horizontal * 2);
   const seekLeftRef = useRef(screenPadding.horizontal);
   const dragRatioRef = useRef(0);
   const lastSeekFrameRef = useRef(0);
@@ -186,11 +185,13 @@ const PlayerControls = React.memo(() => {
     <View style={[styles.controlsRow, { paddingHorizontal: screenPadding.horizontal }]}>
       <TouchableOpacity onPress={() => setLoopMode(
         loopMode === 'sequential' ? 'single' : loopMode === 'single' ? 'shuffle' : 'sequential',
-      )} activeOpacity={0.7} style={{ alignItems: 'center', gap: 2 }}>
-        <Ionicons name={loopData[loopMode].icon} size={20} color={loopMode !== 'sequential' ? '#fff' : 'rgba(255,255,255,0.3)'} />
-        <Text style={{ color: loopMode !== 'sequential' ? 'rgba(255,255,255,0.5)' : 'transparent', fontSize: 8, lineHeight: 8 }}>
-          {loopData[loopMode].label}
-        </Text>
+      )} activeOpacity={0.7}>
+        <View style={{ position: 'relative' }}>
+          <Ionicons name={loopData[loopMode].icon} size={24} color="rgba(255,255,255,0.7)" />
+          {loopMode === 'single' && (
+            <Text style={{ position: 'absolute', top: 1, right: 1, fontSize: 9, fontWeight: '800', color: 'rgba(255,255,255,0.7)' }}>1</Text>
+          )}
+        </View>
       </TouchableOpacity>
       <TouchableOpacity onPress={previous} activeOpacity={0.7}>
         <Ionicons name="play-skip-back" size={24} color="rgba(255,255,255,0.7)" />
@@ -209,11 +210,12 @@ const PlayerControls = React.memo(() => {
 });
 
 const PlayerVolumeSlider = React.memo(() => {
+  const { width: winW } = useWindowDimensions();
   const volume = usePlayerStore((s) => s.volume);
   const setVolume = usePlayerStore((s) => s.setVolume);
   const { setVolume: setAudioVolume } = useSharedAudio();
   const { bottom } = useSafeAreaInsets();
-  const volWidthRef = useRef(SCREEN_WIDTH - 68);
+  const volWidthRef = useRef(winW - 68);
 
   const handleVolume = useCallback(
     (e: any) => {
@@ -247,6 +249,7 @@ const PlayerVolumeSlider = React.memo(() => {
 });
 
 const PlayerLyricsList = React.memo(() => {
+  const { height: winH } = useWindowDimensions();
   const currentSong = usePlayerStore((s) => s.currentSong);
   const currentTime = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
@@ -281,11 +284,11 @@ const PlayerLyricsList = React.memo(() => {
   useEffect(() => {
     if (currentLineIndex >= 0 && !userScrolling && flatListReady) {
       requestAnimationFrame(() => {
-        let offset = SCREEN_HEIGHT * 0.12;
+        let offset = winH * 0.12;
         for (let i = 0; i < currentLineIndex; i++) {
           offset += measuredHeightsRef.current[i] ?? 48;
         }
-        flatListRef.current?.scrollToOffset({ offset: Math.max(0, offset - TARGET_LINE_Y), animated: true });
+        flatListRef.current?.scrollToOffset({ offset: Math.max(0, offset - targetLineY(winH)), animated: true });
       });
     }
   }, [currentLineIndex, flatListReady, userScrolling]);
@@ -322,7 +325,7 @@ const PlayerLyricsList = React.memo(() => {
         nestedScrollEnabled
         contentContainerStyle={{
           flexGrow: 1,
-          paddingVertical: SCREEN_HEIGHT * 0.12,
+          paddingVertical: winH * 0.12,
         }}
         showsVerticalScrollIndicator={false}
       />
@@ -342,7 +345,10 @@ interface FullPlayerProps {
 
 export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
   const router = useRouter();
+  const { width: winW, height: winH } = useWindowDimensions();
   const { top, bottom } = useSafeAreaInsets();
+  const cvSize = coverSize(winW, winH);
+  const pagerMaxH = winH * 0.55;
   const [coverError, setCoverError] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
@@ -379,7 +385,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTo({ x: pageIndex * SCREEN_WIDTH, animated: true });
+      scrollRef.current.scrollTo({ x: pageIndex * winW, animated: true });
     }
   }, [pageIndex]);
 
@@ -439,9 +445,9 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
   }, [currentSong, addTask, updateProgress, completeTask, addDownloadedId, addToQueue, failTask]);
 
   const handleMomentumEnd = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const idx = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    const idx = Math.round(e.nativeEvent.contentOffset.x / winW);
     setPageIndex(idx);
-  }, []);
+  }, [winW]);
 
   if (!currentSong) {
     return (
@@ -455,91 +461,92 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
     <Animated.View style={[{ flex: 1 }, animatedContentStyle]}>
     <PlayerGradient>
       <View style={{ flex: 1, paddingTop: top }}>
-
-        <View style={[styles.headerRow, { paddingHorizontal: screenPadding.horizontal }]}>
-          <View style={styles.dragBar} />
-        </View>
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6 }}>
-          <TouchableOpacity onPress={handleBack} activeOpacity={0.7} style={styles.backBtn}>
-            <Ionicons name="chevron-down" size={22} color="rgba(255,255,255,0.7)" />
-          </TouchableOpacity>
-
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <TouchableOpacity
-              onPress={() => {
-                const nextPage = pageIndex === 0 ? 1 : 0;
-                setPageIndex(nextPage);
-              }}
-              activeOpacity={0.7}
-              style={{
-                flexDirection: 'row',
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                borderRadius: 14,
-                paddingHorizontal: 4,
-                paddingVertical: 3,
-              }}
-            >
-              <View style={{
-                paddingHorizontal: 12, paddingVertical: 4, borderRadius: 11,
-                backgroundColor: pageIndex === 0 ? 'rgba(255,255,255,0.15)' : 'transparent',
-              }}>
-                <Text style={{ color: pageIndex === 0 ? '#fff' : 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '600' }}>
-                  歌曲
-                </Text>
-              </View>
-              <View style={{
-                paddingHorizontal: 12, paddingVertical: 4, borderRadius: 11,
-                backgroundColor: pageIndex === 1 ? 'rgba(255,255,255,0.15)' : 'transparent',
-              }}>
-                <Text style={{ color: pageIndex === 1 ? '#fff' : 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '600' }}>
-                  歌词
-                </Text>
-              </View>
-            </TouchableOpacity>
+        <View style={{ flex: 1, maxHeight: pagerMaxH }}>
+          <View style={[styles.headerRow, { paddingHorizontal: screenPadding.horizontal }]}>
+            <View style={styles.dragBar} />
           </View>
 
-          <View style={{ width: 34 }} />
-        </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6 }}>
+            <TouchableOpacity onPress={handleBack} activeOpacity={0.7} style={styles.backBtn}>
+              <Ionicons name="chevron-down" size={22} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
 
-        <View style={{ height: PAGER_HEIGHT }}>
-          <ScrollView
-            ref={scrollRef}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScrollBeginDrag={() => { isSwipingRef.current = true; }}
-            onScrollEndDrag={() => { setTimeout(() => { isSwipingRef.current = false; }, 100); }}
-            onScroll={({ nativeEvent }) => {
-              if (!isSwipingRef.current) return;
-              const idx = Math.round(nativeEvent.contentOffset.x / SCREEN_WIDTH);
-              if (idx !== pageIndex) setPageIndex(idx);
-            }}
-            scrollEventThrottle={16}
-            onMomentumScrollEnd={handleMomentumEnd}
-            bounces={false}
-          >
-            <View style={{ width: SCREEN_WIDTH, justifyContent: 'center', alignItems: 'center' }}>
-              <View style={[styles.cover, styles.coverShadow]}>
-                <View>
-                  {coverError ? (
-                    <View style={[styles.cover, styles.coverFallback]}>
-                      <Ionicons name="musical-note" size={44} color="rgba(255,255,255,0.15)" />
-                    </View>
-                  ) : (
-                    <Image source={{ uri: currentSong.cover }} style={styles.coverImage} onError={() => setCoverError(true)} />
-                  )}
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              <TouchableOpacity
+                onPress={() => {
+                  const nextPage = pageIndex === 0 ? 1 : 0;
+                  setPageIndex(nextPage);
+                }}
+                activeOpacity={0.7}
+                style={{
+                  flexDirection: 'row',
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  borderRadius: 14,
+                  paddingHorizontal: 4,
+                  paddingVertical: 3,
+                }}
+              >
+                <View style={{
+                  paddingHorizontal: 12, paddingVertical: 4, borderRadius: 11,
+                  backgroundColor: pageIndex === 0 ? 'rgba(255,255,255,0.15)' : 'transparent',
+                }}>
+                  <Text style={{ color: pageIndex === 0 ? '#fff' : 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '600' }}>
+                    歌曲
+                  </Text>
+                </View>
+                <View style={{
+                  paddingHorizontal: 12, paddingVertical: 4, borderRadius: 11,
+                  backgroundColor: pageIndex === 1 ? 'rgba(255,255,255,0.15)' : 'transparent',
+                }}>
+                  <Text style={{ color: pageIndex === 1 ? '#fff' : 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '600' }}>
+                    歌词
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ width: 34 }} />
+          </View>
+
+          <View style={{ flex: 1, minHeight: 120 }}>
+            <ScrollView
+              ref={scrollRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onScrollBeginDrag={() => { isSwipingRef.current = true; }}
+              onScrollEndDrag={() => { setTimeout(() => { isSwipingRef.current = false; }, 100); }}
+              onScroll={({ nativeEvent }) => {
+                if (!isSwipingRef.current) return;
+                const idx = Math.round(nativeEvent.contentOffset.x / winW);
+                if (idx !== pageIndex) setPageIndex(idx);
+              }}
+              scrollEventThrottle={16}
+              onMomentumScrollEnd={handleMomentumEnd}
+              bounces={false}
+            >
+              <View style={{ width: winW, justifyContent: 'center', alignItems: 'center' }}>
+                <View style={{ width: cvSize, height: cvSize, borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.45, shadowRadius: 24, elevation: 12 }}>
+                  <View>
+                    {coverError ? (
+                      <View style={{ width: cvSize, height: cvSize, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.04)' }}>
+                        <Ionicons name="musical-note" size={44} color="rgba(255,255,255,0.15)" />
+                      </View>
+                    ) : (
+                      <Image source={{ uri: currentSong.cover }} style={{ width: cvSize, height: cvSize, borderRadius: 16 }} onError={() => setCoverError(true)} />
+                    )}
+                  </View>
                 </View>
               </View>
-            </View>
 
-            <View style={{ width: SCREEN_WIDTH }}>
-              <PlayerLyricsList />
-            </View>
-          </ScrollView>
+              <View style={{ width: winW }}>
+                <PlayerLyricsList />
+              </View>
+            </ScrollView>
+          </View>
         </View>
 
-        <View style={{ height: 12 }} />
+        <View style={{ height: 20 }} />
         <View style={[styles.infoRow, { paddingHorizontal: screenPadding.horizontal }]}>
           <View style={{ flex: 1, overflow: 'hidden' }}>
             <MovingText text={currentSong.title} threshold={20} style={styles.title} />
@@ -555,8 +562,6 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
         <PlayerProgressBar />
 
         <PlayerControls />
-
-        <View style={{ flex: 0.3 }} />
 
         <PlayerVolumeSlider />
 
@@ -605,29 +610,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cover: {
-    borderRadius: 16,
-  },
-  coverShadow: {
-    width: COVER_SIZE,
-    height: COVER_SIZE,
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.45,
-    shadowRadius: 24,
-    elevation: 12,
-  },
-  coverImage: {
-    width: COVER_SIZE,
-    height: COVER_SIZE,
-    borderRadius: 16,
-  },
-  coverFallback: {
-    width: COVER_SIZE,
-    height: COVER_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: 16,
   },
   infoRow: {
@@ -718,7 +700,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginTop: 8,
+    marginTop: 32,
     paddingHorizontal: 4,
   },
   volumeTouch: {
