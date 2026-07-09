@@ -13,4 +13,3 @@ export function saveSidecar(filename: string, base64Data: string): Promise<void>
 export function tagAudioFile(sourcePath: string, title: string, artist: string, album: string, lyric: string, coverBase64: string, coverUrl: string): Promise<string> {
   return MediaScanner.tagAudioFile(sourcePath, title, artist, album, lyric, coverBase64, coverUrl);
 }
-

@@ -1,4 +1,4 @@
-?import * as FileSystem from 'expo-file-system/legacy';
+﻿import * as FileSystem from 'expo-file-system/legacy';
 import type { Quality } from '../types';
 import { decodeHtmlEntities as decodeEntities } from '../utils/stringUtils';
 import { scanFile, tagAudioFile } from '../modules/media-scanner/src/MediaScanner';
@@ -113,4 +113,3 @@ export async function downloadSong(
   activeDownloads.delete(songId);
   return outUri;
 }
-
