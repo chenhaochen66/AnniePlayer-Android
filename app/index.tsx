@@ -67,7 +67,7 @@ export default function HomeScreen() {
 
   const handleQobuzSubmit = useCallback((text: string) => {
     const parsed = parseQobuzUrl(text);
-    if (!parsed) { Alert.alert('提示', '未识别到有效 Qobuz 链接'); return; }
+    if (!parsed) { Alert.alert('??', '?????? Qobuz ??'); return; }
     router.push(`/qobuz-detail?type=${parsed.type}&id=${parsed.id}`);
   }, [router]);
 
@@ -155,7 +155,7 @@ export default function HomeScreen() {
         addDownloadedId(sId);
         addToQueue(song);
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-          new Notification('下载完成', { body: `${song.title} - ${song.artist}` });
+          new Notification('????', { body: `${song.title} - ${song.artist}` });
         }
       } catch (e) {
         console.log('[dl] error:', e);
@@ -207,7 +207,7 @@ export default function HomeScreen() {
             {item.name}
           </Text>
           <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginTop: 2 }}>
-            {item.musicNum} 首歌曲
+            {item.musicNum} ???
           </Text>
         </View>
       </TouchableOpacity>
@@ -239,7 +239,7 @@ export default function HomeScreen() {
                 />
               ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>?????</Text>
                 </View>
               )}
             </View>
@@ -261,14 +261,14 @@ export default function HomeScreen() {
                 />
               ) : allNeteaseSongs.length === 0 && !neteaseQuery.isLoading && songSubmitted.length > 0 ? (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>?????</Text>
                 </View>
               ) : null}
             </View>
           </Animated.View>
         ) : songSubmitted.length > 0 ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>?????</Text>
           </View>
         ) : null}
       </View>
@@ -292,7 +292,7 @@ export default function HomeScreen() {
           </Animated.View>
         ) : artistSubmitted.length > 0 ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>?????</Text>
           </View>
         ) : null}
       </View>
@@ -318,7 +318,7 @@ export default function HomeScreen() {
           </Animated.View>
         ) : albumSubmitted.length > 0 ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>?????</Text>
           </View>
         ) : null}
       </View>
@@ -330,7 +330,7 @@ export default function HomeScreen() {
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 40, paddingBottom: 20 }}>
         <DrawerController />
         <Text style={{ color: '#fff', fontSize: 26, fontWeight: '700', letterSpacing: -0.5, flex: 1 }}>
-          安妮音乐盒
+          ?????
         </Text>
         <Image
           source={require('../assets/annie.jpg')}
@@ -351,7 +351,7 @@ export default function HomeScreen() {
             }}
           >
             <Text style={{ color: mode === m ? '#fff' : 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '600' }}>
-              {m === 'song' ? '单曲搜索' : m === 'album' ? '专辑搜索' : m === 'singer' ? '歌手搜索' : '国外解析'}
+              {m === 'song' ? '????' : m === 'album' ? '????' : m === 'singer' ? '????' : '????'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -374,7 +374,7 @@ export default function HomeScreen() {
         <View style={{ position: 'absolute', bottom: 100, left: 20, right: 20, alignItems: 'center' }}>
           <View style={{ backgroundColor: 'rgba(26,26,46,0.95)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 20 }}>
             <Text style={{ color: '#818cf8', fontSize: 14, fontWeight: '600' }}>
-              正在下载 {[...allSongs, ...allNeteaseSongs].find((s: Song) => s.id === downloadingId)?.title || '...'}
+              ???? {[...allSongs, ...allNeteaseSongs].find((s: Song) => s.id === downloadingId)?.title || '...'}
             </Text>
           </View>
         </View>
@@ -384,3 +384,5 @@ export default function HomeScreen() {
     </SafeAreaView>
   );
 }
+// test
+
