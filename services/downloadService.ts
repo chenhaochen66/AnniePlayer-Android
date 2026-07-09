@@ -105,16 +105,9 @@ export async function downloadSong(
   let outUri = '';
   try { outUri = await scanFile(finalPath.replace(/^file:\/\//, '')) || ''; } catch {}
 
-  if (!outUri) {
-    const docDir = FileSystem.documentDirectory;
-    if (docDir) {
-      outUri = docDir + encodeURIComponent(safeName);
-      await FileSystem.deleteAsync(outUri, { idempotent: true }).catch(() => {});
-      await FileSystem.moveAsync({ from: finalPath, to: outUri }).catch(() => {});
-    }
+  if (outUri) {
+    await FileSystem.deleteAsync(finalPath, { idempotent: true }).catch(() => {});
   }
-
-  await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
   console.log(DBG, 'done:', outUri);
   onProgress(1);
   activeDownloads.delete(songId);

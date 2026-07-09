@@ -103,6 +103,10 @@ export const SettingsDrawer = React.memo(() => {
             </Text>
           </View>
 
+          <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '600', marginBottom: 12, letterSpacing: 0.5 }}>
+            账号配置
+          </Text>
+
           <TouchableOpacity
             onPress={() => useUIStore.getState().setQobuzTokenVisible(true)}
             activeOpacity={0.7}
@@ -117,7 +121,7 @@ export const SettingsDrawer = React.memo(() => {
           >
             <Ionicons name="key-outline" size={18} color="rgba(255,255,255,0.5)" />
             <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
-              配置Qobuz Token
+              Qobuz Token 管理
             </Text>
             <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.2)" />
           </TouchableOpacity>
@@ -204,6 +208,25 @@ export const SettingsDrawer = React.memo(() => {
             <Ionicons name="globe-outline" size={18} color="rgba(255,255,255,0.5)" />
             <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
               HIFI 科普网站
+            </Text>
+            <Ionicons name="open-outline" size={16} color="rgba(255,255,255,0.2)" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => Linking.openURL('https://zhou1019-1.github.io/spek-lossless-detector/')}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255,255,255,0.03)',
+              borderRadius: 12,
+              padding: 16,
+              marginTop: 8,
+            }}
+          >
+            <Ionicons name="globe-outline" size={18} color="rgba(255,255,255,0.5)" />
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
+              频谱分析网站
             </Text>
             <Ionicons name="open-outline" size={16} color="rgba(255,255,255,0.2)" />
           </TouchableOpacity>
