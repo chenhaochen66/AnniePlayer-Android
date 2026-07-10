@@ -461,7 +461,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
     <Animated.View style={[{ flex: 1 }, animatedContentStyle]}>
     <PlayerGradient>
       <View style={{ flex: 1, paddingTop: top }}>
-        <View style={{ flex: 1, maxHeight: pagerMaxH }}>
+          <View style={{ flex: 1, maxHeight: pagerMaxH }}>
           <View style={[styles.headerRow, { paddingHorizontal: screenPadding.horizontal }]}>
             <View style={styles.dragBar} />
           </View>
@@ -558,6 +558,8 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
         {currentSong.artist ? (
           <Text style={[styles.artist, { paddingHorizontal: screenPadding.horizontal }]} numberOfLines={1}>{currentSong.artist}</Text>
         ) : null}
+
+        <View style={{ height: Math.max(0, winH - top - pagerMaxH - 260) }} />
 
         <PlayerProgressBar />
 

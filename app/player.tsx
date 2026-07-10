@@ -24,6 +24,7 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (Platform.OS === 'android') {
       NavigationBar.setButtonStyleAsync('light').catch(() => {});
+      NavigationBar.setBackgroundColorAsync('#0a0a1a').catch(() => {});
     }
   }, []);
 
