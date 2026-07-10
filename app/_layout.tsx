@@ -55,7 +55,7 @@ export default function RootLayout() {
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             <View style={{ flex: 1, backgroundColor: colors.background }}>
               <AuroraBackground />
-              <View style={{ flex: 1, paddingBottom: insets.bottom }}>
+              <View style={{ flex: 1, paddingBottom: insets.bottom, backgroundColor: colors.background }}>
                 <Stack
                   screenOptions={{
                     headerShown: false,

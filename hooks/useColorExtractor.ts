@@ -50,7 +50,7 @@ function getColorThiefColors(imageUrl: string): Promise<string[]> {
 
 async function extractColorsNative(_imageUrl: string): Promise<string[]> {
   try {
-    return ['#6366f1', '#8b5cf6', '#1e1b4b'];
+    return ['#e74c3c', '#c0392b', '#2c3e50'];
   } catch {
     return ['#6366f1', '#8b5cf6', '#1e1b4b'];
   }
