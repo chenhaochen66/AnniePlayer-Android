@@ -206,9 +206,14 @@ export const SettingsDrawer = React.memo(() => {
             }}
           >
             <Ionicons name="globe-outline" size={18} color="rgba(255,255,255,0.5)" />
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
-              HIFI 科普网站
-            </Text>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
+                HIFI 科普网站
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 1 }}>
+                by@买葱花也要砍一刀(2801497426)
+              </Text>
+            </View>
             <Ionicons name="open-outline" size={16} color="rgba(255,255,255,0.2)" />
           </TouchableOpacity>
 
@@ -225,9 +230,14 @@ export const SettingsDrawer = React.memo(() => {
             }}
           >
             <Ionicons name="globe-outline" size={18} color="rgba(255,255,255,0.5)" />
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 10, flex: 1 }}>
-              频谱分析网站
-            </Text>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
+                频谱分析网站
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 1 }}>
+                by@HIFI神医章鱼哥(430768125)
+              </Text>
+            </View>
             <Ionicons name="open-outline" size={16} color="rgba(255,255,255,0.2)" />
           </TouchableOpacity>
 
