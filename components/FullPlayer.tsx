@@ -559,8 +559,6 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
           <Text style={[styles.artist, { paddingHorizontal: screenPadding.horizontal }]} numberOfLines={1}>{currentSong.artist}</Text>
         ) : null}
 
-        <View style={{ height: Math.max(0, winH - top - pagerMaxH - 260) }} />
-
         <PlayerProgressBar />
 
         <PlayerControls />
