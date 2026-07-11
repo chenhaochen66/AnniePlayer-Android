@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StatusBar, View, Alert } from 'react-native';
+import { StatusBar, View, Alert, Platform } from 'react-native';
 import { Stack } from 'expo-router';
+import * as NavigationBar from 'expo-navigation-bar';
 import { useUpdates } from 'expo-updates';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -26,6 +27,14 @@ export default function RootLayout() {
   const [splashDone, setSplashDone] = useState(false);
   const { isUpdatePending, downloadedUpdate } = useUpdates();
   const alertedRef = useRef(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      NavigationBar.setPositionAsync('absolute').catch(() => {});
+      NavigationBar.setBackgroundColorAsync('#0a0a1a').catch(() => {});
+      NavigationBar.setButtonStyleAsync('light').catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     TrackPlayer.setupPlayer({}).then(() => {

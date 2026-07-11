@@ -72,6 +72,7 @@ export const MiniPlayer = React.memo(() => {
         left: 0,
         right: 0,
         paddingBottom: insets.bottom || 12,
+        backgroundColor: '#0a0a1a',
       }, containerStyle]}
     >
       <TouchableOpacity

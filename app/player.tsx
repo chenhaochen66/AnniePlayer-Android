@@ -1,6 +1,4 @@
 import React, { useEffect, useCallback } from 'react';
-import { Platform } from 'react-native';
-import * as NavigationBar from 'expo-navigation-bar';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useSharedAudio } from '../contexts/AudioContext';
 import { useColorExtractor } from '../hooks/useColorExtractor';
@@ -20,13 +18,6 @@ export default function PlayerScreen() {
   const { extractColors } = useColorExtractor();
 
   useBackHandler();
-
-  useEffect(() => {
-    if (Platform.OS === 'android') {
-      NavigationBar.setButtonStyleAsync('light').catch(() => {});
-      NavigationBar.setBackgroundColorAsync('#0a0a1a').catch(() => {});
-    }
-  }, []);
 
   useEffect(() => {
     if (currentSong?.cover) {
