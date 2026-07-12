@@ -9,6 +9,7 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   ScrollView,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -22,7 +23,6 @@ import Animated, {
   withSpring,
   withSequence,
   Easing,
-  runOnJS,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -344,7 +344,7 @@ const PlayerVolumeSlider = React.memo(() => {
   );
 });
 
-const PlayerLyricsList = React.memo(() => {
+const PlayerLyricsList = React.memo(({ fontScale, setFontScale, onOpenFontScale }: { fontScale: number; setFontScale: (v: number) => void; onOpenFontScale: () => void }) => {
   const { height: winH } = useWindowDimensions();
   const currentSong = usePlayerStore((s) => s.currentSong);
   const duration = usePlayerStore((s) => s.duration);
@@ -357,8 +357,7 @@ const PlayerLyricsList = React.memo(() => {
   const [userScrolling, setUserScrolling] = useState(false);
   const measuredHeightsRef = useRef<number[]>([]);
   const showTranslation = useUIStore((s) => s.showLyricsTranslation);
-  const [fontScale, setFontScale] = useState(1);
-  const [showFontSlider, setShowFontSlider] = useState(false);
+  const [heightsVersion, setHeightsVersion] = useState(0);
 
   useAnimatedReaction(
     () => scrollOffset.value,
@@ -396,7 +395,10 @@ const PlayerLyricsList = React.memo(() => {
   }, [lyricsData, duration]);
 
   const handleMeasure = useCallback((index: number, height: number) => {
-    measuredHeightsRef.current[index] = height;
+    if (measuredHeightsRef.current[index] !== height) {
+      measuredHeightsRef.current[index] = height;
+      setHeightsVersion(v => v + 1);
+    }
   }, []);
 
   useEffect(() => {
@@ -428,7 +430,7 @@ const PlayerLyricsList = React.memo(() => {
       const duration = lineDiff <= 3 ? 550 : 0;
       scrollOffset.value = withTiming(target, { duration, easing: Easing.bezier(0.25, 0.1, 0.25, 1) });
     }
-  }, [currentLineIndex, flatListReady, userScrolling, isDragging, lyricsData.length]);
+  }, [currentLineIndex, flatListReady, userScrolling, isDragging, lyricsData.length, fontScale, heightsVersion]);
 
   const renderLyricItem = useCallback(
     ({ item, index }: { item: LyricLine; index: number }) => {
@@ -451,52 +453,6 @@ const PlayerLyricsList = React.memo(() => {
   const handleScrollEnd = useCallback(() => {
     setUserScrolling(false);
   }, []);
-
-  const sliderRef = useRef<any>(null);
-  const sliderH = 180;
-  const trackH = sliderH - 44;
-  const sliderPosSV = useSharedValue(1);
-  const sliderTopRef = useRef(0);
-
-  const applySliderValue = useCallback((pageY: number) => {
-    const localY = pageY - sliderTopRef.current;
-    const ratio = Math.max(0, Math.min(1, 1 - localY / sliderH));
-    const val = Math.round((0.5 + ratio * 0.5) * 20) / 20;
-    sliderPosSV.value = val;
-  }, [sliderPosSV, sliderH]);
-
-  const commitFontScale = useCallback(() => {
-    setFontScale(sliderPosSV.value);
-  }, [setFontScale, sliderPosSV]);
-
-  const handleSliderGrant = useCallback((e: any) => {
-    sliderRef.current?.measureInWindow((x: number, y: number) => {
-      sliderTopRef.current = y;
-      applySliderValue(e.nativeEvent?.pageY ?? 0);
-    });
-  }, [applySliderValue]);
-
-  const handleSliderMove = useCallback((e: any) => {
-    applySliderValue(e.nativeEvent?.pageY ?? 0);
-  }, [applySliderValue]);
-
-  const handleSliderRelease = useCallback(() => {
-    runOnJS(commitFontScale)();
-  }, [commitFontScale]);
-
-  const sliderFillStyle = useAnimatedStyle(() => ({
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    height: trackH * (sliderPosSV.value - 0.5) / 0.5,
-    backgroundColor: '#818cf8',
-    borderRadius: 2,
-  }));
-
-  const sliderThumbStyle = useAnimatedStyle(() => ({
-    position: 'absolute', left: -8,
-    bottom: trackH * (sliderPosSV.value - 0.5) / 0.5 - 10,
-    width: 20, height: 20, borderRadius: 10,
-    backgroundColor: '#818cf8',
-  }));
 
   if (!currentSong) return null;
 
@@ -522,50 +478,17 @@ const PlayerLyricsList = React.memo(() => {
         />
 
         <TouchableOpacity
-          onPress={() => setShowFontSlider((v) => !v)}
+          onPress={onOpenFontScale}
           activeOpacity={0.6}
           style={{
             position: 'absolute', top: 8, right: 16,
             width: 32, height: 32, borderRadius: 16,
-            backgroundColor: showFontSlider ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)',
+            backgroundColor: 'rgba(255,255,255,0.06)',
             alignItems: 'center', justifyContent: 'center',
           }}
         >
           <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Aa</Text>
         </TouchableOpacity>
-
-        {showFontSlider && (
-          <View
-            ref={sliderRef}
-            onStartShouldSetResponderCapture={() => true}
-            onMoveShouldSetResponderCapture={() => true}
-            onResponderGrant={handleSliderGrant}
-            onResponderMove={handleSliderMove}
-            onResponderRelease={handleSliderRelease}
-            onResponderTerminate={handleSliderRelease}
-            style={{
-              position: 'absolute', right: 16, top: 48,
-              width: 36, height: sliderH,
-              backgroundColor: 'rgba(0,0,0,0.55)',
-              borderRadius: 18,
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingVertical: 10,
-            }}
-          >
-            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9, marginBottom: 4 }}>A</Text>
-            <Animated.View style={{
-              width: 4, height: trackH, borderRadius: 2,
-              backgroundColor: 'rgba(255,255,255,0.15)',
-              position: 'relative',
-              overflow: 'visible',
-            }}>
-              <Animated.View style={sliderFillStyle} />
-              <Animated.View style={sliderThumbStyle} />
-            </Animated.View>
-            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 4 }}>A</Text>
-          </View>
-        )}
       </View>
     );
   }
@@ -593,6 +516,36 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
   const [downloadingQuality, setDownloadingQuality] = useState<Quality | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const isSwipingRef = useRef(false);
+
+  const [fontScale, setFontScale] = useState(0.75);
+  const [fontScaleVisible, setFontScaleVisible] = useState(false);
+  const fontScaleLevels = [0.5, 0.625, 0.75, 0.875, 1];
+  const fontPanelH = 360;
+  const fontTranslateY = useSharedValue(fontPanelH);
+  const fontOverlayOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    const config = { duration: 150, easing: Easing.out(Easing.cubic) };
+    fontTranslateY.value = fontScaleVisible ? withTiming(0, config) : withTiming(fontPanelH, config);
+    fontOverlayOpacity.value = fontScaleVisible ? withTiming(1, config) : withTiming(0, config);
+  }, [fontScaleVisible, fontPanelH]);
+
+  useEffect(() => {
+    if (!fontScaleVisible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setFontScaleVisible(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [fontScaleVisible]);
+
+  const fontPanelStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: fontTranslateY.value }],
+  }));
+
+  const fontOverlayStyle = useAnimatedStyle(() => ({
+    opacity: fontOverlayOpacity.value,
+  }));
 
   const currentSong = usePlayerStore((s) => s.currentSong);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
@@ -782,7 +735,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
               </View>
 
               <View style={{ width: winW }}>
-                <PlayerLyricsList />
+                <PlayerLyricsList fontScale={fontScale} setFontScale={setFontScale} onOpenFontScale={() => setFontScaleVisible(true)} />
               </View>
             </ScrollView>
           </View>
@@ -837,6 +790,61 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
 
     </PlayerGradient>
       <QueueModal />
+      {fontScaleVisible && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200 }} pointerEvents="auto">
+          <Animated.View style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' }, fontOverlayStyle]}>
+            <TouchableOpacity activeOpacity={1} onPress={() => setFontScaleVisible(false)} style={{ flex: 1 }} />
+          </Animated.View>
+          <Animated.View
+            style={[{
+              position: 'absolute', bottom: 0, left: 0, right: 0,
+              backgroundColor: '#1a1a2e',
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              paddingTop: 20,
+              paddingBottom: 16,
+              maxHeight: fontPanelH,
+            }, fontPanelStyle]}
+          >
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)', alignSelf: 'center', marginBottom: 16 }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12 }}>
+              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 }}>歌词字号</Text>
+              <TouchableOpacity onPress={() => setFontScaleVisible(false)} activeOpacity={0.7} style={{ padding: 4 }}>
+                <Ionicons name="close" size={20} color="rgba(255,255,255,0.5)" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView bounces={false}>
+            {fontScaleLevels.map((scale, i) => (
+              <TouchableOpacity
+                key={i}
+                activeOpacity={0.7}
+                onPress={() => { setFontScale(scale); setFontScaleVisible(false); }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 14,
+                  paddingHorizontal: 20,
+                  backgroundColor: fontScale === scale ? 'rgba(99,102,241,0.08)' : 'transparent',
+                }}
+              >
+                <Text style={{
+                  fontSize: 11 + scale * 16,
+                  color: fontScale === scale ? '#818cf8' : '#fff',
+                  fontWeight: fontScale === scale ? '700' : '500',
+                  flex: 1,
+                }}>
+                  Aa
+                </Text>
+                <View style={{
+                  width: 10, height: 10, borderRadius: 5,
+                  backgroundColor: fontScale === scale ? '#818cf8' : 'rgba(255,255,255,0.12)',
+                }} />
+              </TouchableOpacity>
+            ))}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      )}
     </Animated.View>
   );
 });

@@ -288,42 +288,83 @@ async function fetchNeteaseLyric(songId: string): Promise<{ lrc: string; tlyric:
   return { lrc: data.lrc?.lyric || '[00:00.00]暂无歌词', tlyric: data.tlyric?.lyric || null };
 }
 
-async function fetchQQMusicLyric(songId: string, title: string, artist: string): Promise<{ lrc: string; tlyric: string | null }> {
-  const headers: Record<string, string> = {
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1',
-    'Referer': 'https://i.y.qq.com',
-    'Origin': 'https://i.y.qq.com',
-    'Content-Type': 'application/json; charset=UTF-8',
-    'Accept': 'application/json',
+async function searchKuwoMusicId(title: string, artist: string): Promise<string> {
+  const query = `${title} ${artist}`;
+  const url = `http://search.kuwo.cn/r.s?cluster=0&strategy=2012&vermerge=1&stype=name&show_copyright_off=1&rn=5&all=${encodeURIComponent(query)}&encoding=utf8&rformat=json&vipver=MUSIC_8.7.7.0_BCS37&ft=music&newver=1&client=kt&_=${Date.now()}`;
+  const resp = await fetch(url, { headers: { 'User-Agent': ANDROID_UA } });
+  const text = await resp.text();
+  const normalized = text.replace(/'/g, '"');
+  let list: any[] = [];
+  try {
+    const json = JSON.parse(normalized);
+    list = json.abslist || json.list || [];
+  } catch {
+    const re = /"(?:abslist|list)":\s*(\[[\s\S]*?\])\s*(?:,"|}})/;
+    const match = normalized.match(re);
+    if (match) try { list = JSON.parse(match[1]); } catch { list = []; }
+  }
+  if (list.length === 0) throw new Error('kuwo search no results');
+  return (list[0].MUSICRID || '').replace('MUSIC_', '');
+}
+
+async function fetchKuwoLyric(songId: string, title: string, artist: string): Promise<{ lrc: string; tlyric: string | null }> {
+  const musicId = songId.startsWith('qobuz:')
+    ? await searchKuwoMusicId(title, artist)
+    : songId;
+  const resp = await fetch(
+    `https://www.kuwo.cn/openapi/v1/www/lyric/getlyric?musicId=${musicId}&httpsStatus=1&plat=web_www&from=`,
+    {
+      headers: {
+        'User-Agent': MOBILE_UA,
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': `https://www.kuwo.cn/play_detail/${musicId}`,
+      },
+    },
+  );
+  const data = await resp.json();
+  if (!data.success) throw new Error('kuwo lyric api failed');
+
+  const lrclist = data.data?.lrclist;
+  if (!lrclist || !Array.isArray(lrclist) || lrclist.length === 0) {
+    return { lrc: '[00:00.00]暂无歌词', tlyric: null };
+  }
+
+  const lrcLines: string[] = [];
+  const tlyricLines: string[] = [];
+
+  const fmtTime = (sec: string): string => {
+    const s = parseFloat(sec);
+    const m = Math.floor(s / 60);
+    const secs = Math.floor(s % 60);
+    const ms = Math.floor((s % 1) * 100);
+    return `[${String(m).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(2, '0')}]`;
   };
 
-  const payload = {
-    comm: { g_tk: '5381', loginUin: '0', hostUin: '0', format: 'json', inCharset: 'utf8', outCharset: 'utf-8', notice: '0', platform: 'yqq', needNewCode: '0' },
-    req_0: { method: 'DoSearchForQQMusicMobile', module: 'music.search.SearchCgiService', param: { search_type: 0, query: `${title} ${artist}`, page_num: 1, num_per_page: 15 } },
+  const hasChinese = (text: string): boolean => /[\u4e00-\u9fff]/.test(text);
+
+  let i = 0;
+  while (i < lrclist.length) {
+    const text = (lrclist[i].lineLyric || '').trim();
+    if (!text) { i++; continue; }
+
+    if (i + 1 < lrclist.length) {
+      const nextText = (lrclist[i + 1].lineLyric || '').trim();
+      if (nextText && hasChinese(nextText) && !hasChinese(text)) {
+        lrcLines.push(`${fmtTime(lrclist[i].time)}${text}`);
+        tlyricLines.push(`${fmtTime(lrclist[i].time)}${nextText}`);
+        i += 2;
+        continue;
+      }
+    }
+
+    lrcLines.push(`${fmtTime(lrclist[i].time)}${text}`);
+    i++;
+  }
+
+  return {
+    lrc: lrcLines.join('\n') || '[00:00.00]暂无歌词',
+    tlyric: tlyricLines.length > 0 ? tlyricLines.join('\n') : null,
   };
-
-  const searchResp = await fetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  });
-  const searchData = await searchResp.json();
-  const songList = searchData?.req_0?.data?.body?.item_song || [];
-  const songmid = songList[0]?.mid;
-  if (!songmid) return { lrc: '[00:00.00]暂无歌词', tlyric: null };
-
-  const lyricParams = `songmid=${songmid}&g_tk=5381&jsonpCallback=MusicJsonCallback&format=jsonp`;
-  const lyricResp = await fetch(`https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?${lyricParams}`, {
-    headers: { 'User-Agent': headers['User-Agent'], 'Referer': 'https://i.y.qq.com', 'Origin': 'https://i.y.qq.com' },
-  });
-  const text = await lyricResp.text();
-  const match = text.match(/^[^(]+\(({.*})\);?\s*$/);
-  if (!match) return { lrc: '[00:00.00]暂无歌词', tlyric: null };
-
-  const lyricData = JSON.parse(match[1]);
-  if (lyricData.retcode !== 0 || !lyricData.lyric) return { lrc: '[00:00.00]暂无歌词', tlyric: null };
-  const tlyric = lyricData.trans ? base64ToStr(lyricData.trans) : null;
-  return { lrc: base64ToStr(lyricData.lyric), tlyric };
 }
 
 export async function fetchLyric(songId: string, title: string, artist: string): Promise<{ lrc: string; tlyric: string | null }> {
@@ -343,7 +384,7 @@ export async function fetchLyric(songId: string, title: string, artist: string):
   try {
     const result = songId.startsWith('netease:')
       ? await fetchNeteaseLyric(songId)
-      : await fetchQQMusicLyric(songId, title, artist);
+      : await fetchKuwoLyric(songId, title, artist);
 
     await cacheService.set(cacheKey, JSON.stringify({ lrc: result.lrc, tlyric: result.tlyric }), LYRIC_CACHE_TTL);
     return result;
@@ -354,22 +395,3 @@ export async function fetchLyric(songId: string, title: string, artist: string):
   }
 }
 
-function base64ToStr(b64: string): string {
-  try {
-    const binary = atob(b64);
-    let result = '';
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    let i = 0;
-    while (i < bytes.length) {
-      const b1 = bytes[i++];
-      if (b1 < 0x80) { result += String.fromCharCode(b1); }
-      else if (b1 < 0xE0 && i < bytes.length) { result += String.fromCharCode(((b1 & 0x1F) << 6) | (bytes[i++] & 0x3F)); }
-      else if (b1 < 0xF0 && i + 1 < bytes.length) { result += String.fromCharCode(((b1 & 0x0F) << 12) | ((bytes[i++] & 0x3F) << 6) | (bytes[i++] & 0x3F)); }
-      else if (i + 2 < bytes.length) { let cp = ((b1 & 0x07) << 18) | ((bytes[i++] & 0x3F) << 12) | ((bytes[i++] & 0x3F) << 6) | (bytes[i++] & 0x3F); if (cp > 0xFFFF) { cp -= 0x10000; result += String.fromCharCode(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF)); } else result += String.fromCharCode(cp); }
-    }
-    return result || '[00:00.00]暂无歌词';
-  } catch {
-    return '[00:00.00]暂无歌词';
-  }
-}

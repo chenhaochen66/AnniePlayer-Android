@@ -1,6 +1,6 @@
 {
   "name": "music-player",
-  "version": "nancy",
+  "version": "1.0.2-release",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
