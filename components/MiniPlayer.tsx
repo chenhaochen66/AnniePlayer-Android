@@ -15,7 +15,6 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
-import { useColorStore } from '../store/useColorStore';
 import { useSharedAudio } from '../contexts/AudioContext';
 import { MovingText } from './MovingText';
 
@@ -41,7 +40,6 @@ export const MiniPlayer = React.memo(() => {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const togglePlay = useSharedAudio().togglePlay!;
-  const primaryColor = useColorStore((s) => s.colors.primary);
   const playerOverlayVisible = useUIStore((s) => s.playerOverlayVisible);
   const setPlayerOverlayVisible = useUIStore((s) => s.setPlayerOverlayVisible);
   const [coverError, setCoverError] = useState(false);
@@ -81,7 +79,7 @@ export const MiniPlayer = React.memo(() => {
         bottom: 0,
         left: 0,
         right: 0,
-        paddingBottom: insets.bottom || 12,
+        paddingBottom: Math.max(insets.bottom || 12, 28),
         backgroundColor: '#0a0a1a',
       }, containerStyle]}
     >
@@ -105,12 +103,7 @@ export const MiniPlayer = React.memo(() => {
           overflow: 'hidden',
         }}
       >
-        <View style={{
-          position: 'absolute',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: `${primaryColor}10`,
-        }} />
-
+        
         <MiniProgressBar />
 
         {coverError ? (

@@ -160,7 +160,7 @@ const LyricItem = React.memo(
 );
 
 
-function coverSize(w: number, h: number) { return Math.min(w * 0.78, h * 0.44); }
+function coverSize(w: number, h: number) { return Math.min(w * 0.78, h * 0.5); }
 function targetLineY(h: number) { return h * 0.02; }
 
 const PlayerGradient = React.memo(({ children }: { children: React.ReactNode }) => {
@@ -323,7 +323,7 @@ const PlayerVolumeSlider = React.memo(() => {
   );
 
   return (
-    <View style={[styles.volumeRow, { paddingHorizontal: screenPadding.horizontal, marginBottom: bottom + 4 }]}>
+    <View style={[styles.volumeRow, { paddingHorizontal: screenPadding.horizontal, marginBottom: 8 }]}>
       <Ionicons name="volume-low" size={14} color="rgba(255,255,255,0.25)" />
       <View
         onStartShouldSetResponder={() => true}
@@ -342,7 +342,7 @@ const PlayerVolumeSlider = React.memo(() => {
   );
 });
 
-const PlayerLyricsList = React.memo(({ overlayVisibleSV }: { overlayVisibleSV: Animated.SharedValue<boolean> }) => {
+const PlayerLyricsList = React.memo(() => {
   const { height: winH } = useWindowDimensions();
   const currentSong = usePlayerStore((s) => s.currentSong);
   const duration = usePlayerStore((s) => s.duration);
@@ -359,9 +359,7 @@ const PlayerLyricsList = React.memo(({ overlayVisibleSV }: { overlayVisibleSV: A
   useAnimatedReaction(
     () => scrollOffset.value,
     (value) => {
-      if (overlayVisibleSV.value) {
-        scrollTo(flatListRef, 0, value, false);
-      }
+      scrollTo(flatListRef, 0, value, false);
     },
   );
 
@@ -373,12 +371,10 @@ const PlayerLyricsList = React.memo(({ overlayVisibleSV }: { overlayVisibleSV: A
   const setStoreCurrentLineIndex = useUIStore((s) => s.setCurrentLineIndex);
   const [currentLineIndex, setCurrentLineIndex] = useState(-1);
   const currentLineIndexRef = useRef(-1);
-
-  const overlayVisible = useUIStore((s) => s.playerOverlayVisible);
+  const prevLineIndexRef = useRef(-1);
 
   useEffect(() => {
     if (!lyricsData.length) return;
-    if (!overlayVisible) return;
     const update = () => {
       const p = usePlayerStore.getState();
       const u = useUIStore.getState();
@@ -393,7 +389,7 @@ const PlayerLyricsList = React.memo(({ overlayVisibleSV }: { overlayVisibleSV: A
     update();
     const timer = setInterval(update, 250);
     return () => clearInterval(timer);
-  }, [lyricsData, duration, overlayVisible]);
+  }, [lyricsData, duration]);
 
   const handleMeasure = useCallback((index: number, height: number) => {
     measuredHeightsRef.current[index] = height;
@@ -407,10 +403,10 @@ const PlayerLyricsList = React.memo(({ overlayVisibleSV }: { overlayVisibleSV: A
     setCurrentLineIndex(-1);
     setStoreCurrentLineIndex(-1);
     scrollAnimating.value = false;
+    prevLineIndexRef.current = -1;
   }, [currentSong?.id]);
 
   useEffect(() => {
-    if (!overlayVisible) return;
     if (!flatListReady || userScrolling) return;
     if (currentLineIndex < 0 && lyricsData.length === 0) return;
     const idx = currentLineIndex < 0 ? 0 : currentLineIndex;
@@ -419,12 +415,16 @@ const PlayerLyricsList = React.memo(({ overlayVisibleSV }: { overlayVisibleSV: A
       offset += measuredHeightsRef.current[i] ?? 50;
     }
     const target = Math.max(0, offset - targetLineY(winH));
+    const prev = prevLineIndexRef.current;
+    prevLineIndexRef.current = idx;
     if (idx === 0) {
       scrollOffset.value = target;
     } else {
-      scrollOffset.value = withTiming(target, { duration: 300, easing: Easing.bezier(0.25, 0.1, 0.25, 1) });
+      const lineDiff = Math.abs(idx - (prev >= 0 ? prev : 0));
+      const duration = lineDiff <= 3 ? 550 : 0;
+      scrollOffset.value = withTiming(target, { duration, easing: Easing.bezier(0.25, 0.1, 0.25, 1) });
     }
-  }, [currentLineIndex, flatListReady, userScrolling, isDragging, lyricsData.length, overlayVisible]);
+  }, [currentLineIndex, flatListReady, userScrolling, isDragging, lyricsData.length]);
 
   const renderLyricItem = useCallback(
     ({ item, index }: { item: LyricLine; index: number }) => {
@@ -483,15 +483,14 @@ const PlayerLyricsList = React.memo(({ overlayVisibleSV }: { overlayVisibleSV: A
 
 interface FullPlayerProps {
   onClose?: () => void;
-  overlayVisibleSV: Animated.SharedValue<boolean>;
 }
 
-export const FullPlayer = React.memo(({ onClose, overlayVisibleSV }: FullPlayerProps) => {
+export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
   const router = useRouter();
   const { width: winW, height: winH } = useWindowDimensions();
   const { top, bottom } = useSafeAreaInsets();
-  const cvSize = coverSize(winW, winH);
   const pagerMaxH = winH * 0.55;
+  const cvSize = coverSize(winW, winH);
   const [coverError, setCoverError] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
@@ -607,7 +606,7 @@ export const FullPlayer = React.memo(({ onClose, overlayVisibleSV }: FullPlayerP
   return (
     <Animated.View style={[{ flex: 1 }, animatedContentStyle]}>
     <PlayerGradient>
-      <View style={{ flex: 1, paddingTop: top }}>
+      <View style={{ flex: 1, paddingTop: top, paddingBottom: Math.max(12, bottom) }}>
           <View style={{ flex: 1, maxHeight: pagerMaxH }}>
           <View style={[styles.headerRow, { paddingHorizontal: screenPadding.horizontal }]}>
             <View style={styles.dragBar} />
@@ -687,13 +686,13 @@ export const FullPlayer = React.memo(({ onClose, overlayVisibleSV }: FullPlayerP
               </View>
 
               <View style={{ width: winW }}>
-                <PlayerLyricsList overlayVisibleSV={overlayVisibleSV} />
+                <PlayerLyricsList />
               </View>
             </ScrollView>
           </View>
         </View>
 
-        <View style={{ height: 20 }} />
+        <View style={{ height: 40 }} />
         <View style={[styles.infoRow, { paddingHorizontal: screenPadding.horizontal }]}>
           <View style={{ flex: 1, overflow: 'hidden' }}>
             <MovingText text={currentSong.title} threshold={20} style={styles.title} />
