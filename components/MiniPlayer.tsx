@@ -79,8 +79,8 @@ export const MiniPlayer = React.memo(() => {
         bottom: 0,
         left: 0,
         right: 0,
-        paddingBottom: Math.max(insets.bottom || 12, 28),
         backgroundColor: '#0a0a1a',
+        paddingTop: 8,
       }, containerStyle]}
     >
       <TouchableOpacity
@@ -89,18 +89,16 @@ export const MiniPlayer = React.memo(() => {
         style={{
           flexDirection: 'row',
           alignItems: 'center',
-          paddingHorizontal: 16,
-          paddingVertical: 14,
+          paddingHorizontal: 14,
+          paddingVertical: 12,
+          paddingBottom: 12 + (insets.bottom || 12),
           backgroundColor: 'rgba(28,28,48,0.94)',
-          borderRadius: 16,
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.04)',
+          borderRadius: 0,
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: 0.35,
-          shadowRadius: 20,
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 16,
           elevation: 14,
-          overflow: 'hidden',
         }}
       >
         
@@ -108,7 +106,7 @@ export const MiniPlayer = React.memo(() => {
 
         {coverError ? (
           <View style={{
-            width: 50, height: 50, borderRadius: 10,
+            width: 52, height: 52, borderRadius: 12,
             backgroundColor: 'rgba(255,255,255,0.04)',
             alignItems: 'center', justifyContent: 'center',
           }}>
@@ -118,7 +116,7 @@ export const MiniPlayer = React.memo(() => {
           <Image
             source={{ uri: song.cover }}
             style={{
-              width: 50, height: 50, borderRadius: 10,
+              width: 52, height: 52, borderRadius: 12,
               backgroundColor: 'rgba(255,255,255,0.04)',
             }}
             onError={() => setCoverError(true)}
@@ -129,7 +127,7 @@ export const MiniPlayer = React.memo(() => {
           <MovingText
             text={song.title}
             threshold={15}
-            style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 2 }}
+            style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 3 }}
           />
           <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }} numberOfLines={1}>
             {song.artist}
@@ -140,13 +138,13 @@ export const MiniPlayer = React.memo(() => {
           onPress={handlePlayPause}
           activeOpacity={0.7}
           style={{
-            width: 42,
-            height: 42,
-            borderRadius: 21,
+            width: 44,
+            height: 44,
+            borderRadius: 22,
             backgroundColor: 'rgba(255,255,255,0.08)',
             alignItems: 'center',
             justifyContent: 'center',
-            marginLeft: 12,
+            marginLeft: 10,
           }}
         >
           <Ionicons

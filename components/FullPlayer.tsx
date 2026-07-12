@@ -22,6 +22,7 @@ import Animated, {
   withSpring,
   withSequence,
   Easing,
+  runOnJS,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -44,7 +45,7 @@ import { QueueSection } from './QueueSection';
 import { downloadSong } from '../services/downloadService';
 
 const LyricItem = React.memo(
-  ({ item, index, primaryColor, onMeasure, animate, currentLineIndex, targetOpacity, targetShadow, showTranslation }: { item: LyricLine; index: number; primaryColor: string; onMeasure?: (index: number, height: number) => void; animate?: boolean; currentLineIndex: number; targetOpacity: number; targetShadow: number; showTranslation: boolean }) => {
+  ({ item, index, primaryColor, onMeasure, animate, currentLineIndex, targetOpacity, targetShadow, showTranslation, fontScale }: { item: LyricLine; index: number; primaryColor: string; onMeasure?: (index: number, height: number) => void; animate?: boolean; currentLineIndex: number; targetOpacity: number; targetShadow: number; showTranslation: boolean; fontScale: number }) => {
     const isActive = index === currentLineIndex;
     const d = index - currentLineIndex;
     const opacity = useSharedValue(targetOpacity);
@@ -93,8 +94,8 @@ const LyricItem = React.memo(
     });
 
     const lineStyle = {
-      fontSize: 34,
-      lineHeight: 40,
+      fontSize: 34 * fontScale,
+      lineHeight: 40 * fontScale,
       fontWeight: (isActive ? '800' : '500') as '400' | '700' | '800' | '500',
       color: '#fff',
       textAlign: 'left' as const,
@@ -103,8 +104,8 @@ const LyricItem = React.memo(
     };
 
     const transStyle = {
-      fontSize: 17,
-      lineHeight: 28,
+      fontSize: 17 * fontScale,
+      lineHeight: 28 * fontScale,
       fontWeight: (isActive ? '800' : '500') as '400' | '700' | '800' | '500',
       color: '#fff',
       textAlign: 'left' as const,
@@ -156,7 +157,8 @@ const LyricItem = React.memo(
     prev.animate === next.animate &&
     prev.targetOpacity === next.targetOpacity &&
     prev.targetShadow === next.targetShadow &&
-    prev.showTranslation === next.showTranslation,
+    prev.showTranslation === next.showTranslation &&
+    prev.fontScale === next.fontScale,
 );
 
 
@@ -355,6 +357,8 @@ const PlayerLyricsList = React.memo(() => {
   const [userScrolling, setUserScrolling] = useState(false);
   const measuredHeightsRef = useRef<number[]>([]);
   const showTranslation = useUIStore((s) => s.showLyricsTranslation);
+  const [fontScale, setFontScale] = useState(1);
+  const [showFontSlider, setShowFontSlider] = useState(false);
 
   useAnimatedReaction(
     () => scrollOffset.value,
@@ -434,10 +438,10 @@ const PlayerLyricsList = React.memo(() => {
       const targetOpacity = isPast ? 0.12 : isActive ? 1 : Math.max(0.12, 0.45 - (d - 1) * 0.2);
       const targetShadow = isActive ? 20 : 0;
       return (
-        <LyricItem item={item} index={index} primaryColor={palette.primary} onMeasure={handleMeasure} animate={!isDragging} currentLineIndex={currentLineIndex} targetOpacity={targetOpacity} targetShadow={targetShadow} showTranslation={showTranslation} />
+        <LyricItem item={item} index={index} primaryColor={palette.primary} onMeasure={handleMeasure} animate={!isDragging} currentLineIndex={currentLineIndex} targetOpacity={targetOpacity} targetShadow={targetShadow} showTranslation={showTranslation} fontScale={fontScale} />
       );
     },
-    [palette.primary, handleMeasure, isDragging, currentLineIndex, showTranslation],
+    [palette.primary, handleMeasure, isDragging, currentLineIndex, showTranslation, fontScale],
   );
 
   const handleScrollBegin = useCallback(() => {
@@ -447,6 +451,52 @@ const PlayerLyricsList = React.memo(() => {
   const handleScrollEnd = useCallback(() => {
     setUserScrolling(false);
   }, []);
+
+  const sliderRef = useRef<any>(null);
+  const sliderH = 180;
+  const trackH = sliderH - 44;
+  const sliderPosSV = useSharedValue(1);
+  const sliderTopRef = useRef(0);
+
+  const applySliderValue = useCallback((pageY: number) => {
+    const localY = pageY - sliderTopRef.current;
+    const ratio = Math.max(0, Math.min(1, 1 - localY / sliderH));
+    const val = Math.round((0.5 + ratio * 0.5) * 20) / 20;
+    sliderPosSV.value = val;
+  }, [sliderPosSV, sliderH]);
+
+  const commitFontScale = useCallback(() => {
+    setFontScale(sliderPosSV.value);
+  }, [setFontScale, sliderPosSV]);
+
+  const handleSliderGrant = useCallback((e: any) => {
+    sliderRef.current?.measureInWindow((x: number, y: number) => {
+      sliderTopRef.current = y;
+      applySliderValue(e.nativeEvent?.pageY ?? 0);
+    });
+  }, [applySliderValue]);
+
+  const handleSliderMove = useCallback((e: any) => {
+    applySliderValue(e.nativeEvent?.pageY ?? 0);
+  }, [applySliderValue]);
+
+  const handleSliderRelease = useCallback(() => {
+    runOnJS(commitFontScale)();
+  }, [commitFontScale]);
+
+  const sliderFillStyle = useAnimatedStyle(() => ({
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    height: trackH * (sliderPosSV.value - 0.5) / 0.5,
+    backgroundColor: '#818cf8',
+    borderRadius: 2,
+  }));
+
+  const sliderThumbStyle = useAnimatedStyle(() => ({
+    position: 'absolute', left: -8,
+    bottom: trackH * (sliderPosSV.value - 0.5) / 0.5 - 10,
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: '#818cf8',
+  }));
 
   if (!currentSong) return null;
 
@@ -470,6 +520,52 @@ const PlayerLyricsList = React.memo(() => {
           }}
           showsVerticalScrollIndicator={false}
         />
+
+        <TouchableOpacity
+          onPress={() => setShowFontSlider((v) => !v)}
+          activeOpacity={0.6}
+          style={{
+            position: 'absolute', top: 8, right: 16,
+            width: 32, height: 32, borderRadius: 16,
+            backgroundColor: showFontSlider ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)',
+            alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Aa</Text>
+        </TouchableOpacity>
+
+        {showFontSlider && (
+          <View
+            ref={sliderRef}
+            onStartShouldSetResponderCapture={() => true}
+            onMoveShouldSetResponderCapture={() => true}
+            onResponderGrant={handleSliderGrant}
+            onResponderMove={handleSliderMove}
+            onResponderRelease={handleSliderRelease}
+            onResponderTerminate={handleSliderRelease}
+            style={{
+              position: 'absolute', right: 16, top: 48,
+              width: 36, height: sliderH,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              borderRadius: 18,
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingVertical: 10,
+            }}
+          >
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9, marginBottom: 4 }}>A</Text>
+            <Animated.View style={{
+              width: 4, height: trackH, borderRadius: 2,
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              position: 'relative',
+              overflow: 'visible',
+            }}>
+              <Animated.View style={sliderFillStyle} />
+              <Animated.View style={sliderThumbStyle} />
+            </Animated.View>
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 4 }}>A</Text>
+          </View>
+        )}
       </View>
     );
   }
