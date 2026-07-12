@@ -111,7 +111,7 @@ export const AuroraBackground = React.memo(() => {
   }
 
   return (
-    <Animated.View style={[StyleSheet.absoluteFill, { zIndex: -1 }]} pointerEvents="none">
+    <Animated.View style={StyleSheet.absoluteFill} pointerEvents="none">
       <AuroraLayer
         color={palette.primary}
         offsetX={60}

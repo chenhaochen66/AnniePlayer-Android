@@ -62,22 +62,24 @@ export default function RootLayout() {
           {showMain && (
             <AudioProvider>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-            <View style={{ flex: 1, backgroundColor: colors.background }}>
+            <View style={{ flex: 1 }}>
               <AuroraBackground />
-              <View style={{ flex: 1, paddingBottom: insets.bottom, backgroundColor: colors.background }}>
-                <Stack
-                  screenOptions={{
-                    headerShown: false,
-                    contentStyle: { backgroundColor: 'transparent' },
-                  }}
-                >
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="player" options={{ animation: 'none' }} />
-                </Stack>
+              <View style={{ flex: 1, backgroundColor: colors.background }}>
+                <View style={{ flex: 1, paddingBottom: insets.bottom, backgroundColor: colors.background }}>
+                  <Stack
+                    screenOptions={{
+                      headerShown: false,
+                      contentStyle: { backgroundColor: 'transparent' },
+                    }}
+                  >
+                    <Stack.Screen name="index" />
+                    <Stack.Screen name="player" options={{ animation: 'none' }} />
+                  </Stack>
+                </View>
+                <MiniPlayerWrapper />
+                <LyricsModal />
+                <PlayerOverlay />
               </View>
-              <MiniPlayerWrapper />
-              <LyricsModal />
-              <PlayerOverlay />
             </View>
             <Toast />
             </AudioProvider>

@@ -38,7 +38,7 @@ export default function HomeScreen() {
   const [albumSubmitted, setAlbumSubmitted] = useState('');
   const [artistSubmitted, setArtistSubmitted] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const downloadTimer = useRef<ReturnType<typeof setTimeout>>();
+  const downloadTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const setDownloadingIdAuto = useCallback((id: string | null) => {
     if (downloadTimer.current) clearTimeout(downloadTimer.current);
     setDownloadingId(id);
@@ -142,13 +142,15 @@ export default function HomeScreen() {
         console.log('[dl] starting download for', sId);
         const url = await fetchDownloadUrlBySong(song, quality);
         console.log('[dl] got url:', url?.substring(0, 60));
-        const lyric = song.lyric || await fetchLyric(sId, song.title, song.artist);
+        const { lrc: lyric, tlyric } = song.lyric && song.tlyric
+          ? { lrc: song.lyric, tlyric: song.tlyric }
+          : await fetchLyric(sId, song.title, song.artist);
         console.log('[dl] lyric length:', lyric?.length || 0);
         const filePath = await downloadSong(
           sId, song.title, song.artist,
           song.cover, song.album, url, quality,
           (p) => updateProgress(sId, p * 100),
-          lyric,
+          lyric, tlyric ?? undefined,
         );
         console.log('[dl] complete:', filePath);
         completeTask(sId, filePath);
@@ -169,10 +171,11 @@ export default function HomeScreen() {
   const renderSongItem = useCallback(
     ({ item }: { item: Song }) => {
       const songs = item.platform === 'netease' ? neteaseSongsRef.current : songsRef.current;
+      const isActive = item.id === activeSongId;
       return (
         <ResultItem
           song={item}
-          activeSongId={activeSongId}
+          isActive={isActive}
           onPress={() => handlePlaySong(item, songs)}
           onDownload={handleDownload}
         />

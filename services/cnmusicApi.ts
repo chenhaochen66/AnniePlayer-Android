@@ -274,9 +274,9 @@ export async function fetchDownloadUrlBySong(song: Song, quality: Quality): Prom
   return fetchDownloadUrl(song.id, quality);
 }
 
-async function fetchNeteaseLyric(songId: string): Promise<string> {
+async function fetchNeteaseLyric(songId: string): Promise<{ lrc: string; tlyric: string | null }> {
   const rawId = songId.replace(/^netease:/, '');
-  const params = new URLSearchParams({ id: rawId, lv: '-1', kv: '-1', tv: '-1' });
+  const params = new URLSearchParams({ id: rawId, lv: '1', kv: '0', tv: '1' });
 
   const resp = await fetch('https://interface3.music.163.com/api/song/lyric', {
     method: 'POST',
@@ -285,10 +285,10 @@ async function fetchNeteaseLyric(songId: string): Promise<string> {
   });
   const data = await resp.json();
   if (data.code !== 200) throw new Error('netease lyric api error');
-  return data.lrc?.lyric || '[00:00.00]暂无歌词';
+  return { lrc: data.lrc?.lyric || '[00:00.00]暂无歌词', tlyric: data.tlyric?.lyric || null };
 }
 
-async function fetchQQMusicLyric(songId: string, title: string, artist: string): Promise<string> {
+async function fetchQQMusicLyric(songId: string, title: string, artist: string): Promise<{ lrc: string; tlyric: string | null }> {
   const headers: Record<string, string> = {
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1',
     'Referer': 'https://i.y.qq.com',
@@ -310,7 +310,7 @@ async function fetchQQMusicLyric(songId: string, title: string, artist: string):
   const searchData = await searchResp.json();
   const songList = searchData?.req_0?.data?.body?.item_song || [];
   const songmid = songList[0]?.mid;
-  if (!songmid) return '[00:00.00]暂无歌词';
+  if (!songmid) return { lrc: '[00:00.00]暂无歌词', tlyric: null };
 
   const lyricParams = `songmid=${songmid}&g_tk=5381&jsonpCallback=MusicJsonCallback&format=jsonp`;
   const lyricResp = await fetch(`https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?${lyricParams}`, {
@@ -318,28 +318,39 @@ async function fetchQQMusicLyric(songId: string, title: string, artist: string):
   });
   const text = await lyricResp.text();
   const match = text.match(/^[^(]+\(({.*})\);?\s*$/);
-  if (!match) return '[00:00.00]暂无歌词';
+  if (!match) return { lrc: '[00:00.00]暂无歌词', tlyric: null };
 
   const lyricData = JSON.parse(match[1]);
-  if (lyricData.retcode !== 0 || !lyricData.lyric) return '[00:00.00]暂无歌词';
-  return base64ToStr(lyricData.lyric);
+  if (lyricData.retcode !== 0 || !lyricData.lyric) return { lrc: '[00:00.00]暂无歌词', tlyric: null };
+  const tlyric = lyricData.trans ? base64ToStr(lyricData.trans) : null;
+  return { lrc: base64ToStr(lyricData.lyric), tlyric };
 }
 
-export async function fetchLyric(songId: string, title: string, artist: string): Promise<string> {
+export async function fetchLyric(songId: string, title: string, artist: string): Promise<{ lrc: string; tlyric: string | null }> {
   const cacheKey = `lyric:${songId}`;
   const cached = await cacheService.get<string>(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (parsed && typeof parsed.lrc === 'string') {
+        return { lrc: parsed.lrc, tlyric: parsed.tlyric ?? null };
+      }
+    } catch {
+      // 旧格式缓存，不返回 null，继续请求 API 获取 tlyric
+    }
+  }
 
   try {
-    const lrc = songId.startsWith('netease:')
+    const result = songId.startsWith('netease:')
       ? await fetchNeteaseLyric(songId)
       : await fetchQQMusicLyric(songId, title, artist);
 
-    await cacheService.set(cacheKey, lrc, LYRIC_CACHE_TTL);
-    return lrc;
+    await cacheService.set(cacheKey, JSON.stringify({ lrc: result.lrc, tlyric: result.tlyric }), LYRIC_CACHE_TTL);
+    return result;
   } catch {
-    await cacheService.set(cacheKey, '[00:00.00]暂无歌词', LYRIC_CACHE_TTL);
-    return '[00:00.00]暂无歌词';
+    const fallback = JSON.stringify({ lrc: '[00:00.00]暂无歌词', tlyric: null });
+    await cacheService.set(cacheKey, fallback, LYRIC_CACHE_TTL);
+    return { lrc: '[00:00.00]暂无歌词', tlyric: null };
   }
 }
 

@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useMemo, useCallback } from 'react';
 import { NativeModules, AppState } from 'react-native';
-import TrackPlayer, { useProgress, useTrackPlayerEvents, Event } from 'react-native-track-player';
+import TrackPlayer, { useTrackPlayerEvents, Event } from 'react-native-track-player';
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { fetchLyric } from '../services/cnmusicApi';
+
+
 
 const AudioCtx = createContext<AudioControls | null>(null);
 
@@ -18,12 +20,15 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const playbackId = usePlayerStore((s) => s.playbackId);
   const setIsPlaying = usePlayerStore((s) => s.setIsPlaying);
-  const syncProgress = usePlayerStore((s) => s.syncProgress);
-
-  const { position, duration, buffered } = useProgress(500);
   useEffect(() => {
-    syncProgress(position, duration, buffered);
-  }, [position, duration, buffered, syncProgress]);
+    const timer = setInterval(async () => {
+      try {
+        const p = await TrackPlayer.getProgress();
+        usePlayerStore.getState().syncProgress(p.position, p.duration, p.buffered);
+      } catch {}
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
 
   const onPlayWhenReadyChanged = useCallback((event: any) => {
     usePlayerStore.getState().setIsPlaying(event.playWhenReady);
@@ -89,9 +94,9 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!currentSong?.id || currentSong.lyric !== undefined) return;
     const songId = currentSong.id;
-    fetchLyric(songId, currentSong.title, currentSong.artist).then((lyric) => {
+    fetchLyric(songId, currentSong.title, currentSong.artist).then(({ lrc, tlyric }) => {
       if (usePlayerStore.getState().currentSong?.id === songId) {
-        usePlayerStore.getState().updateSongLyric(songId, lyric);
+        usePlayerStore.getState().updateSongLyric(songId, lrc, tlyric ?? undefined);
       }
     }).catch(() => {});
   }, [currentSong?.id]);

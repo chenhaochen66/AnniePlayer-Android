@@ -33,7 +33,7 @@ interface PlayerState {
   syncProgress: (currentTime: number, duration: number, bufferedTime: number) => void;
   setVolume: (volume: number) => void;
   updateSongPlayUrl: (id: string, url: string) => void;
-  updateSongLyric: (id: string, lyric: string) => void;
+  updateSongLyric: (id: string, lrc: string, tlyric?: string) => void;
   setLyricsVisible: (visible: boolean) => void;
   addDownloadedId: (id: string) => void;
 }
@@ -109,9 +109,9 @@ export const usePlayerStore = create<PlayerState>()(
         const { queue, currentSong } = get();
         set({ queue: queue.map((s) => s.id === id ? { ...s, playUrl } : s), currentSong: currentSong?.id === id ? { ...currentSong, playUrl } : currentSong });
       },
-      updateSongLyric: (id, lyric) => {
+      updateSongLyric: (id, lrc, tlyric) => {
         const { queue, currentSong } = get();
-        set({ queue: queue.map((s) => s.id === id ? { ...s, lyric } : s), currentSong: currentSong?.id === id ? { ...currentSong, lyric } : currentSong });
+        set({ queue: queue.map((s) => s.id === id ? { ...s, lyric: lrc, tlyric } : s), currentSong: currentSong?.id === id ? { ...currentSong, lyric: lrc, tlyric } : currentSong });
       },
       setLyricsVisible: (visible) => set({ isLyricsVisible: visible }),
       addDownloadedId: (id) => {

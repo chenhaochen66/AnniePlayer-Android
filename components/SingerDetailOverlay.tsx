@@ -220,8 +220,8 @@ export const SingerDetailOverlay = React.memo(() => {
     fetchPlayUrl(song.id).then((url) => {
       usePlayerStore.getState().updateSongPlayUrl(song.id, url);
     }).catch(() => {});
-    fetchLyric(song.id, song.title, song.artist).then((lrc) => {
-      usePlayerStore.getState().updateSongLyric(song.id, lrc);
+    fetchLyric(song.id, song.title, song.artist).then(({ lrc, tlyric }) => {
+      usePlayerStore.getState().updateSongLyric(song.id, lrc, tlyric ?? undefined);
     }).catch(() => {});
   }, [songs, setQueue, extractColors, setColors, setCurrentCoverUrl]);
 
@@ -240,12 +240,14 @@ export const SingerDetailOverlay = React.memo(() => {
       addTask(song, quality);
       try {
         const url = await fetchDownloadUrl(song.id, quality);
-        const lyric = song.lyric || await fetchLyric(song.id, song.title, song.artist);
+        const { lrc: lyric, tlyric } = song.lyric && song.tlyric
+          ? { lrc: song.lyric, tlyric: song.tlyric }
+          : await fetchLyric(song.id, song.title, song.artist);
         const filePath = await downloadSong(
           song.id, song.title, song.artist,
           song.cover, song.album || '', url, quality,
           (p) => updateProgress(song.id, p * 100),
-          lyric,
+          lyric, tlyric ?? undefined,
         );
         completeTask(song.id);
         useDownloadStore.getState().tasks[song.id].filePath = filePath;
