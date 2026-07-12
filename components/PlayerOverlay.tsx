@@ -9,7 +9,12 @@ export function PlayerOverlay() {
   const visible = useUIStore((s) => s.playerOverlayVisible);
   const setVisible = useUIStore((s) => s.setPlayerOverlayVisible);
   const translateY = useSharedValue(winH);
+  const overlayVisibleSV = useSharedValue(false);
   const onClose = useCallback(() => setVisible(false), [setVisible]);
+
+  useEffect(() => {
+    overlayVisibleSV.value = visible;
+  }, [visible]);
 
   useEffect(() => {
     if (!visible) return;
@@ -40,7 +45,7 @@ export function PlayerOverlay() {
         backgroundColor: '#0a0a1a',
       }, animatedStyle]}
     >
-      <FullPlayer onClose={onClose} />
+      <FullPlayer onClose={onClose} overlayVisibleSV={overlayVisibleSV} />
     </Animated.View>
   );
 }

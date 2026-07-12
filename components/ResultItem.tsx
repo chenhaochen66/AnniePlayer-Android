@@ -6,16 +6,15 @@ import { useDownloadStore } from '../store/useDownloadStore';
 
 interface ResultItemProps {
   song: Song;
-  activeSongId?: string;
+  isActive: boolean;
   onPress: (song: Song) => void;
   onDownload: (song: Song) => void;
 }
 
 export const ResultItem = React.memo(
-  ({ song, activeSongId, onPress, onDownload }: ResultItemProps) => {
+  ({ song, isActive, onPress, onDownload }: ResultItemProps) => {
     const [imgError, setImgError] = useState(false);
     const downloadTask = useDownloadStore((s) => s.tasks[song.id]);
-    const isActive = activeSongId === song.id;
 
     const isDownloading = downloadTask?.status === 'downloading' || downloadTask?.status === 'pending';
 
@@ -81,7 +80,5 @@ export const ResultItem = React.memo(
   },
   (prev, next) =>
     prev.song.id === next.song.id &&
-    prev.activeSongId === next.activeSongId &&
-    prev.onPress === next.onPress &&
-    prev.onDownload === next.onDownload,
+    prev.isActive === next.isActive,
 );

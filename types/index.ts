@@ -27,6 +27,7 @@ export interface Song {
   platform: Platform;
   playUrl: string;
   lyric: string | undefined;
+  tlyric: string | undefined;
   qualities: Quality[];
 }
 

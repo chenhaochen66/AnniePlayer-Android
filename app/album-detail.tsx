@@ -162,6 +162,7 @@ export default function AlbumDetailPage() {
     platform: 'kuwo' as const,
     playUrl: '',
     lyric: undefined,
+    tlyric: undefined,
     qualities: ['128k', '320k', 'flac'] as Quality[],
   }), [albumCover, albumName]);
 
@@ -175,12 +176,12 @@ export default function AlbumDetailPage() {
     }).catch(() => {});
 
     try {
-      const [playUrl, lyric] = await Promise.all([
+      const [playUrl, { lrc, tlyric }] = await Promise.all([
         fetchPlayUrl(albumSong.id),
         fetchLyric(albumSong.id, albumSong.name, albumSong.artist_name),
       ]);
       usePlayerStore.getState().updateSongPlayUrl(albumSong.id, playUrl);
-      usePlayerStore.getState().updateSongLyric(albumSong.id, lyric);
+      usePlayerStore.getState().updateSongLyric(albumSong.id, lrc, tlyric ?? undefined);
     } catch {}
   }, [toSong, setQueue, extractColors, setColors, setCurrentCoverUrl, albumCover]);
 
@@ -200,13 +201,15 @@ export default function AlbumDetailPage() {
       try {
         console.log('[album-dl] starting', song.id, quality, 'lyric existed:', !!song.lyric);
         const url = await fetchDownloadUrl(song.id, quality);
-        const lyric = song.lyric || await fetchLyric(song.id, song.title, song.artist);
+        const { lrc: lyric, tlyric } = song.lyric && song.tlyric
+          ? { lrc: song.lyric, tlyric: song.tlyric }
+          : await fetchLyric(song.id, song.title, song.artist);
         console.log('[album-dl] lyric length:', lyric?.length || 0);
         const filePath = await downloadSong(
           song.id, song.title, song.artist,
           song.cover, song.album, url, quality,
           (p) => updateProgress(song.id, p * 100),
-          lyric,
+          lyric, tlyric ?? undefined,
         );
         completeTask(song.id);
         useDownloadStore.getState().tasks[song.id].filePath = filePath;
@@ -247,12 +250,12 @@ export default function AlbumDetailPage() {
         updateProgress(s.id, 0);
         try {
           const url = await fetchDownloadUrl(s.id, quality);
-          const lyric = await fetchLyric(s.id, s.name, s.artist_name);
+          const { lrc: lyric, tlyric } = await fetchLyric(s.id, s.name, s.artist_name);
           await downloadSong(
             s.id, s.name, s.artist_name,
             albumCover, albumName, url, quality,
             (p) => updateProgress(s.id, p * 100),
-            lyric,
+            lyric, tlyric ?? undefined,
           );
           completeTask(s.id);
           addDownloadedId(s.id);

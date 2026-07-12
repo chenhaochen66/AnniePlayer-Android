@@ -2,6 +2,7 @@
 import type { Quality } from '../types';
 import { decodeHtmlEntities as decodeEntities } from '../utils/stringUtils';
 import { scanFile, tagAudioFile } from '../modules/media-scanner/src/MediaScanner';
+import { parseLrc } from '../utils/lrcParser';
 
 const DBG = '[download]';
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
@@ -32,11 +33,33 @@ export function cancelDownload(songId: string): void {
   }
 }
 
+function mergeLyrics(lrc: string, tlyric?: string): string {
+  if (!tlyric) return lrc;
+  const lrcLines = parseLrc(lrc);
+  const tlyricLines = parseLrc(tlyric);
+  const transMap = new Map<number, string>();
+  for (const tl of tlyricLines) {
+    transMap.set(Math.round(tl.time * 1000), tl.text);
+  }
+  const result: string[] = [];
+  for (const line of lrcLines) {
+    const timeKey = Math.round(line.time * 1000);
+    const min = Math.floor(line.time / 60);
+    const sec = Math.floor(line.time % 60);
+    const frac = Math.round((line.time - Math.floor(line.time)) * 100);
+    const ts = `[${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(frac).padStart(2, '0')}]`;
+    result.push(ts + line.text);
+    const trans = transMap.get(timeKey);
+    if (trans) result.push(ts + trans);
+  }
+  return result.join('\n');
+}
+
 export async function downloadSong(
   songId: string, title: string, artist: string,
   coverUrl: string, album: string | undefined,
   downloadUrl: string, quality: Quality,
-  onProgress: (p: number) => void, lyric: string,
+  onProgress: (p: number) => void, lyric: string, tlyric?: string,
 ): Promise<string> {
   console.log(DBG, 'start', songId, title, quality);
   title = decodeEntities(title);
@@ -85,7 +108,8 @@ export async function downloadSong(
 
   try {
     console.log(DBG, 'tagging audio...');
-    await tagAudioFile(tempPath.replace(/^file:\/\//, ''), title, artist, album || '', lyric || '', coverBase64, coverUrl);
+    const mergedLyric = mergeLyrics(lyric || '', tlyric);
+    await tagAudioFile(tempPath.replace(/^file:\/\//, ''), title, artist, album || '', mergedLyric, coverBase64, coverUrl);
     console.log(DBG, 'tag done');
   } catch (ex: any) {
     if (activeDownloads.get(songId)?.resumable !== resumable) throw ex;

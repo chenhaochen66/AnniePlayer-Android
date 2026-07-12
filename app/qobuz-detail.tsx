@@ -173,7 +173,7 @@ export default function QobuzDetailPage() {
         const filePath = await downloadSong(
           sId, track.title, track.artist,
           track.cover, track.album, info.url, 'flac',
-          (p) => updateProgress(sId, p * 100), '',
+          (p) => updateProgress(sId, p * 100), '', undefined,
         );
         completeTask(sId, filePath);
         addDownloadedId(sId);
@@ -237,7 +237,7 @@ export default function QobuzDetailPage() {
           const filePath = await downloadSong(
             sId, t.title, t.artist,
             t.cover, t.album, info.url, 'flac',
-            (p) => updateProgress(sId, p * 100), '',
+            (p) => updateProgress(sId, p * 100), '', undefined,
           );
           completeTask(sId, filePath);
           addDownloadedId(sId);

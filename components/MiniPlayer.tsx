@@ -21,15 +21,27 @@ import { MovingText } from './MovingText';
 
 const HIDDEN_TRANSLATE_Y = 120;
 
+const MiniProgressBar = memo(() => {
+  const currentTime = usePlayerStore((s) => s.currentTime);
+  const duration = usePlayerStore((s) => s.duration);
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  return (
+    <View style={{
+      position: 'absolute',
+      bottom: 0, left: 0, height: 4,
+      width: `${progress}%`,
+      backgroundColor: 'rgba(255,255,255,0.25)',
+    }} />
+  );
+});
+
 export const MiniPlayer = React.memo(() => {
   const insets = useSafeAreaInsets();
   const segments = useSegments();
   const currentSong = usePlayerStore((s) => s.currentSong);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const currentTime = usePlayerStore((s) => s.currentTime);
-  const duration = usePlayerStore((s) => s.duration);
   const togglePlay = useSharedAudio().togglePlay!;
-  const palette = useColorStore((s) => s.colors);
+  const primaryColor = useColorStore((s) => s.colors.primary);
   const playerOverlayVisible = useUIStore((s) => s.playerOverlayVisible);
   const setPlayerOverlayVisible = useUIStore((s) => s.setPlayerOverlayVisible);
   const [coverError, setCoverError] = useState(false);
@@ -60,8 +72,6 @@ export const MiniPlayer = React.memo(() => {
 
   const song = currentSong || lastSongRef.current;
   if (!song) return null;
-
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
     <Animated.View
@@ -98,16 +108,10 @@ export const MiniPlayer = React.memo(() => {
         <View style={{
           position: 'absolute',
           top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: `${palette.primary}10`,
+          backgroundColor: `${primaryColor}10`,
         }} />
 
-        <View style={{
-          position: 'absolute',
-          bottom: 0, left: 0, height: 4,
-          width: `${progress}%`,
-          backgroundColor: palette.primary,
-          opacity: 0.4,
-        }} />
+        <MiniProgressBar />
 
         {coverError ? (
           <View style={{

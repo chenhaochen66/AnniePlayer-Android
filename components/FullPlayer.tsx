@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   StyleSheet,
-  FlatList,
   NativeSyntheticEvent,
   NativeScrollEvent,
   ScrollView,
@@ -15,6 +14,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import Animated, {
   useAnimatedStyle,
+  useSharedValue,
+  useAnimatedRef,
+  useAnimatedReaction,
+  scrollTo,
+  withTiming,
+  withSpring,
+  withSequence,
+  Easing,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,7 +33,7 @@ import { useSharedAudio } from '../contexts/AudioContext';
 import { MovingText } from './MovingText';
 import { screenPadding } from '../constants/tokens';
 import { LoopMode, Quality } from '../types';
-import { parseLrc, LyricLine, findCurrentLineIndex } from '../utils/lrcParser';
+import { parseLrcWithTranslation, LyricLine, findCurrentLineIndex } from '../utils/lrcParser';
 import { fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
 import { getFileUrl as getQobuzFileUrl } from '../services/qobuzApi';
 import { useQobuzStore } from '../store/useQobuzStore';
@@ -37,37 +44,124 @@ import { QueueSection } from './QueueSection';
 import { downloadSong } from '../services/downloadService';
 
 const LyricItem = React.memo(
-  ({ item, index, activeIndex, primaryColor, onMeasure }: { item: LyricLine; index: number; activeIndex: number; primaryColor: string; onMeasure?: (index: number, height: number) => void }) => {
-    const isActive = index === activeIndex;
-    const isPast = index < activeIndex;
+  ({ item, index, primaryColor, onMeasure, animate, currentLineIndex, targetOpacity, targetShadow, showTranslation }: { item: LyricLine; index: number; primaryColor: string; onMeasure?: (index: number, height: number) => void; animate?: boolean; currentLineIndex: number; targetOpacity: number; targetShadow: number; showTranslation: boolean }) => {
+    const isActive = index === currentLineIndex;
+    const d = index - currentLineIndex;
+    const opacity = useSharedValue(targetOpacity);
+    const fadeAnim = useSharedValue(showTranslation ? 1 : 0);
+    const scale = useSharedValue(1);
+
+    useEffect(() => {
+      if (animate === false || Math.abs(d) > 1) {
+        opacity.value = targetOpacity;
+        return;
+      }
+      opacity.value = withTiming(targetOpacity, { duration: 400, easing: Easing.inOut(Easing.ease) });
+    }, [targetOpacity, animate, index, currentLineIndex]);
+
+    useEffect(() => {
+      fadeAnim.value = withTiming(showTranslation ? 1 : 0, { duration: 200 });
+    }, [showTranslation]);
+
+    const prevActive = useRef(isActive);
+    useEffect(() => {
+      if (isActive && animate !== false) {
+        scale.value = withSequence(
+          withTiming(0.92, { duration: 0 }),
+          withTiming(1.05, { duration: 100 }),
+          withSpring(1.0, { damping: 10, stiffness: 150 }),
+        );
+      } else if (!isActive && scale.value !== 1) {
+        scale.value = 1;
+      }
+      prevActive.current = isActive;
+    }, [isActive, animate]);
+
+    const rStyle = useAnimatedStyle(() => {
+      if (scale.value !== 1) {
+        return { opacity: opacity.value, transform: [{ scale: scale.value }] };
+      }
+      return { opacity: opacity.value };
+    });
+
+    const transRStyle = useAnimatedStyle(() => {
+      const op = opacity.value * fadeAnim.value;
+      if (scale.value !== 1) {
+        return { opacity: op, transform: [{ scale: scale.value }] };
+      }
+      return { opacity: op };
+    });
+
+    const lineStyle = {
+      fontSize: 34,
+      lineHeight: 40,
+      fontWeight: (isActive ? '800' : '500') as '400' | '700' | '800' | '500',
+      color: '#fff',
+      textAlign: 'left' as const,
+      textShadowColor: isActive ? primaryColor : 'transparent',
+      textShadowRadius: targetShadow,
+    };
+
+    const transStyle = {
+      fontSize: 17,
+      lineHeight: 28,
+      fontWeight: (isActive ? '800' : '500') as '400' | '700' | '800' | '500',
+      color: '#fff',
+      textAlign: 'left' as const,
+      textShadowColor: isActive ? primaryColor : 'transparent',
+      textShadowRadius: targetShadow,
+    };
+
     return (
       <View
         onLayout={(e) => onMeasure?.(index, e.nativeEvent.layout.height)}
-        style={{ paddingVertical: 12, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}
+        style={{
+          paddingVertical: 10,
+          justifyContent: 'center',
+          paddingLeft: 40,
+          paddingRight: 40,
+          backgroundColor: isActive ? `${primaryColor}12` : 'transparent',
+          borderRadius: isActive ? 12 : 0,
+        }}
       >
-        <Text
-          style={{
-            fontSize: isActive ? 19 : 14,
-            fontWeight: isActive ? '700' : '400',
-            color: isActive ? '#fff' : isPast ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.45)',
-            textAlign: 'center',
-            textShadowColor: isActive ? primaryColor : 'transparent',
-            textShadowRadius: isActive ? 18 : 0,
-          }}
-        >
-          {item.text}
-        </Text>
+        {isActive && (
+          <View style={{
+            position: 'absolute',
+            left: 24,
+            top: 12,
+            bottom: 12,
+            width: 3,
+            borderRadius: 1.5,
+            backgroundColor: primaryColor,
+          }} />
+        )}
+        {animate === false ? (
+          <Text style={[lineStyle, { opacity: targetOpacity }]}>{item.text}</Text>
+        ) : (
+          <Animated.Text style={[lineStyle, rStyle]}>{item.text}</Animated.Text>
+        )}
+        {item.translation ? (
+          animate === false ? (
+            <Text style={[transStyle, { opacity: targetOpacity * (showTranslation ? 1 : 0) }]}>{item.translation}</Text>
+          ) : (
+            <Animated.Text style={[transStyle, transRStyle]}>{item.translation}</Animated.Text>
+          )
+        ) : null}
       </View>
     );
   },
   (prev, next) =>
     prev.index === next.index &&
-    prev.activeIndex === next.activeIndex &&
-    prev.primaryColor === next.primaryColor,
+    prev.primaryColor === next.primaryColor &&
+    prev.animate === next.animate &&
+    prev.targetOpacity === next.targetOpacity &&
+    prev.targetShadow === next.targetShadow &&
+    prev.showTranslation === next.showTranslation,
 );
 
+
 function coverSize(w: number, h: number) { return Math.min(w * 0.78, h * 0.44); }
-function targetLineY(h: number) { return h * 0.205; }
+function targetLineY(h: number) { return h * 0.02; }
 
 const PlayerGradient = React.memo(({ children }: { children: React.ReactNode }) => {
   const palette = useColorStore((s) => s.colors);
@@ -248,28 +342,58 @@ const PlayerVolumeSlider = React.memo(() => {
   );
 });
 
-const PlayerLyricsList = React.memo(() => {
+const PlayerLyricsList = React.memo(({ overlayVisibleSV }: { overlayVisibleSV: Animated.SharedValue<boolean> }) => {
   const { height: winH } = useWindowDimensions();
   const currentSong = usePlayerStore((s) => s.currentSong);
-  const currentTime = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
   const palette = useColorStore((s) => s.colors);
   const isDragging = useUIStore((s) => s.isDragging);
-  const seekRatio = useUIStore((s) => s.seekRatio);
   const [flatListReady, setFlatListReady] = useState(false);
-  const flatListRef = useRef<FlatList>(null);
+  const flatListRef = useAnimatedRef<Animated.FlatList<any>>();
+  const scrollOffset = useSharedValue(0);
+  const scrollAnimating = useSharedValue(false);
   const [userScrolling, setUserScrolling] = useState(false);
   const measuredHeightsRef = useRef<number[]>([]);
+  const showTranslation = useUIStore((s) => s.showLyricsTranslation);
+
+  useAnimatedReaction(
+    () => scrollOffset.value,
+    (value) => {
+      if (overlayVisibleSV.value) {
+        scrollTo(flatListRef, 0, value, false);
+      }
+    },
+  );
 
   const lyricsData = useMemo(() => {
     if (!currentSong?.lyric) return [];
-    return parseLrc(currentSong.lyric);
-  }, [currentSong?.lyric]);
+    return parseLrcWithTranslation(currentSong.lyric, currentSong.tlyric);
+  }, [currentSong?.lyric, currentSong?.tlyric]);
 
-  const currentLineIndex = useMemo(
-    () => findCurrentLineIndex(lyricsData, isDragging ? seekRatio * duration : currentTime),
-    [lyricsData, seekRatio, currentTime, duration, isDragging],
-  );
+  const setStoreCurrentLineIndex = useUIStore((s) => s.setCurrentLineIndex);
+  const [currentLineIndex, setCurrentLineIndex] = useState(-1);
+  const currentLineIndexRef = useRef(-1);
+
+  const overlayVisible = useUIStore((s) => s.playerOverlayVisible);
+
+  useEffect(() => {
+    if (!lyricsData.length) return;
+    if (!overlayVisible) return;
+    const update = () => {
+      const p = usePlayerStore.getState();
+      const u = useUIStore.getState();
+      const time = u.isDragging ? u.seekRatio * duration : p.currentTime;
+      const newIndex = findCurrentLineIndex(lyricsData, time);
+      if (newIndex !== currentLineIndexRef.current) {
+        currentLineIndexRef.current = newIndex;
+        setCurrentLineIndex(newIndex);
+        setStoreCurrentLineIndex(newIndex);
+      }
+    };
+    update();
+    const timer = setInterval(update, 250);
+    return () => clearInterval(timer);
+  }, [lyricsData, duration, overlayVisible]);
 
   const handleMeasure = useCallback((index: number, height: number) => {
     measuredHeightsRef.current[index] = height;
@@ -279,25 +403,41 @@ const PlayerLyricsList = React.memo(() => {
     setFlatListReady(false);
     measuredHeightsRef.current = [];
     setUserScrolling(false);
+    currentLineIndexRef.current = -1;
+    setCurrentLineIndex(-1);
+    setStoreCurrentLineIndex(-1);
+    scrollAnimating.value = false;
   }, [currentSong?.id]);
 
   useEffect(() => {
-    if (currentLineIndex >= 0 && !userScrolling && flatListReady) {
-      requestAnimationFrame(() => {
-        let offset = winH * 0.12;
-        for (let i = 0; i < currentLineIndex; i++) {
-          offset += measuredHeightsRef.current[i] ?? 48;
-        }
-        flatListRef.current?.scrollToOffset({ offset: Math.max(0, offset - targetLineY(winH)), animated: true });
-      });
+    if (!overlayVisible) return;
+    if (!flatListReady || userScrolling) return;
+    if (currentLineIndex < 0 && lyricsData.length === 0) return;
+    const idx = currentLineIndex < 0 ? 0 : currentLineIndex;
+    let offset = winH * 0.18;
+    for (let i = 0; i < idx; i++) {
+      offset += measuredHeightsRef.current[i] ?? 50;
     }
-  }, [currentLineIndex, flatListReady, userScrolling]);
+    const target = Math.max(0, offset - targetLineY(winH));
+    if (idx === 0) {
+      scrollOffset.value = target;
+    } else {
+      scrollOffset.value = withTiming(target, { duration: 300, easing: Easing.bezier(0.25, 0.1, 0.25, 1) });
+    }
+  }, [currentLineIndex, flatListReady, userScrolling, isDragging, lyricsData.length, overlayVisible]);
 
   const renderLyricItem = useCallback(
-    ({ item, index }: { item: LyricLine; index: number }) => (
-      <LyricItem item={item} index={index} activeIndex={currentLineIndex} primaryColor={palette.primary} onMeasure={handleMeasure} />
-    ),
-    [currentLineIndex, palette.primary, handleMeasure],
+    ({ item, index }: { item: LyricLine; index: number }) => {
+      const isActive = index === currentLineIndex;
+      const isPast = index < currentLineIndex;
+      const d = index - currentLineIndex;
+      const targetOpacity = isPast ? 0.12 : isActive ? 1 : Math.max(0.12, 0.45 - (d - 1) * 0.2);
+      const targetShadow = isActive ? 20 : 0;
+      return (
+        <LyricItem item={item} index={index} primaryColor={palette.primary} onMeasure={handleMeasure} animate={!isDragging} currentLineIndex={currentLineIndex} targetOpacity={targetOpacity} targetShadow={targetShadow} showTranslation={showTranslation} />
+      );
+    },
+    [palette.primary, handleMeasure, isDragging, currentLineIndex, showTranslation],
   );
 
   const handleScrollBegin = useCallback(() => {
@@ -312,23 +452,25 @@ const PlayerLyricsList = React.memo(() => {
 
   if (lyricsData.length > 0) {
     return (
-      <FlatList
-        key={currentSong?.id}
-        ref={flatListRef}
-        data={lyricsData}
-        renderItem={renderLyricItem}
-        keyExtractor={(_, index) => String(index)}
-        onScrollBeginDrag={handleScrollBegin}
-        onMomentumScrollBegin={handleScrollBegin}
-        onMomentumScrollEnd={handleScrollEnd}
-        onLayout={() => setFlatListReady(true)}
-        nestedScrollEnabled
-        contentContainerStyle={{
-          flexGrow: 1,
-          paddingVertical: winH * 0.12,
-        }}
-        showsVerticalScrollIndicator={false}
-      />
+      <View style={{ flex: 1 }}>
+        <Animated.FlatList
+          key={currentSong?.id}
+          ref={flatListRef}
+          data={lyricsData}
+          renderItem={renderLyricItem}
+          keyExtractor={(_, index) => String(index)}
+          onScrollBeginDrag={handleScrollBegin}
+          onMomentumScrollBegin={handleScrollBegin}
+          onMomentumScrollEnd={handleScrollEnd}
+          onLayout={() => setFlatListReady(true)}
+          nestedScrollEnabled
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingVertical: winH * 0.18,
+          }}
+          showsVerticalScrollIndicator={false}
+        />
+      </View>
     );
   }
 
@@ -341,9 +483,10 @@ const PlayerLyricsList = React.memo(() => {
 
 interface FullPlayerProps {
   onClose?: () => void;
+  overlayVisibleSV: Animated.SharedValue<boolean>;
 }
 
-export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
+export const FullPlayer = React.memo(({ onClose, overlayVisibleSV }: FullPlayerProps) => {
   const router = useRouter();
   const { width: winW, height: winH } = useWindowDimensions();
   const { top, bottom } = useSafeAreaInsets();
@@ -365,6 +508,8 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
   const updateProgress = useDownloadStore((s) => s.updateProgress);
   const completeTask = useDownloadStore((s) => s.completeTask);
   const failTask = useDownloadStore((s) => s.failTask);
+  const showTranslation = useUIStore((s) => s.showLyricsTranslation);
+  const setShowTranslation = useUIStore((s) => s.setShowLyricsTranslation);
 
   const animatedContentStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: 0 }],
@@ -404,7 +549,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
             currentSong.id, currentSong.title, currentSong.artist,
             currentSong.cover, currentSong.album, info.url, 'flac',
             (p) => updateProgress(currentSong.id, p * 100),
-            currentSong.lyric || '',
+            currentSong.lyric || '', currentSong.tlyric || '',
           );
           completeTask(currentSong.id, filePath);
           addDownloadedId(currentSong.id);
@@ -427,12 +572,14 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
       addTask(currentSong, quality);
       try {
         const url = await fetchDownloadUrlBySong(currentSong, quality);
-        const lyric = currentSong.lyric || await fetchLyric(currentSong.id, currentSong.title, currentSong.artist);
+        const { lrc: lyric, tlyric } = currentSong.lyric && currentSong.tlyric
+          ? { lrc: currentSong.lyric, tlyric: currentSong.tlyric }
+          : await fetchLyric(currentSong.id, currentSong.title, currentSong.artist);
         const filePath = await downloadSong(
           currentSong.id, currentSong.title, currentSong.artist,
           currentSong.cover, currentSong.album, url, quality,
           (p) => updateProgress(currentSong.id, p * 100),
-          lyric,
+          lyric, tlyric ?? undefined,
         );
         completeTask(currentSong.id, filePath);
         addDownloadedId(currentSong.id);
@@ -540,7 +687,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
               </View>
 
               <View style={{ width: winW }}>
-                <PlayerLyricsList />
+                <PlayerLyricsList overlayVisibleSV={overlayVisibleSV} />
               </View>
             </ScrollView>
           </View>
@@ -551,7 +698,16 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps = {}) => {
           <View style={{ flex: 1, overflow: 'hidden' }}>
             <MovingText text={currentSong.title} threshold={20} style={styles.title} />
           </View>
-          <TouchableOpacity onPress={handleDownload} activeOpacity={0.7} style={{ padding: 4, marginLeft: 10 }}>
+          {currentSong?.tlyric ? (
+            <TouchableOpacity
+              onPress={() => setShowTranslation(!showTranslation)}
+              activeOpacity={0.6}
+              style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, backgroundColor: showTranslation ? 'rgba(255,255,255,0.15)' : 'transparent', marginRight: 4 }}
+            >
+              <Text style={{ fontSize: 11, color: showTranslation ? '#fff' : 'rgba(255,255,255,0.4)', fontWeight: '600' }}>译</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity onPress={handleDownload} activeOpacity={0.7} style={{ padding: 4, marginLeft: 4 }}>
             <Ionicons name="download-outline" size={18} color="rgba(255,255,255,0.35)" />
           </TouchableOpacity>
         </View>

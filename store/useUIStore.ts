@@ -39,6 +39,10 @@ interface UIState {
   setSingerDetailVisible: (visible: boolean, data?: SingerDetailData | null) => void;
   setDownloadQueueVisible: (visible: boolean) => void;
   setQobuzTokenVisible: (visible: boolean) => void;
+  showLyricsTranslation: boolean;
+  setShowLyricsTranslation: (visible: boolean) => void;
+  currentLineIndex: number;
+  setCurrentLineIndex: (index: number) => void;
 }
 
 export const useUIStore = create<UIState>()((set) => ({
@@ -66,4 +70,8 @@ export const useUIStore = create<UIState>()((set) => ({
   setSingerDetailVisible: (visible, data) => set({ singerDetailVisible: visible, singerDetailData: data ?? null }),
   setDownloadQueueVisible: (visible) => set({ downloadQueueVisible: visible }),
   setQobuzTokenVisible: (visible) => set({ qobuzTokenVisible: visible }),
+  showLyricsTranslation: true,
+  setShowLyricsTranslation: (visible) => set({ showLyricsTranslation: visible }),
+  currentLineIndex: -1,
+  setCurrentLineIndex: (index) => set({ currentLineIndex: index }),
 }));
