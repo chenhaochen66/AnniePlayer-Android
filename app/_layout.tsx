@@ -33,6 +33,7 @@ export default function RootLayout() {
       NavigationBar.setPositionAsync('absolute').catch(() => {});
       NavigationBar.setBackgroundColorAsync('#0a0a1a').catch(() => {});
       NavigationBar.setButtonStyleAsync('light').catch(() => {});
+      NavigationBar.setBehaviorAsync('overlay-swipe').catch(() => {});
     }
   }, []);
 

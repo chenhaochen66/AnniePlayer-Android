@@ -10,6 +10,7 @@ import Animated, {
 import { useColorStore } from '../store/useColorStore';
 
 const isWeb = Platform.OS === 'web';
+const isNative = !isWeb;
 
 function AuroraLayer({
   color,
@@ -109,6 +110,8 @@ export const AuroraBackground = React.memo(() => {
       </div>
     );
   }
+
+  if (isNative) return null;
 
   return (
     <Animated.View style={StyleSheet.absoluteFill} pointerEvents="none">

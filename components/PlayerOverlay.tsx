@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback } from 'react';
 import { useWindowDimensions, BackHandler } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
 import { useUIStore } from '../store/useUIStore';
 import { FullPlayer } from './FullPlayer';
 
@@ -8,13 +8,17 @@ export function PlayerOverlay() {
   const { height: winH } = useWindowDimensions();
   const visible = useUIStore((s) => s.playerOverlayVisible);
   const setVisible = useUIStore((s) => s.setPlayerOverlayVisible);
-  const translateY = useSharedValue(winH);
-  const overlayVisibleSV = useSharedValue(false);
   const onClose = useCallback(() => setVisible(false), [setVisible]);
 
+  const translateY = useSharedValue(winH);
+  const opacity = useSharedValue(0);
+
   useEffect(() => {
-    overlayVisibleSV.value = visible;
-  }, [visible]);
+    const toValue = visible ? 0 : winH;
+    const animConfig = { duration: 200, easing: Easing.bezier(0.25, 0.1, 0.25, 1) };
+    translateY.value = withTiming(toValue, animConfig);
+    opacity.value = withTiming(visible ? 1 : 0, { duration: 150 });
+  }, [visible, winH, translateY, opacity]);
 
   useEffect(() => {
     if (!visible) return;
@@ -29,12 +33,9 @@ export function PlayerOverlay() {
     return () => sub.remove();
   }, [visible, setVisible]);
 
-  useEffect(() => {
-    translateY.value = withTiming(visible ? 0 : winH, { duration: 150 });
-  }, [visible, winH]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
+  const animStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
+    opacity: opacity.value,
   }));
 
   return (
@@ -43,9 +44,9 @@ export function PlayerOverlay() {
       style={[{
         position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 300,
         backgroundColor: '#0a0a1a',
-      }, animatedStyle]}
+      }, animStyle]}
     >
-      <FullPlayer onClose={onClose} overlayVisibleSV={overlayVisibleSV} />
+      <FullPlayer onClose={onClose} />
     </Animated.View>
   );
 }
