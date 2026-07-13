@@ -1,6 +1,6 @@
 {
   "name": "music-player",
-  "version": "1.0.2-release",
+  "version": "1.0.2-release-beta",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",

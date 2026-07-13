@@ -4,6 +4,7 @@ import TrackPlayer, { useTrackPlayerEvents, Event } from 'react-native-track-pla
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { fetchLyric } from '../services/cnmusicApi';
+import { usePlayerProgress } from './PlayerProgressContext';
 
 
 
@@ -20,11 +21,13 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const playbackId = usePlayerStore((s) => s.playbackId);
   const setIsPlaying = usePlayerStore((s) => s.setIsPlaying);
+  const { position, duration } = usePlayerProgress();
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
         const p = await TrackPlayer.getProgress();
-        usePlayerStore.getState().syncProgress(p.position, p.duration, p.buffered);
+        position.value = p.position;
+        duration.value = p.duration;
       } catch {}
     }, 500);
     return () => clearInterval(timer);

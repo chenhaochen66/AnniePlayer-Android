@@ -91,6 +91,7 @@ export async function searchMusic(query: string): Promise<SearchResults> {
     playUrl: string;
     lyric: string | undefined;
     qualities: Quality[];
+    albumArtist?: string;
   }
 
   const songs: SongResult[] = list.map((item: any) => {
@@ -110,6 +111,7 @@ export async function searchMusic(query: string): Promise<SearchResults> {
       playUrl: '',
       lyric: undefined,
       qualities,
+      albumArtist: item.AARTIST ? decodeHtmlEntities(item.AARTIST) : undefined,
     };
   });
 
@@ -217,6 +219,10 @@ export async function searchNeteaseMusic(query: string): Promise<Song[]> {
     playUrl: '',
     lyric: undefined,
     qualities: parseNeteaseQualities(item),
+    albumArtist: item.ar?.[0]?.name ? decodeHtmlEntities(item.ar[0].name) : undefined,
+    trackNumber: item.no ? String(item.no) : undefined,
+    discNumber: item.cd ? String(item.cd) : undefined,
+    releaseDate: item.publishTime ? new Date(item.publishTime).toISOString().slice(0, 10) : undefined,
   }));
 
   await cacheService.set(cacheKey, songs, NETEASE_SEARCH_CACHE_TTL);
@@ -392,6 +398,36 @@ export async function fetchLyric(songId: string, title: string, artist: string):
     const fallback = JSON.stringify({ lrc: '[00:00.00]暂无歌词', tlyric: null });
     await cacheService.set(cacheKey, fallback, LYRIC_CACHE_TTL);
     return { lrc: '[00:00.00]暂无歌词', tlyric: null };
+  }
+}
+
+export async function getNeteaseAlbumDetail(albumId: string): Promise<{
+  name: string; artist: string; publishTime: string; company: string;
+  songs: { id: string; name: string; no: number; disc: string; artist: string }[];
+} | null> {
+  try {
+    const resp = await fetch(`https://music.163.com/api/album/${albumId}`, {
+      headers: NETEASE_API_HEADERS,
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const album = data?.album;
+    if (!album) return null;
+    return {
+      name: decodeHtmlEntities(album.name || ''),
+      artist: decodeHtmlEntities(album.artist?.name || album.artists?.[0]?.name || ''),
+      publishTime: album.publishTime ? new Date(album.publishTime).toISOString().slice(0, 10) : '',
+      company: album.company || '',
+      songs: (album.songs || []).map((s: any) => ({
+        id: `netease:${s.id}`,
+        name: decodeHtmlEntities(s.name || ''),
+        no: s.no || 0,
+        disc: s.disc || '1',
+        artist: decodeHtmlEntities((s.artists || []).map((a: any) => a.name).join(' / ')),
+      })),
+    };
+  } catch {
+    return null;
   }
 }
 

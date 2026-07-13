@@ -18,6 +18,7 @@ import Animated, {
   useSharedValue,
   useAnimatedRef,
   useAnimatedReaction,
+  runOnJS,
   scrollTo,
   withTiming,
   withSpring,
@@ -28,6 +29,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
+import { usePlayerProgress } from '../contexts/PlayerProgressContext';
 import { useColorStore } from '../store/useColorStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useSharedAudio } from '../contexts/AudioContext';
@@ -181,8 +183,7 @@ const PlayerGradient = React.memo(({ children }: { children: React.ReactNode }) 
 
 const PlayerProgressBar = React.memo(() => {
   const { width: winW } = useWindowDimensions();
-  const currentTime = usePlayerStore((s) => s.currentTime);
-  const duration = usePlayerStore((s) => s.duration);
+  const { position, duration } = usePlayerProgress();
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
   const setDragging = useUIStore((s) => s.setDragging);
   const seekRatio = useUIStore((s) => s.seekRatio);
@@ -219,20 +220,41 @@ const PlayerProgressBar = React.memo(() => {
 
   const handleSeekRelease = useCallback(() => {
     const ratio = dragRatioRef.current;
-    const d = usePlayerStore.getState().duration;
+    const d = duration.value;
     const t = ratio * d;
-    setCurrentTime(t);
+    position.value = t;
     seek(t);
     setDragging(false);
-  }, [setCurrentTime, seek, setDragging]);
+  }, [seek, setDragging]);
 
-  const progress = isDragging ? seekRatio : (duration > 0 ? currentTime / duration : 0);
+  const fillStyle = useAnimatedStyle(() => {
+    const progress = isDragging ? seekRatio : (duration.value > 0 ? position.value / duration.value : 0);
+    return { width: `${progress * 100}%` };
+  }, [isDragging, seekRatio]);
+
+  const thumbStyle = useAnimatedStyle(() => {
+    const progress = isDragging ? seekRatio : (duration.value > 0 ? position.value / duration.value : 0);
+    return { left: `${progress * 100}%` };
+  }, [isDragging, seekRatio]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(Math.max(0, s) / 60);
     const sec = Math.floor(Math.max(0, s) % 60);
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
+
+  const [displayTime, setDisplayTime] = useState(0);
+  const [displayDuration, setDisplayDuration] = useState(0);
+  useAnimatedReaction(
+    () => position.value,
+    (pos) => { runOnJS(setDisplayTime)(pos); },
+    [],
+  );
+  useAnimatedReaction(
+    () => duration.value,
+    (dur) => { runOnJS(setDisplayDuration)(dur); },
+    [],
+  );
 
   return (
     <View style={[styles.progressWrap, { paddingHorizontal: screenPadding.horizontal }]}>
@@ -247,14 +269,14 @@ const PlayerProgressBar = React.memo(() => {
         onLayout={(e) => { seekWidthRef.current = e.nativeEvent.layout.width; seekViewRef.current?.measureInWindow((x) => { if (x != null) seekLeftRef.current = x; }); }}
       >
         <View style={styles.track}>
-          <View style={[styles.fill, { width: `${progress * 100}%` }]} />
-          <View style={[styles.thumb, { left: `${progress * 100}%` }]} />
+          <Animated.View style={[styles.fill, fillStyle]} />
+          <Animated.View style={[styles.thumb, thumbStyle]} />
         </View>
       </View>
       <View style={styles.timeRow}>
-        <Text style={styles.timeText}>{formatTime(isDragging ? seekRatio * duration : currentTime)}</Text>
+        <Text style={styles.timeText}>{formatTime(isDragging ? seekRatio * duration.value : displayTime)}</Text>
         <Text style={[styles.timeText, { color: 'rgba(255,255,255,0.2)' }]}>
-          {formatTime(duration)}
+          {formatTime(displayDuration)}
         </Text>
       </View>
     </View>
@@ -347,7 +369,7 @@ const PlayerVolumeSlider = React.memo(() => {
 const PlayerLyricsList = React.memo(({ fontScale, setFontScale, onOpenFontScale }: { fontScale: number; setFontScale: (v: number) => void; onOpenFontScale: () => void }) => {
   const { height: winH } = useWindowDimensions();
   const currentSong = usePlayerStore((s) => s.currentSong);
-  const duration = usePlayerStore((s) => s.duration);
+  const { position, duration } = usePlayerProgress();
   const palette = useColorStore((s) => s.colors);
   const isDragging = useUIStore((s) => s.isDragging);
   const [flatListReady, setFlatListReady] = useState(false);
@@ -376,23 +398,27 @@ const PlayerLyricsList = React.memo(({ fontScale, setFontScale, onOpenFontScale 
   const currentLineIndexRef = useRef(-1);
   const prevLineIndexRef = useRef(-1);
 
-  useEffect(() => {
-    if (!lyricsData.length) return;
-    const update = () => {
-      const p = usePlayerStore.getState();
-      const u = useUIStore.getState();
-      const time = u.isDragging ? u.seekRatio * duration : p.currentTime;
-      const newIndex = findCurrentLineIndex(lyricsData, time);
-      if (newIndex !== currentLineIndexRef.current) {
-        currentLineIndexRef.current = newIndex;
-        setCurrentLineIndex(newIndex);
-        setStoreCurrentLineIndex(newIndex);
-      }
-    };
-    update();
-    const timer = setInterval(update, 250);
-    return () => clearInterval(timer);
+  const updateLyricIndex = useCallback((time: number) => {
+    const u = useUIStore.getState();
+    const t = u.isDragging ? u.seekRatio * duration.value : time;
+    const newIndex = findCurrentLineIndex(lyricsData, t);
+    if (newIndex !== currentLineIndexRef.current) {
+      currentLineIndexRef.current = newIndex;
+      setCurrentLineIndex(newIndex);
+      setStoreCurrentLineIndex(newIndex);
+    }
   }, [lyricsData, duration]);
+
+  useAnimatedReaction(
+    () => position.value,
+    (pos) => { runOnJS(updateLyricIndex)(pos); },
+    [updateLyricIndex],
+  );
+
+  // initial update when lyrics load
+  useEffect(() => {
+    if (lyricsData.length) updateLyricIndex(position.value);
+  }, [lyricsData]);
 
   const handleMeasure = useCallback((index: number, height: number) => {
     if (measuredHeightsRef.current[index] !== height) {
@@ -598,6 +624,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
             currentSong.cover, currentSong.album, info.url, 'flac',
             (p) => updateProgress(currentSong.id, p * 100),
             currentSong.lyric || '', currentSong.tlyric || '',
+            currentSong.albumArtist, currentSong.trackNumber, currentSong.discNumber, currentSong.releaseDate,
           );
           completeTask(currentSong.id, filePath);
           addDownloadedId(currentSong.id);
@@ -628,6 +655,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
           currentSong.cover, currentSong.album, url, quality,
           (p) => updateProgress(currentSong.id, p * 100),
           lyric, tlyric ?? undefined,
+          currentSong.albumArtist, currentSong.trackNumber, currentSong.discNumber, currentSong.releaseDate,
         );
         completeTask(currentSong.id, filePath);
         addDownloadedId(currentSong.id);

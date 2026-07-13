@@ -149,6 +149,7 @@ export async function getFileUrl(trackId: string, qualityId: number, token: stri
 export function mapTrackToQobuzTrack(raw: any): import('../types').QobuzTrack {
   const performerName = typeof raw.performer === 'object' && raw.performer ? raw.performer.name : raw.performer;
   const artistName = typeof raw.artist === 'object' && raw.artist ? raw.artist.name : raw.artist;
+  const albumArtistName = typeof raw.album?.artist === 'object' && raw.album?.artist ? raw.album.artist.name : raw.album?.artist;
   return {
     id: raw.id,
     title: raw.title || '',
@@ -156,7 +157,9 @@ export function mapTrackToQobuzTrack(raw: any): import('../types').QobuzTrack {
     cover: raw.album?.image?.large || raw.image?.large || '',
     album: raw.album?.title || '',
     albumId: raw.album?.id || '',
+    albumArtist: albumArtistName || undefined,
     trackNumber: raw.track_number || 0,
+    discNumber: raw.media_number || raw.disc_number || undefined,
     duration: raw.duration || 0,
     streamable: !!raw.streamable,
     label: raw.label || '',
@@ -177,7 +180,7 @@ export function mapAlbumToQobuzAlbum(raw: any): import('../types').QobuzAlbum {
     label: raw.label || '',
     tracks: (raw.tracks?.items || []).map((t: any) => mapTrackToQobuzTrack({
       ...t,
-      album: { id: raw.id, title: raw.title, image: { large: cover } },
+      album: { id: raw.id, title: raw.title, image: { large: cover }, artist: { name: artistName || performerName || '' } },
       performer: { name: artistName || performerName || '' },
     })),
   };

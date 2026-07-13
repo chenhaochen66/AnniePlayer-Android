@@ -9,6 +9,7 @@ import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { useQobuzStore } from '../store/useQobuzStore';
 import { getTrack, getAlbum, getFileUrl, mapTrackToQobuzTrack, mapAlbumToQobuzAlbum } from '../services/qobuzApi';
+import { fetchLyric } from '../services/cnmusicApi';
 import { downloadSong } from '../services/downloadService';
 import { enqueueDownload } from '../utils/downloadQueue';
 import { screenPadding } from '../constants/tokens';
@@ -170,10 +171,12 @@ export default function QobuzDetailPage() {
     enqueueDownload(sId, async () => {
       try {
         const info = await getFileUrl(track.id, 27, token);
+        const { lrc: lyric, tlyric } = await fetchLyric(sId, track.title, track.artist);
         const filePath = await downloadSong(
           sId, track.title, track.artist,
           track.cover, track.album, info.url, 'flac',
-          (p) => updateProgress(sId, p * 100), '', undefined,
+          (p) => updateProgress(sId, p * 100), lyric, tlyric ?? undefined,
+          track.albumArtist || artist, String(track.trackNumber), track.discNumber ? String(track.discNumber) : undefined, String(track.year),
         );
         completeTask(sId, filePath);
         addDownloadedId(sId);
@@ -234,10 +237,12 @@ export default function QobuzDetailPage() {
         updateProgress(sId, 0);
         try {
           const info = await getFileUrl(t.id, 27, token);
+          const { lrc: lyric, tlyric } = await fetchLyric(sId, t.title, t.artist);
           const filePath = await downloadSong(
             sId, t.title, t.artist,
             t.cover, t.album, info.url, 'flac',
-            (p) => updateProgress(sId, p * 100), '', undefined,
+            (p) => updateProgress(sId, p * 100), lyric, tlyric ?? undefined,
+            t.albumArtist || artist, String(t.trackNumber), t.discNumber ? String(t.discNumber) : undefined, String(t.year),
           );
           completeTask(sId, filePath);
           addDownloadedId(sId);

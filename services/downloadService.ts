@@ -60,6 +60,7 @@ export async function downloadSong(
   coverUrl: string, album: string | undefined,
   downloadUrl: string, quality: Quality,
   onProgress: (p: number) => void, lyric: string, tlyric?: string,
+  albumArtist?: string, trackNumber?: string, discNumber?: string, releaseDate?: string,
 ): Promise<string> {
   console.log(DBG, 'start', songId, title, quality);
   title = decodeEntities(title);
@@ -109,7 +110,7 @@ export async function downloadSong(
   try {
     console.log(DBG, 'tagging audio...');
     const mergedLyric = mergeLyrics(lyric || '', tlyric);
-    await tagAudioFile(tempPath.replace(/^file:\/\//, ''), title, artist, album || '', mergedLyric, coverBase64, coverUrl);
+    await tagAudioFile(tempPath.replace(/^file:\/\//, ''), title, artist, album || '', mergedLyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate);
     console.log(DBG, 'tag done');
   } catch (ex: any) {
     if (activeDownloads.get(songId)?.resumable !== resumable) throw ex;

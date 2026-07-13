@@ -16,8 +16,11 @@ import { MiniPlayerWrapper } from '../components/MiniPlayer';
 import { LyricsModal } from '../components/LyricsModal';
 import { PlayerOverlay } from '../components/PlayerOverlay';
 import { AudioProvider } from '../contexts/AudioContext';
+import { PlayerProgressProvider } from '../contexts/PlayerProgressContext';
 import SplashScreen from '../components/SplashScreen';
 import { ContactModal } from '../components/ContactModal';
+import { SearchSelectionOverlay } from '../components/SearchSelectionOverlay';
+import { SingerSelectionOverlay } from '../components/SingerSelectionOverlay';
 
 TrackPlayer.registerPlaybackService(() => PlaybackService);
 
@@ -61,6 +64,7 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider>
           {showMain && (
+            <PlayerProgressProvider>
             <AudioProvider>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             <View style={{ flex: 1 }}>
@@ -80,10 +84,13 @@ export default function RootLayout() {
                 <MiniPlayerWrapper />
                 <LyricsModal />
                 <PlayerOverlay />
+                <SearchSelectionOverlay />
+                <SingerSelectionOverlay />
               </View>
             </View>
             <Toast />
             </AudioProvider>
+            </PlayerProgressProvider>
           )}
           {!splashDone && (
             <SplashScreen onPrepare={() => setShowMain(true)} onFinish={() => setSplashDone(true)} />

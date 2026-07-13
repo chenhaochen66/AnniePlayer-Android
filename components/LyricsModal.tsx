@@ -10,15 +10,33 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   useAnimatedStyle,
+  useAnimatedReaction,
+  runOnJS,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useColorStore } from '../store/useColorStore';
+import { usePlayerProgress } from '../contexts/PlayerProgressContext';
 import { parseLrc, LyricLine, findCurrentLineIndex } from '../utils/lrcParser';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const TARGET_LINE_Y = SCREEN_HEIGHT * 0.235;
+
+const LyricsProgressTracker = React.memo(({ lyrics, onLineChange }: { lyrics: LyricLine[]; onLineChange: (idx: number) => void }) => {
+  const { position } = usePlayerProgress();
+  useAnimatedReaction(
+    () => position.value,
+    (pos) => {
+      runOnJS((time: number) => {
+        const idx = findCurrentLineIndex(lyrics, time);
+        onLineChange(idx);
+      })(pos);
+    },
+    [lyrics],
+  );
+  return null;
+});
 
 const LyricItem = React.memo(
   ({ item, index, activeIndex, primaryColor, onMeasure }: { item: LyricLine; index: number; activeIndex: number; primaryColor: string; onMeasure?: (index: number, height: number) => void }) => {
@@ -54,8 +72,8 @@ export const LyricsModal = React.memo(() => {
   const isVisible = usePlayerStore((s) => s.isLyricsVisible);
   const setLyricsVisible = usePlayerStore((s) => s.setLyricsVisible);
   const currentSong = usePlayerStore((s) => s.currentSong);
-  const currentTime = usePlayerStore((s) => s.currentTime);
   const palette = useColorStore((s) => s.colors);
+  const { position } = usePlayerProgress();
   const [flatListReady, setFlatListReady] = useState(false);
   const [scrollGeneration, setScrollGeneration] = useState(0);
   const flatListRef = useRef<FlatList>(null);
@@ -68,10 +86,7 @@ export const LyricsModal = React.memo(() => {
     return parseLrc(currentSong.lyric);
   }, [currentSong?.lyric]);
 
-  const currentLineIndex = useMemo(
-    () => findCurrentLineIndex(lyrics, currentTime),
-    [lyrics, currentTime],
-  );
+  const [currentLineIndex, setCurrentLineIndex] = useState(-1);
 
   useEffect(() => {
     translateY.value = withTiming(isVisible ? 0 : SCREEN_HEIGHT, { duration: 200 });
@@ -128,6 +143,8 @@ export const LyricsModal = React.memo(() => {
   if (!isVisible) return null;
 
   return (
+    <>
+    {isVisible && <LyricsProgressTracker lyrics={lyrics} onLineChange={setCurrentLineIndex} />}
     <Animated.View
       style={[
         {
@@ -183,5 +200,6 @@ export const LyricsModal = React.memo(() => {
         </View>
       )}
     </Animated.View>
+    </>
   );
 });
