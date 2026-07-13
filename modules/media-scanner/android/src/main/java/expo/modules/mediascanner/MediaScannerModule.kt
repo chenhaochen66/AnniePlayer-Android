@@ -55,15 +55,19 @@ class MediaScannerModule : Module() {
       }
     }
 
-    AsyncFunction("tagAudioFile") { sourcePath: String, title: String, artist: String, album: String?, lyric: String, coverBase64: String?, coverUrl: String ->
-      tagAudioFile(sourcePath, title, artist, album ?: "", lyric ?: "", coverBase64 ?: "", coverUrl ?: "")
+    AsyncFunction("tagAudioFile") { sourcePath: String, title: String, artist: String, album: String?, lyric: String, coverBase64: String?, coverUrl: String, extra: Map<String, String>? ->
+      tagAudioFile(sourcePath, title, artist, album ?: "", lyric ?: "", coverBase64 ?: "", coverUrl ?: "",
+        extra?.get("albumArtist") ?: "",
+        extra?.get("trackNumber") ?: "",
+        extra?.get("discNumber") ?: "",
+        extra?.get("releaseDate") ?: "")
     }
   }
 
   // ── public entry point ──────────────────────────────────────────────
 
   @Throws(Exception::class)
-  fun tagAudioFile(sourcePath: String, title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String): String {
+  fun tagAudioFile(sourcePath: String, title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String, albumArtist: String = "", trackNumber: String = "", discNumber: String = "", releaseDate: String = ""): String {
     val sourceFile = File(sourcePath)
     if (!sourceFile.exists()) throw Exception("File not found: $sourcePath")
     val tempOut = File(sourcePath + ".tagged")
@@ -77,7 +81,7 @@ class MediaScannerModule : Module() {
           input.readFully(ByteArray(4)) // skip "fLaC"
           tempOut.outputStream().buffered(65536).use { output ->
             output.write("fLaC".toByteArray())
-            tagFlac(input, output, title, artist, album, lyric, coverBase64, coverUrl)
+            tagFlac(input, output, title, artist, album, lyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate)
           }
         }
       } else if (magic[0] == 'I'.code.toByte() && magic[1] == 'D'.code.toByte() && magic[2] == '3'.code.toByte()) {
@@ -85,7 +89,7 @@ class MediaScannerModule : Module() {
           val input = DataInputStream(fis)
           input.readFully(ByteArray(3)) // skip "ID3"
           tempOut.outputStream().buffered(65536).use { output ->
-            tagMp3(input, output, title, artist, album, lyric, coverBase64, coverUrl)
+            tagMp3(input, output, title, artist, album, lyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate)
           }
         }
       } else {
@@ -93,7 +97,7 @@ class MediaScannerModule : Module() {
         FileInputStream(sourceFile).use { fis ->
           val input = DataInputStream(fis)
           tempOut.outputStream().buffered(65536).use { output ->
-            tagMp3NoTag(input, output, title, artist, album, lyric, coverBase64, coverUrl)
+            tagMp3NoTag(input, output, title, artist, album, lyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate)
           }
         }
       }
@@ -109,7 +113,7 @@ class MediaScannerModule : Module() {
 
   // ── FLAC ────────────────────────────────────────────────────────────
 
-  private fun tagFlac(input: DataInputStream, output: BufferedOutputStream, title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String) {
+  private fun tagFlac(input: DataInputStream, output: BufferedOutputStream, title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String, albumArtist: String, trackNumber: String, discNumber: String, releaseDate: String) {
     val siHeader = ByteArray(4).also { input.readFully(it) }
     val siData = ByteArray(34).also { input.readFully(it) }
     val streamInfoWasLast = (siHeader[0].toInt() and 0x80) != 0
@@ -128,7 +132,7 @@ class MediaScannerModule : Module() {
     }
 
     val hasPic = coverBase64.isNotEmpty()
-    val vorbisData = buildVorbisComment(title, artist, album, lyric)
+    val vorbisData = buildVorbisComment(title, artist, album, lyric, albumArtist, trackNumber, discNumber, releaseDate)
     output.write(flacBlockHeader(4, vorbisData.size, !hasPic))
     output.write(vorbisData)
 
@@ -144,7 +148,7 @@ class MediaScannerModule : Module() {
 
   // ── MP3 (with existing ID3 tag) ─────────────────────────────────────
 
-  private fun tagMp3(input: DataInputStream, output: BufferedOutputStream, title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String) {
+  private fun tagMp3(input: DataInputStream, output: BufferedOutputStream, title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String, albumArtist: String, trackNumber: String, discNumber: String, releaseDate: String) {
     val rest = ByteArray(7).also { input.readFully(it) }
     val tagSize = ((rest[3].toInt() and 0x7F) shl 21) or
                   ((rest[4].toInt() and 0x7F) shl 14) or
@@ -152,26 +156,30 @@ class MediaScannerModule : Module() {
                   (rest[6].toInt() and 0x7F)
     skipFully(input, tagSize.toLong())
 
-    val id3 = buildID3v2Tag(title, artist, album, lyric, coverBase64, coverUrl)
+    val id3 = buildID3v2Tag(title, artist, album, lyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate)
     output.write(id3)
     input.copyTo(output, 65536)
   }
 
   // ── MP3 (without existing ID3 tag) ──────────────────────────────────
 
-  private fun tagMp3NoTag(input: DataInputStream, output: BufferedOutputStream, title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String) {
-    val id3 = buildID3v2Tag(title, artist, album, lyric, coverBase64, coverUrl)
+  private fun tagMp3NoTag(input: DataInputStream, output: BufferedOutputStream, title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String, albumArtist: String, trackNumber: String, discNumber: String, releaseDate: String) {
+    val id3 = buildID3v2Tag(title, artist, album, lyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate)
     output.write(id3)
     input.copyTo(output, 65536)
   }
 
   // ── VORBIS_COMMENT ──────────────────────────────────────────────────
 
-  private fun buildVorbisComment(title: String, artist: String, album: String, lyric: String): ByteArray {
+  private fun buildVorbisComment(title: String, artist: String, album: String, lyric: String, albumArtist: String, trackNumber: String, discNumber: String, releaseDate: String): ByteArray {
     val vendor = "reference libFLAC 1.4.3".toByteArray(Charsets.UTF_8)
     val fields = mutableListOf<String>().apply {
       add("TITLE=$title"); add("ARTIST=$artist")
       if (album.isNotEmpty()) add("ALBUM=$album")
+      if (albumArtist.isNotEmpty()) add("ALBUMARTIST=$albumArtist")
+      if (trackNumber.isNotEmpty()) add("TRACKNUMBER=$trackNumber")
+      if (discNumber.isNotEmpty()) add("DISCNUMBER=$discNumber")
+      if (releaseDate.isNotEmpty()) add("DATE=$releaseDate")
       if (lyric.isNotEmpty()) add("LYRICS=$lyric")
     }
     val fbs = fields.map { it.toByteArray(Charsets.UTF_8) }
@@ -230,11 +238,15 @@ class MediaScannerModule : Module() {
 
   // ── ID3v2 tag builder ────────────────────────────────────────────────
 
-  private fun buildID3v2Tag(title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String): ByteArray {
+  private fun buildID3v2Tag(title: String, artist: String, album: String, lyric: String, coverBase64: String, coverUrl: String, albumArtist: String, trackNumber: String, discNumber: String, releaseDate: String): ByteArray {
     val frames = mutableListOf<ByteArray>()
     txtFrame("TIT2", title)?.let { frames.add(it) }
     txtFrame("TPE1", artist)?.let { frames.add(it) }
     if (album.isNotEmpty()) txtFrame("TALB", album)?.let { frames.add(it) }
+    if (albumArtist.isNotEmpty()) txtFrame("TPE2", albumArtist)?.let { frames.add(it) }
+    if (trackNumber.isNotEmpty()) txtFrame("TRCK", trackNumber)?.let { frames.add(it) }
+    if (discNumber.isNotEmpty()) txtFrame("TPOS", discNumber)?.let { frames.add(it) }
+    if (releaseDate.isNotEmpty()) txtFrame("TDRC", releaseDate)?.let { frames.add(it) }
     if (coverBase64.isNotEmpty()) {
       val cb = Base64.decode(coverBase64, Base64.DEFAULT)
       frames.add(apicFrame(coverUrl, cb))

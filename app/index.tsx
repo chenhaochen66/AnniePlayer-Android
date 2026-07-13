@@ -11,7 +11,7 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 
 import { searchMusic, searchNeteaseMusic, fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
-import { searchAlbum, buildAlbumCoverUrl } from '../services/albumApi';
+import { searchAlbum, buildAlbumCoverUrl, getAlbumSongs, enrichKuwoSong } from '../services/albumApi';
 import { searchArtist } from '../services/artistApi';
 import { downloadSong } from '../services/downloadService';
 import { parseQobuzUrl } from '../services/qobuzApi';
@@ -28,6 +28,7 @@ import { QualityPicker } from '../components/QualityPicker';
 import { QobuzLinkFetch } from '../components/QobuzLinkFetch';
 import { Song, Quality, Album, Artist } from '../types';
 import { enqueueDownload } from '../utils/downloadQueue';
+import { useSearchSelectionStore } from '../store/useSearchSelectionStore';
 
 type SearchMode = 'song' | 'album' | 'singer' | 'qobuz';
 
@@ -38,6 +39,8 @@ export default function HomeScreen() {
   const [albumSubmitted, setAlbumSubmitted] = useState('');
   const [artistSubmitted, setArtistSubmitted] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [batchPickerVisible, setBatchPickerVisible] = useState(false);
+  const [batchDownloading, setBatchDownloading] = useState(false);
   const downloadTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const setDownloadingIdAuto = useCallback((id: string | null) => {
     if (downloadTimer.current) clearTimeout(downloadTimer.current);
@@ -125,6 +128,54 @@ export default function HomeScreen() {
     useUIStore.getState().setSingerDetailVisible(true, { id: artist.id, name: artist.name, picture: artist.picture });
   }, []);
 
+  const handleLongPress = useCallback((song: Song) => {
+    const store = useSearchSelectionStore.getState();
+    if (store.selectedSongs.some((s) => s.id === song.id)) {
+      store.removeSong(song.id);
+    } else {
+      store.addSong(song);
+    }
+  }, []);
+
+  const handleClearSelection = useCallback(() => {
+    useSearchSelectionStore.getState().clearAll();
+  }, []);
+
+  const handleBatchDownload = useCallback((quality: Quality) => {
+    setBatchPickerVisible(false);
+    setBatchDownloading(true);
+    const songs = useSearchSelectionStore.getState().selectedSongs;
+    for (const s of songs) addTask(s, quality);
+    const batchId = 'search_batch_' + Date.now();
+    enqueueDownload(batchId, async () => {
+      let success = 0;
+      for (let i = 0; i < songs.length; i++) {
+        const song = songs[i];
+        updateProgress(song.id, 0);
+        try {
+          const url = await fetchDownloadUrlBySong(song, quality);
+          const { lrc: lyric, tlyric } = await fetchLyric(song.id, song.title, song.artist);
+          const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : {};
+          const filePath = await downloadSong(
+            song.id, song.title, song.artist,
+            song.cover, song.album || '', url, quality,
+            (p) => updateProgress(song.id, p * 100),
+            lyric, tlyric ?? undefined,
+            song.albumArtist, song.trackNumber || extra.trackNumber, song.discNumber, song.releaseDate || extra.releaseDate,
+          );
+          completeTask(song.id, filePath);
+          addDownloadedId(song.id);
+          addToQueue(song);
+          success++;
+        } catch {
+          failTask(song.id);
+        }
+      }
+      setBatchDownloading(false);
+      useSearchSelectionStore.getState().clearAll();
+    });
+  }, [addTask, updateProgress, completeTask, addDownloadedId, addToQueue, failTask]);
+
   const handleDownload = useCallback((song: Song) => {
     setPicker(true, song);
   }, [setPicker]);
@@ -146,11 +197,13 @@ export default function HomeScreen() {
           ? { lrc: song.lyric, tlyric: song.tlyric }
           : await fetchLyric(sId, song.title, song.artist);
         console.log('[dl] lyric length:', lyric?.length || 0);
+        const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : {};
         const filePath = await downloadSong(
           sId, song.title, song.artist,
           song.cover, song.album, url, quality,
           (p) => updateProgress(sId, p * 100),
           lyric, tlyric ?? undefined,
+          song.albumArtist, song.trackNumber || extra.trackNumber, song.discNumber, song.releaseDate || extra.releaseDate,
         );
         console.log('[dl] complete:', filePath);
         completeTask(sId, filePath);
@@ -168,20 +221,25 @@ export default function HomeScreen() {
 
   const activeSongId = usePlayerStore((s) => s.currentSong?.id);
 
+  const selectedSongs = useSearchSelectionStore((s) => s.selectedSongs);
+
   const renderSongItem = useCallback(
     ({ item }: { item: Song }) => {
       const songs = item.platform === 'netease' ? neteaseSongsRef.current : songsRef.current;
       const isActive = item.id === activeSongId;
+      const isSelected = selectedSongs.some((s) => s.id === item.id);
       return (
         <ResultItem
           song={item}
           isActive={isActive}
+          selected={isSelected}
           onPress={() => handlePlaySong(item, songs)}
           onDownload={handleDownload}
+          onLongPress={handleLongPress}
         />
       );
     },
-    [handlePlaySong, handleDownload, songsRef, neteaseSongsRef, activeSongId],
+    [handlePlaySong, handleDownload, handleLongPress, songsRef, neteaseSongsRef, activeSongId, selectedSongs],
   );
 
   const renderAlbumItem = useCallback(
@@ -360,6 +418,47 @@ export default function HomeScreen() {
         ))}
       </View>
 
+      {mode === 'song' && selectedSongs.length > 0 && (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+          backgroundColor: 'rgba(129,140,248,0.08)', borderRadius: 14,
+          paddingVertical: 10, paddingHorizontal: 14, marginHorizontal: 16, marginBottom: 8,
+        }}>
+            <TouchableOpacity
+              onPress={() => useSearchSelectionStore.getState().setOverlayVisible(true)}
+              activeOpacity={0.7}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}
+          >
+            <View style={{
+              width: 22, height: 22, borderRadius: 11,
+              backgroundColor: '#818cf8', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{selectedSongs.length}</Text>
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '500' }}>待下载歌曲</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleClearSelection} activeOpacity={0.7} style={{ padding: 4 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>清空</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setBatchPickerVisible(true)}
+            disabled={batchDownloading}
+            activeOpacity={0.7}
+            style={{
+              backgroundColor: '#818cf8', borderRadius: 10,
+              paddingVertical: 8, paddingHorizontal: 16,
+              opacity: batchDownloading ? 0.5 : 1,
+            }}
+          >
+            {batchDownloading ? (
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>下载中...</Text>
+            ) : (
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>下载全部</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+
       {mode !== 'qobuz' && <SearchBar query={query} onQueryChange={setQuery} onSubmit={handleSearch} />}
 
       {searchContent}
@@ -372,6 +471,13 @@ export default function HomeScreen() {
       <DownloadsOverlay />
 
       <QualityPicker onSelect={handleDownloadWithQuality} />
+
+      <QualityPicker
+        visible={batchPickerVisible}
+        qualities={['flac', '320k', '128k']}
+        onSelect={handleBatchDownload}
+        onCancel={() => setBatchPickerVisible(false)}
+      />
 
       {downloadingId && (
         <View style={{ position: 'absolute', bottom: 100, left: 20, right: 20, alignItems: 'center' }}>

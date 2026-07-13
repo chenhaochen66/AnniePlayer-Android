@@ -9,27 +9,46 @@ interface ResultItemProps {
   isActive: boolean;
   onPress: (song: Song) => void;
   onDownload: (song: Song) => void;
+  onLongPress?: (song: Song) => void;
+  selected?: boolean;
 }
 
 export const ResultItem = React.memo(
-  ({ song, isActive, onPress, onDownload }: ResultItemProps) => {
+  ({ song, isActive, onPress, onDownload, onLongPress, selected }: ResultItemProps) => {
     const [imgError, setImgError] = useState(false);
     const downloadTask = useDownloadStore((s) => s.tasks[song.id]);
 
     const isDownloading = downloadTask?.status === 'downloading' || downloadTask?.status === 'pending';
 
     return (
-      <TouchableOpacity onPress={() => onPress(song)} activeOpacity={0.7}>
+      <TouchableOpacity
+        onPress={() => onPress(song)}
+        onLongPress={() => onLongPress?.(song)}
+        delayLongPress={400}
+        activeOpacity={0.7}
+      >
         <View
           style={{
             flexDirection: 'row',
             alignItems: 'center',
             paddingVertical: 8,
             paddingHorizontal: 8,
-            backgroundColor: isActive ? 'rgba(129,140,248,0.06)' : 'transparent',
+            backgroundColor: selected
+              ? 'rgba(129,140,248,0.08)'
+              : isActive
+                ? 'rgba(129,140,248,0.06)'
+                : 'transparent',
             borderRadius: 8,
           }}
         >
+          {selected && (
+            <Ionicons
+              name="checkbox"
+              size={18}
+              color="#818cf8"
+              style={{ marginRight: 8 }}
+            />
+          )}
           <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.03)', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
             {imgError || !song.cover ? (
               <Ionicons name="musical-note" size={18} color="rgba(255,255,255,0.15)" />
@@ -80,5 +99,7 @@ export const ResultItem = React.memo(
   },
   (prev, next) =>
     prev.song.id === next.song.id &&
-    prev.isActive === next.isActive,
+    prev.isActive === next.isActive &&
+    prev.selected === next.selected,
 );
+

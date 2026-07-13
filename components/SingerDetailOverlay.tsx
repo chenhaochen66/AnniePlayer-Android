@@ -6,11 +6,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
 import { useDownloadStore } from '../store/useDownloadStore';
+import { useSingerSelectionStore } from '../store/useSingerSelectionStore';
 import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { getArtistSongs, getArtistAlbums } from '../services/artistApi';
-import { fetchPlayUrl, fetchDownloadUrl, fetchLyric } from '../services/cnmusicApi';
+import { enrichKuwoSong } from '../services/albumApi';
+import { fetchPlayUrl, fetchDownloadUrl, fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
 import { downloadSong } from '../services/downloadService';
+
 import { AlbumCard } from './AlbumCard';
 import { QualityPicker } from './QualityPicker';
 import { SkeletonLoader } from './SkeletonLoader';
@@ -20,35 +23,46 @@ import type { Song, Album, Quality } from '../types';
 const ROW_H = 60;
 const ALBUM_GAP = 10;
 
-const SongRow = React.memo(({ item, index, activeSongId, downloadingId, downloadTask, onPlay, onDownload }: {
+const SongRow = React.memo(({ item, index, activeSongId, downloadingId, downloadTask, onPlay, onDownload, onLongPress, selected }: {
   item: Song; index: number; activeSongId?: string; downloadingId: string | null;
   downloadTask: any; onPlay: (song: Song) => void; onDownload: (song: Song) => void;
+  onLongPress?: (song: Song) => void; selected?: boolean;
 }) => {
   const isActive = activeSongId === item.id;
   const isDling = downloadingId === item.id || downloadTask?.status === 'downloading' || downloadTask?.status === 'pending';
   return (
-    <TouchableOpacity onPress={() => onPlay(item)} activeOpacity={0.7}>
-      <View style={[styles.row, isActive && styles.activeRow]}>
-        <Text style={styles.index}>{index + 1}</Text>
+    <TouchableOpacity onPress={() => onPlay(item)} onLongPress={() => onLongPress?.(item)} activeOpacity={0.7}>
+      <View style={[styles.row, isActive && styles.activeRow, selected && { backgroundColor: 'rgba(129,140,248,0.08)' }]}>
+        <Text style={[styles.index, selected && { color: '#818cf8' }]}>{index + 1}</Text>
         <View style={{ width: 40, height: 40, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.03)', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
           {item.cover ? (
-            <Image source={{ uri: item.cover }} style={{ width: 40, height: 40 }} />
+            <Image source={{ uri: item.cover }} style={{ width: 40, height: 40, opacity: isActive ? 0.6 : 1 }} />
           ) : (
             <Ionicons name="musical-note" size={16} color="rgba(255,255,255,0.15)" />
           )}
-          {isActive && <View style={{ position: 'absolute' }}><Ionicons name="play" size={14} color="#818cf8" /></View>}
+          {isActive && (
+            <View style={{ position: 'absolute', width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="play" size={15} color="#fff" />
+            </View>
+          )}
         </View>
         <View style={{ flex: 1, marginLeft: 10, marginRight: 4 }}>
           <Text style={[styles.title, isActive && { color: '#818cf8' }]} numberOfLines={1}>{item.title}</Text>
           <Text style={styles.artist} numberOfLines={1}>{item.artist}</Text>
         </View>
-        <TouchableOpacity onPress={() => onDownload(item)} activeOpacity={0.7} style={{ padding: 6 }}>
-          {isDling ? (
-            <View style={styles.spinner} />
-          ) : (
-            <Ionicons name="download-outline" size={16} color="rgba(255,255,255,0.25)" />
-          )}
-        </TouchableOpacity>
+        {selected ? (
+          <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#818cf8', alignItems: 'center', justifyContent: 'center', marginRight: 4 }}>
+            <Ionicons name="checkmark" size={14} color="#fff" />
+          </View>
+        ) : (
+          <TouchableOpacity onPress={() => onDownload(item)} activeOpacity={0.7} style={{ padding: 6 }}>
+            {isDling ? (
+              <View style={styles.spinner} />
+            ) : (
+              <Ionicons name="download-outline" size={16} color="rgba(255,255,255,0.25)" />
+            )}
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -153,9 +167,13 @@ export const SingerDetailOverlay = React.memo(() => {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerSong, setPickerSong] = useState<Song | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [batchPickerVisible, setBatchPickerVisible] = useState(false);
+  const [batchDownloading, setBatchDownloading] = useState(false);
+
   const [albumSortAsc, setAlbumSortAsc] = useState(false);
 
   const activeSongId = usePlayerStore((s) => s.currentSong?.id);
+  const selectedSongs = useSingerSelectionStore((s) => s.selectedSongs);
 
   useEffect(() => {
     if (!isOpen || !id) { setSongs([]); setAlbums([]); setSongPage(1); return; }
@@ -225,6 +243,56 @@ export const SingerDetailOverlay = React.memo(() => {
     }).catch(() => {});
   }, [songs, setQueue, extractColors, setColors, setCurrentCoverUrl]);
 
+  const handleLongPress = useCallback((song: Song) => {
+    const store = useSingerSelectionStore.getState();
+    if (store.selectedSongs.some((s) => s.id === song.id)) {
+      store.removeSong(song.id);
+    } else {
+      store.addSong(song);
+    }
+  }, []);
+
+  const handleClearSelection = useCallback(() => {
+    useSingerSelectionStore.getState().clearAll();
+  }, []);
+
+  const handleBatchDownload = useCallback((quality: Quality) => {
+    setBatchPickerVisible(false);
+    setBatchDownloading(true);
+    const songs = selectedSongs;
+    const addTask = useDownloadStore.getState().addTask;
+    const updateProgress = useDownloadStore.getState().updateProgress;
+    const completeTask = useDownloadStore.getState().completeTask;
+    const failTask = useDownloadStore.getState().failTask;
+    for (const s of songs) addTask(s, quality);
+    const batchId = 'singer_batch_' + Date.now();
+    enqueueDownload(batchId, async () => {
+      for (let i = 0; i < songs.length; i++) {
+        const song = songs[i];
+        updateProgress(song.id, 0);
+        try {
+          const url = await fetchDownloadUrlBySong(song, quality);
+          const { lrc: lyric, tlyric } = await fetchLyric(song.id, song.title, song.artist);
+          const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : {};
+          const filePath = await downloadSong(
+            song.id, song.title, song.artist,
+            song.cover, song.album || '', url, quality,
+            (p) => updateProgress(song.id, p * 100),
+            lyric, tlyric ?? undefined,
+            song.albumArtist || artistName, song.trackNumber || extra.trackNumber, song.discNumber, song.releaseDate || extra.releaseDate,
+          );
+          completeTask(song.id, filePath);
+          addDownloadedId(song.id);
+          addToQueue(song);
+        } catch {
+          failTask(song.id);
+        }
+      }
+      setBatchDownloading(false);
+      useSingerSelectionStore.getState().clearAll();
+    });
+  }, [addDownloadedId, addToQueue, artistName, selectedSongs]);
+
   const handleDownload = useCallback((song: Song) => {
     setPickerSong(song);
     setPickerVisible(true);
@@ -243,11 +311,13 @@ export const SingerDetailOverlay = React.memo(() => {
         const { lrc: lyric, tlyric } = song.lyric && song.tlyric
           ? { lrc: song.lyric, tlyric: song.tlyric }
           : await fetchLyric(song.id, song.title, song.artist);
+        const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : {};
         const filePath = await downloadSong(
           song.id, song.title, song.artist,
           song.cover, song.album || '', url, quality,
           (p) => updateProgress(song.id, p * 100),
           lyric, tlyric ?? undefined,
+          song.albumArtist || artistName, song.trackNumber || extra.trackNumber, song.discNumber, song.releaseDate || extra.releaseDate,
         );
         completeTask(song.id);
         useDownloadStore.getState().tasks[song.id].filePath = filePath;
@@ -279,9 +349,11 @@ export const SingerDetailOverlay = React.memo(() => {
         downloadTask={downloadTasks[item.id]}
         onPlay={handlePlaySong}
         onDownload={handleDownload}
+        onLongPress={handleLongPress}
+        selected={selectedSongs.some((s) => s.id === item.id)}
       />
     ),
-    [activeSongId, downloadingId, downloadTasks, handlePlaySong, handleDownload],
+    [activeSongId, downloadingId, downloadTasks, handlePlaySong, handleDownload, handleLongPress, selectedSongs],
   );
 
   const renderAlbumItem = useCallback(
@@ -435,6 +507,47 @@ export const SingerDetailOverlay = React.memo(() => {
             </Text>
           </View>
 
+          {tab === 'song' && selectedSongs.length > 0 && (
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 8,
+              backgroundColor: 'rgba(129,140,248,0.08)', borderRadius: 14,
+              paddingVertical: 10, paddingHorizontal: 14, marginHorizontal: 16, marginBottom: 8,
+            }}>
+              <TouchableOpacity
+                onPress={() => useSingerSelectionStore.getState().setOverlayVisible(true)}
+                activeOpacity={0.7}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}
+              >
+                <View style={{
+                  width: 22, height: 22, borderRadius: 11,
+                  backgroundColor: '#818cf8', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{selectedSongs.length}</Text>
+                </View>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '500' }}>待下载歌曲</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleClearSelection} activeOpacity={0.7} style={{ padding: 4 }}>
+                <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>清空</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setBatchPickerVisible(true)}
+                disabled={batchDownloading}
+                activeOpacity={0.7}
+                style={{
+                  backgroundColor: '#818cf8', borderRadius: 10,
+                  paddingVertical: 8, paddingHorizontal: 16,
+                  opacity: batchDownloading ? 0.5 : 1,
+                }}
+              >
+                {batchDownloading ? (
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>下载中...</Text>
+                ) : (
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>下载全部</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
           <View style={{ flexDirection: 'row', paddingHorizontal: 40, paddingBottom: 10, gap: 8 }}>
             {(['song', 'album'] as const).map((t) => (
               <TouchableOpacity
@@ -459,6 +572,13 @@ export const SingerDetailOverlay = React.memo(() => {
             onCancel={() => { setPickerVisible(false); setPickerSong(null); }}
           />
 
+          <QualityPicker
+            visible={batchPickerVisible}
+            qualities={['flac', '320k', '128k']}
+            onSelect={handleBatchDownload}
+            onCancel={() => setBatchPickerVisible(false)}
+          />
+
           {downloadingId && (
             <View style={{ position: 'absolute', bottom: 100, left: 20, right: 20, alignItems: 'center' }}>
               <View style={{ backgroundColor: 'rgba(26,26,46,0.95)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 20 }}>
@@ -468,6 +588,7 @@ export const SingerDetailOverlay = React.memo(() => {
               </View>
             </View>
           )}
+
         </SafeAreaView>
       </Animated.View>
     </View>

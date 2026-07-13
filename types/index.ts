@@ -29,6 +29,10 @@ export interface Song {
   lyric: string | undefined;
   tlyric: string | undefined;
   qualities: Quality[];
+  albumArtist?: string;
+  trackNumber?: string;
+  discNumber?: string;
+  releaseDate?: string;
 }
 
 export type LoopMode = 'sequential' | 'single' | 'shuffle';
@@ -73,6 +77,7 @@ export interface AlbumSong {
   name: string;
   artist_name: string;
   duration: number;
+  track?: number;
 }
 
 export interface Artist {
@@ -89,7 +94,9 @@ export interface QobuzTrack {
   cover: string;
   album: string;
   albumId: string;
+  albumArtist?: string;
   trackNumber: number;
+  discNumber?: number;
   duration: number;
   streamable: boolean;
   label: string;

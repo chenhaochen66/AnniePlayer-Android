@@ -141,13 +141,17 @@ export default function AlbumDetailPage() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerSong, setPickerSong] = useState<Song | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [releaseDate, setReleaseDate] = useState('');
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
     setError('');
     getAlbumSongs(id)
-      .then((list) => setSongs(list))
+      .then((result) => {
+        setSongs(result.songs);
+        setReleaseDate(result.pub);
+      })
       .catch((e) => setError(e.message || '获取失败'))
       .finally(() => setLoading(false));
   }, [id]);
@@ -205,11 +209,14 @@ export default function AlbumDetailPage() {
           ? { lrc: song.lyric, tlyric: song.tlyric }
           : await fetchLyric(song.id, song.title, song.artist);
         console.log('[album-dl] lyric length:', lyric?.length || 0);
+        const albumSong = songs.find(s => s.id === song.id);
+        const track = albumSong?.track ? String(albumSong.track) : String(songs.findIndex(s => s.id === song.id) + 1);
         const filePath = await downloadSong(
           song.id, song.title, song.artist,
           song.cover, song.album, url, quality,
           (p) => updateProgress(song.id, p * 100),
           lyric, tlyric ?? undefined,
+          albumArtist, track, undefined, releaseDate || undefined,
         );
         completeTask(song.id);
         useDownloadStore.getState().tasks[song.id].filePath = filePath;
@@ -251,11 +258,13 @@ export default function AlbumDetailPage() {
         try {
           const url = await fetchDownloadUrl(s.id, quality);
           const { lrc: lyric, tlyric } = await fetchLyric(s.id, s.name, s.artist_name);
+          const track = s.track ? String(s.track) : String(i + 1);
           await downloadSong(
             s.id, s.name, s.artist_name,
             albumCover, albumName, url, quality,
             (p) => updateProgress(s.id, p * 100),
             lyric, tlyric ?? undefined,
+            albumArtist, track, undefined, releaseDate || undefined,
           );
           completeTask(s.id);
           addDownloadedId(s.id);

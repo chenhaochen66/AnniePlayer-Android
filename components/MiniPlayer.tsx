@@ -16,21 +16,23 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
 import { useSharedAudio } from '../contexts/AudioContext';
+import { usePlayerProgress } from '../contexts/PlayerProgressContext';
 import { MovingText } from './MovingText';
 
 const HIDDEN_TRANSLATE_Y = 120;
 
 const MiniProgressBar = memo(() => {
-  const currentTime = usePlayerStore((s) => s.currentTime);
-  const duration = usePlayerStore((s) => s.duration);
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const { position, duration } = usePlayerProgress();
+  const animStyle = useAnimatedStyle(() => {
+    const p = duration.value > 0 ? (position.value / duration.value) * 100 : 0;
+    return { width: `${p}%` };
+  });
   return (
-    <View style={{
+    <Animated.View style={[{
       position: 'absolute',
       bottom: 0, left: 0, height: 4,
-      width: `${progress}%`,
       backgroundColor: 'rgba(255,255,255,0.25)',
-    }} />
+    }, animStyle]} />
   );
 });
 

@@ -70,7 +70,7 @@ function getSecret(cookie: string): string {
   return keys[idx];
 }
 
-export async function getAlbumSongs(albumId: string): Promise<AlbumSong[]> {
+export async function getAlbumSongs(albumId: string): Promise<{ songs: AlbumSong[]; pub: string }> {
   const cookie = `kw_token=${Date.now()}`;
   const secret = getSecret(cookie);
 
@@ -90,20 +90,48 @@ export async function getAlbumSongs(albumId: string): Promise<AlbumSong[]> {
   const text = await resp.text();
 
   let songList: any[] = [];
+  let pub = '';
   try {
     const json = JSON.parse(text);
     songList = json.musiclist || [];
+    pub = json.pub || '';
   } catch {
     const match = text.match(/"musiclist"\s*:\s*(\[[\s\S]*?\])\s*(?:,"|}})/);
     if (match) {
       try { songList = JSON.parse(match[1]); } catch { songList = []; }
     }
+    const pubMatch = text.match(/"pub"\s*:\s*"([^"]+)"/);
+    if (pubMatch) pub = pubMatch[1];
   }
 
-  return songList.map((item: any) => ({
-    id: String(item.id || ''),
-    name: decodeHtmlEntities(item.name || '未知歌曲'),
-    artist_name: decodeHtmlEntities(item.artist || '未知歌手'),
-    duration: parseInt(item.duration, 10) || 0,
-  }));
+  return {
+    songs: songList.map((item: any) => ({
+      id: String(item.id || ''),
+      name: decodeHtmlEntities(item.name || '未知歌曲'),
+      artist_name: decodeHtmlEntities(item.artist || '未知歌手'),
+      duration: parseInt(item.duration, 10) || 0,
+      track: item.track ? parseInt(item.track, 10) : undefined,
+    })),
+    pub,
+  };
+}
+
+const albumDetailCache = new Map<string, { songs: AlbumSong[]; pub: string }>();
+
+export async function enrichKuwoSong(songId: string, albumId: string): Promise<{ trackNumber?: string; releaseDate?: string }> {
+  if (!albumId) return {};
+  try {
+    if (!albumDetailCache.has(albumId)) {
+      const data = await getAlbumSongs(albumId);
+      albumDetailCache.set(albumId, data);
+    }
+    const album = albumDetailCache.get(albumId)!;
+    const matched = album.songs.find((s) => s.id === songId);
+    return {
+      trackNumber: matched?.track ? String(matched.track) : undefined,
+      releaseDate: album.pub || undefined,
+    };
+  } catch {
+    return {};
+  }
 }
