@@ -21,19 +21,24 @@ import { AlbumCard } from '../components/AlbumCard';
 import { SkeletonLoader } from '../components/SkeletonLoader';
 import { DrawerController, SettingsDrawer } from '../components/SettingsDrawer';
 import { QobuzTokenOverlay } from '../components/QobuzTokenOverlay';
+import { KkboxAccountOverlay } from '../components/KkboxAccountOverlay';
 import { AlbumDetailOverlay } from '../components/AlbumDetailOverlay';
+import { QobuzLinkFetch } from '../components/QobuzLinkFetch';
+import { KkboxLinkFetch } from '../components/KkboxLinkFetch';
+import { parseKkboxUrl } from '../services/kkboxApi';
 import { SingerDetailOverlay } from '../components/SingerDetailOverlay';
 import { DownloadsOverlay } from '../components/DownloadsOverlay';
 import { QualityPicker } from '../components/QualityPicker';
-import { QobuzLinkFetch } from '../components/QobuzLinkFetch';
 import { Song, Quality, Album, Artist } from '../types';
 import { enqueueDownload } from '../utils/downloadQueue';
 import { useSearchSelectionStore } from '../store/useSearchSelectionStore';
 
 type SearchMode = 'song' | 'album' | 'singer' | 'qobuz';
+type ForeignService = 'qobuz' | 'kkbox';
 
 export default function HomeScreen() {
   const [mode, setMode] = useState<SearchMode>('song');
+  const [foreignService, setForeignService] = useState<ForeignService>('qobuz');
   const [query, setQuery] = useState('');
   const [songSubmitted, setSongSubmitted] = useState('');
   const [albumSubmitted, setAlbumSubmitted] = useState('');
@@ -72,6 +77,12 @@ export default function HomeScreen() {
     const parsed = parseQobuzUrl(text);
     if (!parsed) { Alert.alert('提示', '未识别到有效 Qobuz 链接'); return; }
     router.push(`/qobuz-detail?type=${parsed.type}&id=${parsed.id}`);
+  }, [router]);
+
+  const handleKkboxSubmit = useCallback((text: string) => {
+    const parsed = parseKkboxUrl(text);
+    if (!parsed) { Alert.alert('提示', '未识别到有效 KKBOX 链接'); return; }
+    router.push(`/kkbox-detail?type=${parsed.type}&id=${parsed.id}`);
   }, [router]);
 
   const songQuery = useQuery({
@@ -278,7 +289,30 @@ export default function HomeScreen() {
 
   const searchContent = useMemo(() => (
     mode === 'qobuz' ? (
-      <QobuzLinkFetch onSubmit={handleQobuzSubmit} />
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', paddingHorizontal: 32, gap: 8, paddingTop: 12, paddingBottom: 4 }}>
+          {(['qobuz', 'kkbox'] as const).map((s) => (
+            <TouchableOpacity
+              key={s}
+              onPress={() => setForeignService(s)}
+              activeOpacity={0.7}
+              style={{
+                paddingHorizontal: 16, paddingVertical: 6, borderRadius: 8,
+                backgroundColor: foreignService === s ? '#818cf8' : 'rgba(255,255,255,0.05)',
+              }}
+            >
+              <Text style={{ color: foreignService === s ? '#fff' : 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '600' }}>
+                {s === 'qobuz' ? 'Qobuz' : 'KKBOX'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {foreignService === 'qobuz' ? (
+          <QobuzLinkFetch onSubmit={handleQobuzSubmit} />
+        ) : (
+          <KkboxLinkFetch onSubmit={handleKkboxSubmit} />
+        )}
+      </View>
     ) : mode === 'song' ? (
       <View style={{ flex: 1 }}>
         {(songQuery.isLoading || neteaseQuery.isLoading) ? (
@@ -384,7 +418,7 @@ export default function HomeScreen() {
         ) : null}
       </View>
     )
-  ), [mode, songQuery.isLoading, neteaseQuery.isLoading, albumQuery.isLoading, artistQuery.isLoading, allSongs, allNeteaseSongs, allAlbums, allArtists, renderSongItem, renderAlbumItem, renderArtistItem, songSubmitted, albumSubmitted, artistSubmitted, handleSearch, handleQobuzSubmit]);
+  ), [mode, foreignService, songQuery.isLoading, neteaseQuery.isLoading, albumQuery.isLoading, artistQuery.isLoading, allSongs, allNeteaseSongs, allAlbums, allArtists, renderSongItem, renderAlbumItem, renderArtistItem, songSubmitted, albumSubmitted, artistSubmitted, handleSearch, handleQobuzSubmit, handleKkboxSubmit]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a1a' }} edges={['top']}>
@@ -466,6 +500,7 @@ export default function HomeScreen() {
 
       <SettingsDrawer />
       <QobuzTokenOverlay />
+      <KkboxAccountOverlay />
       <SingerDetailOverlay />
       <AlbumDetailOverlay />
       <DownloadsOverlay />

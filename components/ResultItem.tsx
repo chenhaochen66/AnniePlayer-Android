@@ -54,7 +54,7 @@ export const ResultItem = React.memo(
 
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 4 }}>
-        <GestureDetector gesture={composed} style={{ flex: 1 }}>
+        <GestureDetector gesture={composed}>
           <Animated.View
             style={[{
               flex: 1,

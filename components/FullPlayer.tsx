@@ -40,12 +40,16 @@ import { LoopMode, Quality } from '../types';
 import { parseLrcWithTranslation, LyricLine, findCurrentLineIndex } from '../utils/lrcParser';
 import { fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
 import { getFileUrl as getQobuzFileUrl } from '../services/qobuzApi';
+import { getDownloadUrl as getKkboxDownloadUrl, streamDecryptKkboxAudio, formatNameToQuality, isDrmFormat, qualityExtension } from '../services/kkboxApi';
+import { scanFile, tagAudioFile } from '../modules/media-scanner/src/MediaScanner';
 import { useQobuzStore } from '../store/useQobuzStore';
+import { useKkboxStore } from '../store/useKkboxStore';
 import { enqueueDownload } from '../utils/downloadQueue';
 import { QualityPicker } from './QualityPicker';
 import { QueueModal } from './QueueModal';
 import { QueueSection } from './QueueSection';
 import { downloadSong } from '../services/downloadService';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const LyricItem = React.memo(
   ({ item, index, primaryColor, onMeasure, animate, currentLineIndex, targetOpacity, targetShadow, showTranslation, fontScale }: { item: LyricLine; index: number; primaryColor: string; onMeasure?: (index: number, height: number) => void; animate?: boolean; currentLineIndex: number; targetOpacity: number; targetShadow: number; showTranslation: boolean; fontScale: number }) => {
@@ -622,6 +626,69 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
           addDownloadedId(currentSong.id);
           addToQueue(currentSong);
         } catch {
+          failTask(currentSong.id);
+        }
+        setDownloadingQuality(null);
+      });
+    } else if ((currentSong as any).platform === 'kkbox') {
+      const acct = useKkboxStore.getState().getActiveAccount();
+      const session = acct?.session;
+      const accountId = acct?.id;
+      if (!session?.loggedIn || !accountId) return;
+      setDownloadingQuality('flac');
+      addTask(currentSong, 'flac');
+      enqueueDownload(currentSong.id, async () => {
+        try {
+          const rawId = currentSong.id.replace(/^kkbox:/, '');
+          const { url, formatName, sid: newSid } = await getKkboxDownloadUrl(session.sid, rawId, session.kkid, 'hires');
+          if (newSid !== session.sid) useKkboxStore.getState().updateAccountSession(accountId, { ...session, sid: newSid });
+          const quality = formatNameToQuality(formatName);
+          let filePath;
+          if (isDrmFormat(formatName)) {
+            const sId = currentSong.id;
+            const tmp = FileSystem.cacheDirectory + 'kkbox_drm_' + sId.replace(/[^a-zA-Z0-9_-]/g, '_') + qualityExtension(quality);
+            await streamDecryptKkboxAudio(url, session.licContentKey, tmp, (p) => updateProgress(sId, p * 90));
+            await new Promise((r) => setImmediate(r));
+            let coverBase64 = '';
+            updateProgress(sId, 91);
+            await new Promise((r) => setImmediate(r));
+            try {
+              const ext = ((currentSong as any).cover?.split('.').pop()?.split('?')[0] || 'jpg');
+              const coverTmp = FileSystem.cacheDirectory + 'cvr_' + sId.replace(/[^a-zA-Z0-9_-]/g, '_') + '.' + ext;
+              const cr = await FileSystem.downloadAsync((currentSong as any).cover, coverTmp);
+              coverBase64 = await FileSystem.readAsStringAsync(cr.uri, { encoding: FileSystem.EncodingType.Base64 });
+              await FileSystem.deleteAsync(coverTmp, { idempotent: true }).catch(() => {});
+            } catch {}
+            updateProgress(sId, 93);
+            await new Promise((r) => setImmediate(r));
+            const mergedLyric = (currentSong.lyric && currentSong.tlyric ? currentSong.lyric + '\n' + currentSong.tlyric : currentSong.lyric) || '';
+            await tagAudioFile(tmp.replace(/^file:\/\//, ''), currentSong.title, currentSong.artist, currentSong.album || '', mergedLyric, coverBase64, currentSong.cover, currentSong.albumArtist, String(currentSong.trackNumber || ''), '1', currentSong.releaseDate || '');
+            updateProgress(sId, 96);
+            await new Promise((r) => setImmediate(r));
+            const safeName = (currentSong.title + ' - ' + currentSong.artist + qualityExtension(quality)).replace(/[/\\?%*:|"<>]/g, '_');
+            const finalPath = FileSystem.cacheDirectory + 'downloads/' + safeName;
+            await FileSystem.makeDirectoryAsync(FileSystem.cacheDirectory + 'downloads/', { intermediates: true }).catch(() => {});
+            await FileSystem.moveAsync({ from: tmp, to: finalPath }).catch(() => FileSystem.copyAsync({ from: tmp, to: finalPath }));
+            updateProgress(sId, 98);
+            await new Promise((r) => setImmediate(r));
+            let uri = '';
+            try { uri = await scanFile(finalPath.replace(/^file:\/\//, '')) || ''; } catch {}
+            if (uri) await FileSystem.deleteAsync(finalPath, { idempotent: true }).catch(() => {});
+            filePath = uri || finalPath;
+          } else {
+            filePath = await downloadSong(
+              currentSong.id, currentSong.title, currentSong.artist,
+              currentSong.cover, currentSong.album, url, quality as any,
+              (p) => updateProgress(currentSong.id, p * 100),
+              currentSong.lyric || '', currentSong.tlyric || '',
+              currentSong.albumArtist, currentSong.trackNumber, currentSong.discNumber, currentSong.releaseDate,
+            );
+          }
+          completeTask(currentSong.id, filePath);
+          addDownloadedId(currentSong.id);
+          addToQueue(currentSong);
+        } catch (e: any) {
+          console.error('FullPlayer download error:', e?.message || e);
           failTask(currentSong.id);
         }
         setDownloadingQuality(null);

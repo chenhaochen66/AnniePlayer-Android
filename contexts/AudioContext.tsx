@@ -104,7 +104,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
         usePlayerStore.getState().updateSongLyric(songId, lrc, tlyric ?? undefined);
       }
     }).catch(() => {});
-  }, [currentSong?.id]);
+  }, [currentSong?.id, playbackId]);
 
   const togglePlay = useCallback(() => {
     const shouldPlay = !usePlayerStore.getState().isPlaying;
