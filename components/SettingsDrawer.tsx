@@ -71,7 +71,7 @@ export const SettingsDrawer = React.memo(() => {
   }, [cacheSize]);
 
   return (
-    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200 }} pointerEvents={isOpen ? 'auto' : 'none'}>
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200, display: isOpen ? 'flex' : 'none' }}>
       {isOpen && (
         <TouchableOpacity
           activeOpacity={1}

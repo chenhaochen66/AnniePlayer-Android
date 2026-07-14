@@ -74,8 +74,10 @@ function AuroraLayer({
   );
 }
 
-export const AuroraBackground = React.memo(() => {
+export const AuroraBackground = React.memo(({ visible = true }: { visible?: boolean }) => {
   const palette = useColorStore((s) => s.colors);
+
+  if (!visible) return null;
 
   const webStyle = isWeb
     ? ({

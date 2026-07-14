@@ -23,6 +23,7 @@ import Animated, {
   withTiming,
   withSpring,
   withSequence,
+  cancelAnimation,
   Easing,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -52,7 +53,6 @@ const LyricItem = React.memo(
     const d = index - currentLineIndex;
     const opacity = useSharedValue(targetOpacity);
     const fadeAnim = useSharedValue(showTranslation ? 1 : 0);
-    const scale = useSharedValue(1);
 
     useEffect(() => {
       if (animate === false || Math.abs(d) > 1) {
@@ -66,34 +66,13 @@ const LyricItem = React.memo(
       fadeAnim.value = withTiming(showTranslation ? 1 : 0, { duration: 200 });
     }, [showTranslation]);
 
-    const prevActive = useRef(isActive);
-    useEffect(() => {
-      if (isActive && animate !== false) {
-        scale.value = withSequence(
-          withTiming(0.92, { duration: 0 }),
-          withTiming(1.05, { duration: 100 }),
-          withSpring(1.0, { damping: 10, stiffness: 150 }),
-        );
-      } else if (!isActive && scale.value !== 1) {
-        scale.value = 1;
-      }
-      prevActive.current = isActive;
-    }, [isActive, animate]);
+    const rStyle = useAnimatedStyle(() => ({
+      opacity: opacity.value,
+    }));
 
-    const rStyle = useAnimatedStyle(() => {
-      if (scale.value !== 1) {
-        return { opacity: opacity.value, transform: [{ scale: scale.value }] };
-      }
-      return { opacity: opacity.value };
-    });
-
-    const transRStyle = useAnimatedStyle(() => {
-      const op = opacity.value * fadeAnim.value;
-      if (scale.value !== 1) {
-        return { opacity: op, transform: [{ scale: scale.value }] };
-      }
-      return { opacity: op };
-    });
+    const transRStyle = useAnimatedStyle(() => ({
+      opacity: opacity.value * fadeAnim.value,
+    }));
 
     const lineStyle = {
       fontSize: 34 * fontScale,
@@ -377,7 +356,12 @@ const PlayerLyricsList = React.memo(({ fontScale, setFontScale, onOpenFontScale 
   const scrollOffset = useSharedValue(0);
   const scrollAnimating = useSharedValue(false);
   const [userScrolling, setUserScrolling] = useState(false);
+  const overlayVisible = useUIStore((s) => s.playerOverlayVisible);
   const measuredHeightsRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    if (!overlayVisible) cancelAnimation(scrollOffset);
+  }, [overlayVisible]);
   const showTranslation = useUIStore((s) => s.showLyricsTranslation);
   const [heightsVersion, setHeightsVersion] = useState(0);
 
@@ -398,16 +382,20 @@ const PlayerLyricsList = React.memo(({ fontScale, setFontScale, onOpenFontScale 
   const currentLineIndexRef = useRef(-1);
   const prevLineIndexRef = useRef(-1);
 
+  const lyricsDataRef = useRef(lyricsData);
+  lyricsDataRef.current = lyricsData;
+
   const updateLyricIndex = useCallback((time: number) => {
     const u = useUIStore.getState();
+    if (!u.playerOverlayVisible) return;
     const t = u.isDragging ? u.seekRatio * duration.value : time;
-    const newIndex = findCurrentLineIndex(lyricsData, t);
+    const newIndex = findCurrentLineIndex(lyricsDataRef.current, t);
     if (newIndex !== currentLineIndexRef.current) {
       currentLineIndexRef.current = newIndex;
       setCurrentLineIndex(newIndex);
       setStoreCurrentLineIndex(newIndex);
     }
-  }, [lyricsData, duration]);
+  }, [duration]);
 
   useAnimatedReaction(
     () => position.value,
@@ -415,10 +403,14 @@ const PlayerLyricsList = React.memo(({ fontScale, setFontScale, onOpenFontScale 
     [updateLyricIndex],
   );
 
-  // initial update when lyrics load
+  // initial update when lyrics load or overlay reopens
   useEffect(() => {
     if (lyricsData.length) updateLyricIndex(position.value);
   }, [lyricsData]);
+
+  useEffect(() => {
+    if (overlayVisible && lyricsData.length) updateLyricIndex(position.value);
+  }, [overlayVisible]);
 
   const handleMeasure = useCallback((index: number, height: number) => {
     if (measuredHeightsRef.current[index] !== height) {

@@ -16,6 +16,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { usePlayerStore } from '../store/usePlayerStore';
+import { useUIStore } from '../store/useUIStore';
 import { useColorStore } from '../store/useColorStore';
 import { usePlayerProgress } from '../contexts/PlayerProgressContext';
 import { parseLrc, LyricLine, findCurrentLineIndex } from '../utils/lrcParser';
@@ -71,6 +72,7 @@ const LyricItem = React.memo(
 export const LyricsModal = React.memo(() => {
   const isVisible = usePlayerStore((s) => s.isLyricsVisible);
   const setLyricsVisible = usePlayerStore((s) => s.setLyricsVisible);
+  const playerOverlayVisible = useUIStore((s) => s.playerOverlayVisible);
   const currentSong = usePlayerStore((s) => s.currentSong);
   const palette = useColorStore((s) => s.colors);
   const { position } = usePlayerProgress();
@@ -144,7 +146,7 @@ export const LyricsModal = React.memo(() => {
 
   return (
     <>
-    {isVisible && <LyricsProgressTracker lyrics={lyrics} onLineChange={setCurrentLineIndex} />}
+    {isVisible && !playerOverlayVisible && <LyricsProgressTracker lyrics={lyrics} onLineChange={setCurrentLineIndex} />}
     <Animated.View
       style={[
         {

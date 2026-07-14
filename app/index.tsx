@@ -235,7 +235,7 @@ export default function HomeScreen() {
           selected={isSelected}
           onPress={() => handlePlaySong(item, songs)}
           onDownload={handleDownload}
-          onLongPress={handleLongPress}
+          onToggleSelect={handleLongPress}
         />
       );
     },
