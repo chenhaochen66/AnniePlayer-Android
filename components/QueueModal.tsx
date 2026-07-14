@@ -108,7 +108,7 @@ export const QueueModal = React.memo(() => {
   );
 
   return (
-    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200 }} pointerEvents={visible ? 'auto' : 'none'}>
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200, display: visible ? 'flex' : 'none' }}>
       <Animated.View style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' }, overlayStyle]}>
         <TouchableOpacity activeOpacity={1} onPress={onClose} style={{ flex: 1 }} />
       </Animated.View>

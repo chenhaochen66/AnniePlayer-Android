@@ -53,7 +53,7 @@ export const SearchSelectionOverlay = React.memo(() => {
   ), [removeSong]);
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents={visible ? 'auto' : 'none'}>
+    <View style={[{ display: visible ? 'flex' : 'none' }, StyleSheet.absoluteFill]}>
       <Animated.View style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, backdropStyle]}>
         <TouchableOpacity activeOpacity={1} onPress={onClose} style={{ flex: 1 }} />
       </Animated.View>

@@ -47,8 +47,14 @@ export function parseLrcWithTranslation(lrc: string, tlyric?: string | null): Ly
 }
 
 export function findCurrentLineIndex(lines: LyricLine[], currentTime: number): number {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].time <= currentTime) return i;
+  let lo = 0, hi = lines.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lines[mid].time <= currentTime) {
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
-  return -1;
+  return hi;
 }

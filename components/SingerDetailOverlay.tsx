@@ -1,7 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { View, Text, FlatList, Image, TouchableOpacity, useWindowDimensions, StyleSheet, BackHandler } from 'react-native';
+import { View, Text, FlatList, Image, TouchableOpacity, useWindowDimensions, StyleSheet, BackHandler, Vibration } from 'react-native';
+import { GestureDetector, Gesture, TouchableOpacity as RNGHTouchableOpacity } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, FadeInDown } from 'react-native-reanimated';
+import { runOnJS } from 'react-native-reanimated';
+
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, interpolate, FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
@@ -23,48 +26,89 @@ import type { Song, Album, Quality } from '../types';
 const ROW_H = 60;
 const ALBUM_GAP = 10;
 
-const SongRow = React.memo(({ item, index, activeSongId, downloadingId, downloadTask, onPlay, onDownload, onLongPress, selected }: {
+const SongRow = React.memo(({ item, index, activeSongId, downloadingId, downloadTask, onPlay, onDownload, onToggleSelect, selected }: {
   item: Song; index: number; activeSongId?: string; downloadingId: string | null;
   downloadTask: any; onPlay: (song: Song) => void; onDownload: (song: Song) => void;
-  onLongPress?: (song: Song) => void; selected?: boolean;
+  onToggleSelect?: (song: Song) => void; selected?: boolean;
 }) => {
   const isActive = activeSongId === item.id;
   const isDling = downloadingId === item.id || downloadTask?.status === 'downloading' || downloadTask?.status === 'pending';
+  const swipeX = useSharedValue(0);
+
+  const handleSwipe = useCallback(() => {
+    Vibration.vibrate(40);
+    onToggleSelect?.(item);
+  }, [item, onToggleSelect]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: interpolate(swipeX.value, [0, 60], [0, 8]) }],
+  }));
+
+  const overlayStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(swipeX.value, [0, 50], [0, 0.35]),
+  }));
+
+  const tap = useMemo(() => Gesture.Tap().onEnd(() => runOnJS(onPlay)(item)), [item, onPlay]);
+  const swipe = useMemo(
+    () => Gesture.Pan()
+      .activeOffsetX(30)
+      .failOffsetY(10)
+      .onUpdate((e) => { swipeX.value = e.translationX; })
+      .onEnd((e) => {
+        if (e.translationX > 30) {
+          runOnJS(handleSwipe)();
+        }
+        swipeX.value = withTiming(0, { duration: 200 });
+      }),
+    [handleSwipe],
+  );
+  const composed = useMemo(() => Gesture.Exclusive(swipe, tap), [swipe, tap]);
+
   return (
-    <TouchableOpacity onPress={() => onPlay(item)} onLongPress={() => onLongPress?.(item)} activeOpacity={0.7}>
-      <View style={[styles.row, isActive && styles.activeRow, selected && { backgroundColor: 'rgba(129,140,248,0.08)' }]}>
-        <Text style={[styles.index, selected && { color: '#818cf8' }]}>{index + 1}</Text>
-        <View style={{ width: 40, height: 40, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.03)', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
-          {item.cover ? (
-            <Image source={{ uri: item.cover }} style={{ width: 40, height: 40, opacity: isActive ? 0.6 : 1 }} />
-          ) : (
-            <Ionicons name="musical-note" size={16} color="rgba(255,255,255,0.15)" />
-          )}
-          {isActive && (
-            <View style={{ position: 'absolute', width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="play" size={15} color="#fff" />
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <GestureDetector gesture={composed} style={{ flex: 1 }}>
+        <Animated.View style={[styles.row, isActive && styles.activeRow, selected && { backgroundColor: 'rgba(129,140,248,0.08)' }, { flex: 1, overflow: 'hidden' }, animatedStyle]}>
+          <Animated.View
+            pointerEvents="none"
+            style={[{
+              position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: '#818cf8',
+            }, overlayStyle]}
+          />
+          <Text style={[styles.index, selected && { color: '#818cf8' }]}>{index + 1}</Text>
+          <View style={{ width: 40, height: 40, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.03)', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
+            {item.cover ? (
+              <Image source={{ uri: item.cover }} style={{ width: 40, height: 40, opacity: isActive ? 0.6 : 1 }} />
+            ) : (
+              <Ionicons name="musical-note" size={16} color="rgba(255,255,255,0.15)" />
+            )}
+            {isActive && (
+              <View style={{ position: 'absolute', width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="play" size={15} color="#fff" />
+              </View>
+            )}
+          </View>
+          <View style={{ flex: 1, marginLeft: 10, marginRight: 4 }}>
+            <Text style={[styles.title, isActive && { color: '#818cf8' }]} numberOfLines={1}>{item.title}</Text>
+            <Text style={styles.artist} numberOfLines={1}>{item.artist}</Text>
+          </View>
+          {selected && (
+            <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#818cf8', alignItems: 'center', justifyContent: 'center', marginRight: 4 }}>
+              <Ionicons name="checkmark" size={14} color="#fff" />
             </View>
           )}
-        </View>
-        <View style={{ flex: 1, marginLeft: 10, marginRight: 4 }}>
-          <Text style={[styles.title, isActive && { color: '#818cf8' }]} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.artist} numberOfLines={1}>{item.artist}</Text>
-        </View>
-        {selected ? (
-          <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#818cf8', alignItems: 'center', justifyContent: 'center', marginRight: 4 }}>
-            <Ionicons name="checkmark" size={14} color="#fff" />
-          </View>
-        ) : (
-          <TouchableOpacity onPress={() => onDownload(item)} activeOpacity={0.7} style={{ padding: 6 }}>
-            {isDling ? (
-              <View style={styles.spinner} />
-            ) : (
-              <Ionicons name="download-outline" size={16} color="rgba(255,255,255,0.25)" />
-            )}
-          </TouchableOpacity>
-        )}
-      </View>
-    </TouchableOpacity>
+        </Animated.View>
+      </GestureDetector>
+      {!selected && (
+        <RNGHTouchableOpacity onPress={() => onDownload(item)} activeOpacity={0.7} style={{ padding: 6 }}>
+          {isDling ? (
+            <View style={styles.spinner} />
+          ) : (
+            <Ionicons name="download-outline" size={16} color="rgba(255,255,255,0.25)" />
+          )}
+        </RNGHTouchableOpacity>
+      )}
+    </View>
   );
 });
 
@@ -349,7 +393,7 @@ export const SingerDetailOverlay = React.memo(() => {
         downloadTask={downloadTasks[item.id]}
         onPlay={handlePlaySong}
         onDownload={handleDownload}
-        onLongPress={handleLongPress}
+        onToggleSelect={handleLongPress}
         selected={selectedSongs.some((s) => s.id === item.id)}
       />
     ),
@@ -475,7 +519,7 @@ export const SingerDetailOverlay = React.memo(() => {
   }, [albumLoading, sortedAlbums, renderAlbumItem, albumSortAsc]);
 
   return (
-    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 150 }} pointerEvents={isOpen ? 'auto' : 'none'}>
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 150, display: isOpen ? 'flex' : 'none' }}>
       {isOpen && !albumOpen && (
         <TouchableOpacity
           activeOpacity={1}
