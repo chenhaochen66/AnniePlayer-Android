@@ -1,4 +1,4 @@
-export type Platform = 'netease' | 'kuwo';
+export type Platform = 'netease' | 'kuwo' | 'kkbox';
 
 export type Quality = '128k' | '320k' | 'flac' | 'hires';
 
@@ -117,5 +117,48 @@ export interface QobuzToken {
   id: string;
   name: string;
   token: string;
+  isActive: boolean;
+}
+
+export interface KkboxTrack {
+  id: string;
+  encryptedId: string;
+  title: string;
+  artist: string;
+  cover: string;
+  album: string;
+  albumId: string;
+  albumArtist?: string;
+  trackNumber: number;
+  duration: number;
+  qualities: string[];
+  releaseDate?: string;
+}
+
+export interface KkboxAlbum {
+  id: string;
+  encryptedId: string;
+  title: string;
+  artist: string;
+  cover: string;
+  year: string;
+  tracks: KkboxTrack[];
+}
+
+export interface KkboxSession {
+  sid: string;
+  licContentKey: string;
+  highQuality: boolean;
+  kkid: string;
+  email: string;
+  loggedIn: boolean;
+}
+
+export interface KkboxAccount {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+  session: KkboxSession | null;
   isActive: boolean;
 }

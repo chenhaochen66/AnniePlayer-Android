@@ -66,7 +66,7 @@ const SongRow = React.memo(({ item, index, activeSongId, downloadingId, download
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      <GestureDetector gesture={composed} style={{ flex: 1 }}>
+      <GestureDetector gesture={composed}>
         <Animated.View style={[styles.row, isActive && styles.activeRow, selected && { backgroundColor: 'rgba(129,140,248,0.08)' }, { flex: 1, overflow: 'hidden' }, animatedStyle]}>
           <Animated.View
             pointerEvents="none"

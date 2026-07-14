@@ -33,10 +33,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (Platform.OS === 'android') {
-      NavigationBar.setPositionAsync('absolute').catch(() => {});
-      NavigationBar.setBackgroundColorAsync('#0a0a1a').catch(() => {});
       NavigationBar.setButtonStyleAsync('light').catch(() => {});
-      NavigationBar.setBehaviorAsync('overlay-swipe').catch(() => {});
     }
   }, []);
 

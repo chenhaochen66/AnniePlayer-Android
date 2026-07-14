@@ -84,6 +84,9 @@ class MediaScannerModule : Module() {
             tagFlac(input, output, title, artist, album, lyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate)
           }
         }
+      } else if (magic[0] == 'f'.code.toByte() && magic[1] == 't'.code.toByte() && magic[2] == 'y'.code.toByte() && magic[3] == 'p'.code.toByte()) {
+        M4AMetadataWriter.tagM4aFile(sourcePath, title, artist, album, lyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate)
+        return sourcePath
       } else if (magic[0] == 'I'.code.toByte() && magic[1] == 'D'.code.toByte() && magic[2] == '3'.code.toByte()) {
         FileInputStream(sourceFile).use { fis ->
           val input = DataInputStream(fis)
@@ -93,6 +96,24 @@ class MediaScannerModule : Module() {
           }
         }
       } else {
+        // Not FLAC, ftyp-at-0, or ID3 – scan for 'ftyp' in first 4MB (KKBOX wrapper)
+        var m4aDetected = false
+        val scanBuf = ByteArray(4 * 1024 * 1024)
+        var actualRead = 0
+        FileInputStream(sourceFile).use { fis -> actualRead = fis.read(scanBuf) }
+        if (actualRead > 4) {
+          val scanEnd = actualRead - 4
+          for (i in 0 until scanEnd) {
+            if (scanBuf[i] == 'f'.code.toByte() && scanBuf[i + 1] == 't'.code.toByte() &&
+                scanBuf[i + 2] == 'y'.code.toByte() && scanBuf[i + 3] == 'p'.code.toByte()) {
+              m4aDetected = true; break
+            }
+          }
+        }
+        if (m4aDetected) {
+          M4AMetadataWriter.tagM4aFile(sourcePath, title, artist, album, lyric, coverBase64, coverUrl, albumArtist, trackNumber, discNumber, releaseDate)
+          return sourcePath
+        }
         // MP3 without existing ID3 tag – write new tag then copy all audio
         FileInputStream(sourceFile).use { fis ->
           val input = DataInputStream(fis)

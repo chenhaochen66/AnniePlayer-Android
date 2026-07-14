@@ -1,6 +1,6 @@
 {
   "name": "music-player",
-  "version": "1.0.2-release-alpha",
+  "version": "1.0.2-release-karma",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
@@ -24,6 +24,7 @@
     "expo-router": "~6.0.24",
     "expo-updates": "~29.0.18",
     "media-scanner": "file:./modules/media-scanner",
+    "kkbox-decoder": "file:./modules/kkbox-decoder",
     "nativewind": "^4.0.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",

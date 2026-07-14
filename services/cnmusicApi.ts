@@ -314,7 +314,7 @@ async function searchKuwoMusicId(title: string, artist: string): Promise<string>
 }
 
 async function fetchKuwoLyric(songId: string, title: string, artist: string): Promise<{ lrc: string; tlyric: string | null }> {
-  const musicId = songId.startsWith('qobuz:')
+  const musicId = songId.startsWith('qobuz:') || songId.startsWith('kkbox:')
     ? await searchKuwoMusicId(title, artist)
     : songId;
   const resp = await fetch(

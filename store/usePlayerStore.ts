@@ -63,6 +63,7 @@ export const usePlayerStore = create<PlayerState>()(
             title: s.title || '', artist: s.artist || '',
             cover: s.cover || '', album: s.album || '',
             ...(anyS.platform === 'qobuz' && anyS.qobuzToken ? { token: anyS.qobuzToken } : {}),
+            ...(anyS.platform === 'kkbox' && anyS.playUrl ? { url: anyS.playUrl } : {}),
           };
         });
         NativeModules.TrackPlayerModule.setQueue(items, startIndex, loopMode);
