@@ -4,6 +4,8 @@ import TrackPlayer, { useTrackPlayerEvents, Event } from 'react-native-track-pla
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { fetchLyric } from '../services/cnmusicApi';
+import { getSongLyrics } from '../services/kkboxApi';
+import { useKkboxStore } from '../store/useKkboxStore';
 import { usePlayerProgress } from './PlayerProgressContext';
 
 
@@ -99,7 +101,17 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!currentSong?.id || currentSong.lyric !== undefined) return;
     const songId = currentSong.id;
-    fetchLyric(songId, currentSong.title, currentSong.artist).then(({ lrc, tlyric }) => {
+
+    const fetch = currentSong.platform === 'kkbox'
+      ? (async () => {
+          const rawId = songId.replace(/^kkbox:/, '');
+          const acct = useKkboxStore.getState().getActiveAccount();
+          if (!acct?.session?.loggedIn) throw new Error('KKBOX not logged in');
+          return getSongLyrics(acct.session.sid, rawId);
+        })()
+      : fetchLyric(songId, currentSong.title, currentSong.artist);
+
+    fetch.then(({ lrc, tlyric }) => {
       if (usePlayerStore.getState().currentSong?.id === songId) {
         usePlayerStore.getState().updateSongLyric(songId, lrc, tlyric ?? undefined);
       }

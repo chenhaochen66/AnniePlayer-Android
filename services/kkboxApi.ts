@@ -212,6 +212,25 @@ export async function getSongs(sid: string, ids: string[]): Promise<any[]> {
   return resp.data?.songs || [];
 }
 
+export async function getSongLyrics(sid: string, songId: string): Promise<{ lrc: string; tlyric: string | null }> {
+  const resp = await apiCall<any>('ds', `v1/song/${songId}/lyrics`, { sid });
+  if (resp.status?.type !== 'OK') return { lrc: '[00:00.00]暂无歌词', tlyric: null };
+  const items: any[] = resp.data?.lyrics || [];
+  let lrc = '';
+  for (const item of items) {
+    if (!item.content) {
+      lrc += '\n';
+      continue;
+    }
+    const timeMs = item.start_time || 0;
+    const min = Math.floor(timeMs / 60000);
+    const sec = Math.floor(timeMs / 1000) % 60;
+    const ms = timeMs % 1000;
+    lrc += `[${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}]${item.content}\n`;
+  }
+  return { lrc: lrc || '[00:00.00]暂无歌词', tlyric: null };
+}
+
 export async function getAlbum(sid: string, albumId: string): Promise<{
   album: any; songs: any[];
 }> {

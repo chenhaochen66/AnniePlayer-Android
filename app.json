@@ -2,7 +2,7 @@
   "expo": {
     "name": "安妮音乐盒",
     "slug": "music-player",
-    "version": "1.0.2-release-karma",
+    "version": "1.0.3-release",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -41,7 +41,7 @@
       "bundler": "metro",
       "favicon": "./assets/favicon.png"
     },
-    "runtimeVersion": "1.0.2-release-karma",
+    "runtimeVersion": "1.0.3-release",
     "plugins": [
       "expo-router",
       "expo-font",
