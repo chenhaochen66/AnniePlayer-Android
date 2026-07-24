@@ -8,8 +8,7 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { useKkboxStore } from '../store/useKkboxStore';
-import { getSongs, getAlbum, getDownloadUrl, getPlayUrl, mapSongToKkboxTrack, mapAlbumToKkboxAlbum, authDevice, renewSession } from '../services/kkboxApi';
-import { fetchLyric } from '../services/cnmusicApi';
+import { getSongs, getAlbum, getDownloadUrl, getPlayUrl, getSongLyrics, mapSongToKkboxTrack, mapAlbumToKkboxAlbum, authDevice, renewSession } from '../services/kkboxApi';
 import { downloadSong } from '../services/downloadService';
 import { scanFile, tagAudioFile } from '../modules/media-scanner/src/MediaScanner';
 import { streamDecryptKkboxAudio, formatNameToQuality, isDrmFormat, qualityExtension } from '../services/kkboxApi';
@@ -194,7 +193,7 @@ export default function KkboxDetailPage() {
             const { url, formatName, sid: newSid } = await getDownloadUrl(s.sid, track.id, s.kkid, 'hires');
             if (newSid !== s.sid) useKkboxStore.getState().updateAccountSession(accountId, { ...s, sid: newSid });
             const quality = formatNameToQuality(formatName);
-            const { lrc: lyric, tlyric } = await fetchLyric(sId, track.title, track.artist);
+            const { lrc: lyric, tlyric } = await getSongLyrics(s.sid, track.id);
             let filePath;
             if (isDrmFormat(formatName)) {
               const tmp = FileSystem.cacheDirectory + 'kkbox_drm_' + sId.replace(/[^a-zA-Z0-9_-]/g, '_') + qualityExtension(quality);
@@ -300,7 +299,7 @@ export default function KkboxDetailPage() {
               const { url, formatName, sid: newSid } = await getDownloadUrl(s.sid, t.id, s.kkid, 'hires');
               if (newSid !== s.sid) useKkboxStore.getState().updateAccountSession(accountId, { ...s, sid: newSid });
               const quality = formatNameToQuality(formatName);
-              const { lrc: lyric, tlyric } = await fetchLyric(sId, t.title, t.artist);
+              const { lrc: lyric, tlyric } = await getSongLyrics(s.sid, t.id);
               let filePath;
               if (isDrmFormat(formatName)) {
                 const tmp = FileSystem.cacheDirectory + 'kkbox_drm_' + sId.replace(/[^a-zA-Z0-9_-]/g, '_') + qualityExtension(quality);
