@@ -8,7 +8,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-na
 import { Ionicons } from '@expo/vector-icons';
 import { useUIStore } from '../store/useUIStore';
 import { useKkboxStore } from '../store/useKkboxStore';
-import { login as kkboxLogin } from '../services/kkboxApi';
+import { login as kkboxLogin } from '../services/platforms/kkboxApi';
 import { screenPadding } from '../constants/tokens';
 import type { KkboxAccount } from '../types';
 

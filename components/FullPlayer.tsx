@@ -26,7 +26,6 @@ import Animated, {
   cancelAnimation,
   Easing,
 } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { useUIStore } from '../store/useUIStore';
@@ -34,16 +33,19 @@ import { usePlayerProgress } from '../contexts/PlayerProgressContext';
 import { useColorStore } from '../store/useColorStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useSharedAudio } from '../contexts/AudioContext';
+
 import { MovingText } from './MovingText';
 import { screenPadding } from '../constants/tokens';
 import { LoopMode, Quality } from '../types';
 import { parseLrcWithTranslation, LyricLine, findCurrentLineIndex } from '../utils/lrcParser';
-import { fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
-import { getFileUrl as getQobuzFileUrl } from '../services/qobuzApi';
-import { getDownloadUrl as getKkboxDownloadUrl, streamDecryptKkboxAudio, formatNameToQuality, isDrmFormat, qualityExtension } from '../services/kkboxApi';
+import { fetchDownloadUrlBySong, fetchLyric } from '../services/musicApi';
+import { getFileUrl as getQobuzFileUrl } from '../services/platforms/qobuzApi';
+import { getDownloadUrl as getKkboxDownloadUrl, streamDecryptKkboxAudio, formatNameToQuality, isDrmFormat, qualityExtension } from '../services/platforms/kkboxApi';
 import { scanFile, tagAudioFile } from '../modules/media-scanner/src/MediaScanner';
 import { useQobuzStore } from '../store/useQobuzStore';
 import { useKkboxStore } from '../store/useKkboxStore';
+import { useColorExtractor } from '../hooks/useColorExtractor';
+import { fetchAndCacheCover } from '../services/assetProxy';
 import { enqueueDownload } from '../utils/downloadQueue';
 import { QualityPicker } from './QualityPicker';
 import { QueueModal } from './QueueModal';
@@ -150,17 +152,28 @@ const LyricItem = React.memo(
 function coverSize(w: number, h: number) { return Math.min(w * 0.78, h * 0.5); }
 function targetLineY(h: number) { return h * 0.02; }
 
-const PlayerGradient = React.memo(({ children }: { children: React.ReactNode }) => {
+const BlurredCoverBackground = React.memo(({ children, coverUri }: { children: React.ReactNode; coverUri: string }) => {
   const palette = useColorStore((s) => s.colors);
-  const gradientColors: [string, string, ...string[]] = [
-    palette.primary,
-    palette.primary + '99',
-    palette.background,
-  ];
+  const [bgError, setBgError] = useState(false);
+
+  useEffect(() => {
+    setBgError(false);
+  }, [coverUri]);
+
   return (
-    <LinearGradient colors={gradientColors} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 0.8 }} style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: palette.background }}>
+      {coverUri && !bgError ? (
+        <Image
+          source={{ uri: coverUri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          blurRadius={100}
+          onError={() => setBgError(true)}
+        />
+      ) : null}
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]} />
       {children}
-    </LinearGradient>
+    </View>
   );
 });
 
@@ -526,7 +539,7 @@ interface FullPlayerProps {
   onClose?: () => void;
 }
 
-export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
+export function FullPlayer({ onClose }: FullPlayerProps) {
   const router = useRouter();
   const { width: winW, height: winH } = useWindowDimensions();
   const { top, bottom } = useSafeAreaInsets();
@@ -594,9 +607,48 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
     setDuration(currentSong?.duration || 0);
   }, [currentSong]);
 
+  const [coverUri, setCoverUri] = useState<string>('');
+  const cachedSongIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     setCoverError(false);
+    const songId = currentSong?.id;
+    const songCover = currentSong?.cover;
+    if (!songId || !songCover) return;
+
+    if (cachedSongIdRef.current === songId) return;
+
+    const preCached = useColorStore.getState().currentCoverUrl;
+    if (preCached) {
+      cachedSongIdRef.current = songId;
+      setCoverUri(preCached);
+      useColorStore.getState().setCurrentCoverUrl('');
+      fetchAndCacheCover(songCover).then(() => {}).catch(() => {});
+      return;
+    }
+
+    cachedSongIdRef.current = null;
+    setCoverUri(songCover);
+
+    fetchAndCacheCover(songCover).then((uri) => {
+      const latest = usePlayerStore.getState().currentSong;
+      if (latest?.id === songId) {
+        cachedSongIdRef.current = songId;
+        setCoverUri(uri);
+      }
+    }).catch(() => {});
   }, [currentSong?.id]);
+
+  const { extractColors } = useColorExtractor();
+  useEffect(() => {
+    if (coverUri) {
+      extractColors(coverUri).then((colors) => {
+        if (colors.length >= 2) {
+          useColorStore.getState().setColors({ primary: colors[0], secondary: colors[1] });
+        }
+      }).catch(() => {});
+    }
+  }, [coverUri]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -741,7 +793,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
 
   return (
     <Animated.View style={[{ flex: 1 }, animatedContentStyle]}>
-    <PlayerGradient>
+    <BlurredCoverBackground coverUri={coverUri}>
       <View style={{ flex: 1, paddingTop: top, paddingBottom: Math.max(12, bottom) }}>
           <View style={{ flex: 1, maxHeight: pagerMaxH }}>
           <View style={[styles.headerRow, { paddingHorizontal: screenPadding.horizontal }]}>
@@ -815,7 +867,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
                         <Ionicons name="musical-note" size={44} color="rgba(255,255,255,0.15)" />
                       </View>
                     ) : (
-                      <Image source={{ uri: currentSong.cover }} style={{ width: cvSize, height: cvSize, borderRadius: 16 }} onError={() => setCoverError(true)} />
+                      <Image source={{ uri: coverUri }} style={{ width: cvSize, height: cvSize, borderRadius: 16 }} onError={() => setCoverError(true)} />
                     )}
                   </View>
                 </View>
@@ -875,7 +927,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
           </View>
         )}
 
-    </PlayerGradient>
+    </BlurredCoverBackground>
       <QueueModal />
       {fontScaleVisible && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200 }} pointerEvents="auto">
@@ -934,7 +986,7 @@ export const FullPlayer = React.memo(({ onClose }: FullPlayerProps) => {
       )}
     </Animated.View>
   );
-});
+}
 
 const styles = StyleSheet.create({
   headerRow: {

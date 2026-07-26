@@ -11,9 +11,10 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { useUIStore } from '../store/useUIStore';
-import { getAlbumSongs } from '../services/albumApi';
-import { fetchPlayUrl, fetchDownloadUrl, fetchLyric } from '../services/cnmusicApi';
+import { getAlbumSongs, fetchPlayUrl, fetchDownloadUrl } from '../services/platforms/kuwoApi';
+import { fetchLyric } from '../services/musicApi';
 import { downloadSong } from '../services/downloadService';
+import { fetchAndCacheCover } from '../services/assetProxy';
 import { QualityPicker } from '../components/QualityPicker';
 import { enqueueDownload } from '../utils/downloadQueue';
 import type { AlbumSong, Song, Quality } from '../types';
@@ -206,9 +207,10 @@ export const AlbumDetailOverlay = React.memo(() => {
   const handlePlay = useCallback(async (albumSong: AlbumSong, allSongs: AlbumSong[]) => {
     const converted = allSongs.map(toSong);
     const idx = converted.findIndex((s) => s.id === albumSong.id);
+    const cachedUri = await fetchAndCacheCover(albumCover);
     setQueue(converted, idx >= 0 ? idx : 0);
-    setCurrentCoverUrl(albumCover);
-    extractColors(albumCover).then((colors) => {
+    setCurrentCoverUrl(cachedUri);
+    extractColors(cachedUri).then((colors) => {
       if (colors.length >= 2) setColors({ primary: colors[0], secondary: colors[1] });
     }).catch(() => {});
 

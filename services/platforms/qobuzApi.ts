@@ -146,7 +146,7 @@ export async function getFileUrl(trackId: string, qualityId: number, token: stri
   return { url: data.url, mimeType: data.mime_type || 'audio/flac' };
 }
 
-export function mapTrackToQobuzTrack(raw: any): import('../types').QobuzTrack {
+export function mapTrackToQobuzTrack(raw: any): import('../../types').QobuzTrack {
   const performerName = typeof raw.performer === 'object' && raw.performer ? raw.performer.name : raw.performer;
   const artistName = typeof raw.artist === 'object' && raw.artist ? raw.artist.name : raw.artist;
   const albumArtistName = typeof raw.album?.artist === 'object' && raw.album?.artist ? raw.album.artist.name : raw.album?.artist;
@@ -167,7 +167,7 @@ export function mapTrackToQobuzTrack(raw: any): import('../types').QobuzTrack {
   };
 }
 
-export function mapAlbumToQobuzAlbum(raw: any): import('../types').QobuzAlbum {
+export function mapAlbumToQobuzAlbum(raw: any): import('../../types').QobuzAlbum {
   const cover = raw.image?.large || raw.album?.image?.large || '';
   const artistName = typeof raw.artist === 'object' && raw.artist ? raw.artist.name : raw.artist;
   const performerName = typeof raw.performer === 'object' && raw.performer ? raw.performer.name : raw.performer;

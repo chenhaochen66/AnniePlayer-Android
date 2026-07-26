@@ -8,10 +8,11 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { useQobuzStore } from '../store/useQobuzStore';
-import { getTrack, getAlbum, getFileUrl, mapTrackToQobuzTrack, mapAlbumToQobuzAlbum } from '../services/qobuzApi';
-import { fetchLyric } from '../services/cnmusicApi';
+import { getTrack, getAlbum, getFileUrl, mapTrackToQobuzTrack, mapAlbumToQobuzAlbum } from '../services/platforms/qobuzApi';
+import { fetchLyric } from '../services/musicApi';
 import { downloadSong } from '../services/downloadService';
 import { enqueueDownload } from '../utils/downloadQueue';
+import { fetchAndCacheCover } from '../services/assetProxy';
 import { screenPadding } from '../constants/tokens';
 import type { QobuzTrack } from '../types';
 
@@ -140,13 +141,14 @@ export default function QobuzDetailPage() {
     })();
   }, [type, id, getActiveToken]);
 
-  const handlePlay = useCallback((track: QobuzTrack) => {
+  const handlePlay = useCallback(async (track: QobuzTrack) => {
     const token = getActiveToken();
     if (!token) { return; }
     const allTracks = tracks.length > 1 ? tracks : [track];
     const idx = allTracks.findIndex((t) => t.id === track.id);
-    setCurrentCoverUrl(track.cover);
-    extractColors(track.cover).then((colors) => {
+    const cachedUri = await fetchAndCacheCover(track.cover);
+    setCurrentCoverUrl(cachedUri);
+    extractColors(cachedUri).then((colors) => {
       if (colors.length >= 2) setColors({ primary: colors[0], secondary: colors[1] });
     }).catch(() => {});
     const songs: any[] = allTracks.map((t) => ({

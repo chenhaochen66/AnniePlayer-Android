@@ -8,11 +8,12 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { useKkboxStore } from '../store/useKkboxStore';
-import { getSongs, getAlbum, getDownloadUrl, getPlayUrl, getSongLyrics, mapSongToKkboxTrack, mapAlbumToKkboxAlbum, authDevice, renewSession } from '../services/kkboxApi';
+import { getSongs, getAlbum, getDownloadUrl, getPlayUrl, getSongLyrics, mapSongToKkboxTrack, mapAlbumToKkboxAlbum, authDevice, renewSession } from '../services/platforms/kkboxApi';
 import { downloadSong } from '../services/downloadService';
 import { scanFile, tagAudioFile } from '../modules/media-scanner/src/MediaScanner';
-import { streamDecryptKkboxAudio, formatNameToQuality, isDrmFormat, qualityExtension } from '../services/kkboxApi';
+import { streamDecryptKkboxAudio, formatNameToQuality, isDrmFormat, qualityExtension } from '../services/platforms/kkboxApi';
 import { enqueueDownload } from '../utils/downloadQueue';
+import { fetchAndCacheCover } from '../services/assetProxy';
 import * as FileSystem from 'expo-file-system/legacy';
 import { screenPadding } from '../constants/tokens';
 import type { KkboxTrack, KkboxSession } from '../types';
@@ -160,8 +161,9 @@ export default function KkboxDetailPage() {
       if (newSid !== s.sid) useKkboxStore.getState().updateAccountSession(accountId, { ...s, sid: newSid });
       const allTracks = tracks.length > 1 ? tracks : [track];
       const idx = allTracks.findIndex((t) => t.id === track.id);
-      setCurrentCoverUrl(track.cover);
-      extractColors(track.cover).then((colors) => {
+      const cachedUri = await fetchAndCacheCover(track.cover);
+      setCurrentCoverUrl(cachedUri);
+      extractColors(cachedUri).then((colors) => {
         if (colors.length >= 2) setColors({ primary: colors[0], secondary: colors[1] });
       }).catch(() => {});
       const songs: any[] = allTracks.map((t) => ({

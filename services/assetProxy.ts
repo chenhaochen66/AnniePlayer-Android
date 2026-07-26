@@ -13,9 +13,17 @@ async function ensureDir() {
   }
 }
 
+function normalizeCoverUrl(url: string): string {
+  if (url.includes('music.126.net') && !url.includes('param=')) {
+    return url + (url.includes('?') ? '&' : '?') + 'param=800y800';
+  }
+  return url;
+}
+
 export async function fetchAndCacheCover(url: string): Promise<string> {
   if (!url) return '';
-  const filename = url.split('/').pop() || `${Date.now()}.jpg`;
+  const dlUrl = normalizeCoverUrl(url);
+  const filename = (dlUrl.split('/').pop() || `${Date.now()}.jpg`).split('?')[0];
   const filepath = `${ASSET_CACHE_DIR}${filename}`;
 
   const info = await FileSystem.getInfoAsync(filepath);
@@ -23,7 +31,7 @@ export async function fetchAndCacheCover(url: string): Promise<string> {
 
   await ensureDir();
   try {
-    const download = FileSystem.createDownloadResumable(url, filepath, {
+    const download = FileSystem.createDownloadResumable(dlUrl, filepath, {
       headers: { 'User-Agent': CHROME_UA },
     });
     const result = await download.downloadAsync();
@@ -64,19 +72,37 @@ async function dirSize(dir: string): Promise<number> {
   } catch { return 0; }
 }
 
+async function totalDirSize(dir: string): Promise<number> {
+  try {
+    const info = await FileSystem.getInfoAsync(dir);
+    if (!info.exists) return 0;
+    const names = await FileSystem.readDirectoryAsync(dir);
+    let total = 0;
+    for (const name of names) {
+      const path = dir.endsWith('/') ? dir + name : dir + '/' + name;
+      const finfo = await FileSystem.getInfoAsync(path);
+      if (!finfo.exists) continue;
+      if ((finfo as any).isDirectory) {
+        total += await totalDirSize(path);
+      } else {
+        total += (finfo as any).size || 0;
+      }
+    }
+    return total;
+  } catch { return 0; }
+}
+
 export async function getFileCacheSize(): Promise<number> {
-  const [assets, downloads, apiSize] = await Promise.all([
-    dirSize(ASSET_CACHE_DIR),
-    dirSize(DOWNLOAD_CACHE_DIR),
+  const [fileSize, apiSize] = await Promise.all([
+    totalDirSize(CACHE_DIR),
     cacheService.getSize(),
   ]);
-  return assets + downloads + apiSize;
+  return fileSize + apiSize;
 }
 
 export async function clearAllCache(): Promise<void> {
   await Promise.all([
-    FileSystem.deleteAsync(ASSET_CACHE_DIR, { idempotent: true }).catch(() => {}),
-    FileSystem.deleteAsync(DOWNLOAD_CACHE_DIR, { idempotent: true }).catch(() => {}),
+    FileSystem.deleteAsync(CACHE_DIR, { idempotent: true }).catch(() => {}),
     cacheService.clear(),
   ]);
 }

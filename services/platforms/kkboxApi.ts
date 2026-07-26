@@ -384,7 +384,7 @@ export function getCoverUrl(urlTemplate: string, size = 2048): string {
   return url;
 }
 
-export function mapSongToKkboxTrack(raw: any): import('../types').KkboxTrack {
+export function mapSongToKkboxTrack(raw: any): import('../../types').KkboxTrack {
   const coverTemplate = raw.album_photo_info?.url_template || '';
   const songMoreUrl: string = raw.song_more_url || '';
   let songId = '';
@@ -410,7 +410,7 @@ export function mapSongToKkboxTrack(raw: any): import('../types').KkboxTrack {
   };
 }
 
-export function mapAlbumToKkboxAlbum(raw: any, rawSongs: any[]): import('../types').KkboxAlbum {
+export function mapAlbumToKkboxAlbum(raw: any, rawSongs: any[]): import('../../types').KkboxAlbum {
   const album = raw.album || raw;
   const coverTemplate = album.album_photo_info?.url_template || '';
   const albumCover = coverTemplate ? getCoverUrl(coverTemplate) : '';

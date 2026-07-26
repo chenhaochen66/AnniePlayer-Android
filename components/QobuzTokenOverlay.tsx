@@ -8,7 +8,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-na
 import { Ionicons } from '@expo/vector-icons';
 import { useUIStore } from '../store/useUIStore';
 import { useQobuzStore } from '../store/useQobuzStore';
-import { checkToken } from '../services/qobuzApi';
+import { checkToken } from '../services/platforms/qobuzApi';
 import { screenPadding } from '../constants/tokens';
 import type { QobuzToken } from '../types';
 
