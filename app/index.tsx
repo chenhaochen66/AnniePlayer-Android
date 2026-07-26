@@ -10,11 +10,12 @@ import { useColorStore } from '../store/useColorStore';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 
-import { searchMusic, searchNeteaseMusic, fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
-import { searchAlbum, buildAlbumCoverUrl, getAlbumSongs, enrichKuwoSong } from '../services/albumApi';
-import { searchArtist } from '../services/artistApi';
+import { fetchDownloadUrlBySong, fetchLyric } from '../services/musicApi';
+import { searchNeteaseMusic } from '../services/platforms/neteaseApi';
+import { searchMusic, searchArtist, searchAlbum, buildAlbumCoverUrl, getAlbumSongs, enrichKuwoSong } from '../services/platforms/kuwoApi';
+import { fetchAndCacheCover } from '../services/assetProxy';
 import { downloadSong } from '../services/downloadService';
-import { parseQobuzUrl } from '../services/qobuzApi';
+import { parseQobuzUrl } from '../services/platforms/qobuzApi';
 import { SearchBar } from '../components/SearchBar';
 import { ResultItem } from '../components/ResultItem';
 import { AlbumCard } from '../components/AlbumCard';
@@ -25,7 +26,7 @@ import { KkboxAccountOverlay } from '../components/KkboxAccountOverlay';
 import { AlbumDetailOverlay } from '../components/AlbumDetailOverlay';
 import { QobuzLinkFetch } from '../components/QobuzLinkFetch';
 import { KkboxLinkFetch } from '../components/KkboxLinkFetch';
-import { parseKkboxUrl } from '../services/kkboxApi';
+import { parseKkboxUrl } from '../services/platforms/kkboxApi';
 import { SingerDetailOverlay } from '../components/SingerDetailOverlay';
 import { DownloadsOverlay } from '../components/DownloadsOverlay';
 import { QualityPicker } from '../components/QualityPicker';
@@ -109,7 +110,7 @@ export default function HomeScreen() {
     enabled: mode === 'song' && songSubmitted.length > 0,
   });
 
-  const allSongs = (songQuery.data?.kuwo || []);
+  const allSongs = (songQuery.data ?? []);
   const allNeteaseSongs = (neteaseQuery.data ?? []);
   const allAlbums = (albumQuery.data ?? []);
   const allArtists = (artistQuery.data ?? []);
@@ -119,11 +120,12 @@ export default function HomeScreen() {
   neteaseSongsRef.current = allNeteaseSongs;
 
   const handlePlaySong = useCallback(
-    (song: Song, songs: Song[]) => {
+    async (song: Song, songs: Song[]) => {
+      const cachedUri = await fetchAndCacheCover(song.cover);
+      setCurrentCoverUrl(cachedUri);
       const idx = songs.findIndex((s: Song) => s.id === song.id);
       setQueue(songs, idx >= 0 ? idx : 0);
-      setCurrentCoverUrl(song.cover);
-      extractColors(song.cover).then((colors) => {
+      extractColors(cachedUri).then((colors) => {
         if (colors.length >= 2) setColors({ primary: colors[0], secondary: colors[1] });
       }).catch(() => {});
     },

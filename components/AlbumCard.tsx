@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Image, TouchableOpacity, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Album } from '../types';
-import { buildAlbumCoverUrl } from '../services/albumApi';
+import { buildAlbumCoverUrl } from '../services/platforms/kuwoApi';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const GAP = 10;

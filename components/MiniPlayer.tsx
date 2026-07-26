@@ -14,6 +14,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayerStore } from '../store/usePlayerStore';
+import { useColorStore } from '../store/useColorStore';
 import { useUIStore } from '../store/useUIStore';
 import { useSharedAudio } from '../contexts/AudioContext';
 import { usePlayerProgress } from '../contexts/PlayerProgressContext';
@@ -40,6 +41,7 @@ export const MiniPlayer = React.memo(() => {
   const insets = useSafeAreaInsets();
   const segments = useSegments();
   const currentSong = usePlayerStore((s) => s.currentSong);
+  const currentCoverUrl = useColorStore((s) => s.currentCoverUrl);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const togglePlay = useSharedAudio().togglePlay!;
   const playerOverlayVisible = useUIStore((s) => s.playerOverlayVisible);
@@ -116,7 +118,7 @@ export const MiniPlayer = React.memo(() => {
           </View>
         ) : (
           <Image
-            source={{ uri: song.cover }}
+            source={{ uri: (currentCoverUrl || song.cover) }}
             style={{
               width: 52, height: 52, borderRadius: 12,
               backgroundColor: 'rgba(255,255,255,0.04)',

@@ -12,10 +12,10 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useSingerSelectionStore } from '../store/useSingerSelectionStore';
 import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
-import { getArtistSongs, getArtistAlbums } from '../services/artistApi';
-import { enrichKuwoSong } from '../services/albumApi';
-import { fetchPlayUrl, fetchDownloadUrl, fetchDownloadUrlBySong, fetchLyric } from '../services/cnmusicApi';
+import { fetchDownloadUrlBySong, fetchLyric } from '../services/musicApi';
+import { getArtistSongs, getArtistAlbums, enrichKuwoSong, fetchPlayUrl, fetchDownloadUrl } from '../services/platforms/kuwoApi';
 import { downloadSong } from '../services/downloadService';
+import { fetchAndCacheCover } from '../services/assetProxy';
 
 import { AlbumCard } from './AlbumCard';
 import { QualityPicker } from './QualityPicker';
@@ -236,8 +236,19 @@ export const SingerDetailOverlay = React.memo(() => {
       .finally(() => setSongLoading(false));
   }, [id, isOpen]);
 
+  const prevSongPageRef = useRef(songPage);
   useEffect(() => {
-    if (tab !== 'song' || !id || !isOpen || songs.length > 0) return;
+    if (tab !== 'song' || !id || !isOpen) return;
+
+    const pageChanged = songPage !== prevSongPageRef.current;
+
+    if (pageChanged) {
+      prevSongPageRef.current = songPage;
+      setSongs([]);
+      return;
+    }
+
+    if (songs.length > 0) return;
     setSongLoading(true);
     setSongError('');
     getArtistSongs(id, songPage)
@@ -247,7 +258,7 @@ export const SingerDetailOverlay = React.memo(() => {
       })
       .catch((e) => setSongError(e.message || '获取失败'))
       .finally(() => setSongLoading(false));
-  }, [id, songPage, tab, isOpen]);
+  }, [id, songPage, tab, isOpen, songs.length]);
 
   useEffect(() => {
     if (tab !== 'album' || !id || !isOpen) return;
@@ -271,12 +282,13 @@ export const SingerDetailOverlay = React.memo(() => {
     });
   }, [albums, albumSortAsc]);
 
-  const handlePlaySong = useCallback((song: Song) => {
+  const handlePlaySong = useCallback(async (song: Song) => {
     const idx = songs.findIndex((s) => s.id === song.id);
     if (idx < 0) return;
+    const cachedUri = await fetchAndCacheCover(song.cover);
     setQueue(songs, idx);
-    setCurrentCoverUrl(song.cover);
-    extractColors(song.cover).then((colors) => {
+    setCurrentCoverUrl(cachedUri);
+    extractColors(cachedUri).then((colors) => {
       if (colors.length >= 2) setColors({ primary: colors[0], secondary: colors[1] });
     }).catch(() => {});
     fetchPlayUrl(song.id).then((url) => {

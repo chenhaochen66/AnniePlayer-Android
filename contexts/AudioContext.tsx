@@ -3,8 +3,8 @@ import { NativeModules, AppState } from 'react-native';
 import TrackPlayer, { useTrackPlayerEvents, Event } from 'react-native-track-player';
 import { useAudio, AudioControls } from '../hooks/useAudio';
 import { usePlayerStore } from '../store/usePlayerStore';
-import { fetchLyric } from '../services/cnmusicApi';
-import { getSongLyrics } from '../services/kkboxApi';
+import { fetchLyric } from '../services/musicApi';
+import { getSongLyrics } from '../services/platforms/kkboxApi';
 import { useKkboxStore } from '../store/useKkboxStore';
 import { usePlayerProgress } from './PlayerProgressContext';
 
@@ -26,6 +26,18 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const { position, duration } = usePlayerProgress();
   const foregroundRef = useRef(false);
   const lastSyncRef = useRef(0);
+  const lastLocalSkipRef = useRef(0);
+
+  useEffect(() => {
+    let prev = usePlayerStore.getState().playbackId;
+    const unsub = usePlayerStore.subscribe((state) => {
+      if (state.playbackId !== prev) {
+        lastLocalSkipRef.current = Date.now();
+        prev = state.playbackId;
+      }
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(async () => {
@@ -68,9 +80,11 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       if (idx != null && idx >= 0) {
         const { queue, currentIndex } = usePlayerStore.getState();
         if (idx < queue.length && idx !== currentIndex) {
-          patch.currentIndex = idx;
-          patch.currentSong = queue[idx];
-          patch.playbackId = usePlayerStore.getState().playbackId + 1;
+          if (Date.now() - lastLocalSkipRef.current > 3000) {
+            patch.currentIndex = idx;
+            patch.currentSong = queue[idx];
+            patch.playbackId = usePlayerStore.getState().playbackId + 1;
+          }
         }
       }
       if (playbackState?.state) {

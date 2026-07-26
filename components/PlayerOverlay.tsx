@@ -1,14 +1,18 @@
 import React, { useEffect, useCallback } from 'react';
 import { useWindowDimensions, BackHandler } from 'react-native';
+import { useSegments } from 'expo-router';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
 import { useUIStore } from '../store/useUIStore';
 import { FullPlayer } from './FullPlayer';
 
 export function PlayerOverlay() {
+  const segments = useSegments();
   const { height: winH } = useWindowDimensions();
   const visible = useUIStore((s) => s.playerOverlayVisible);
   const setVisible = useUIStore((s) => s.setPlayerOverlayVisible);
   const onClose = useCallback(() => setVisible(false), [setVisible]);
+
+  if (segments[0] === 'player') return null;
 
   const translateY = useSharedValue(winH);
   const opacity = useSharedValue(0);
@@ -42,7 +46,7 @@ export function PlayerOverlay() {
     <Animated.View
       style={[{
         position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 300,
-        backgroundColor: '#0a0a1a',
+        backgroundColor: 'transparent',
       }, animStyle]}
       pointerEvents={visible ? 'auto' : 'none'}
     >

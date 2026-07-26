@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { NativeModules } from 'react-native';
+import { NativeModules, Image } from 'react-native';
 import type { Song, LoopMode } from '../types';
 
 interface PlayerState {
@@ -80,19 +80,48 @@ export const usePlayerStore = create<PlayerState>()(
         set({ queue: newQueue, currentIndex: Math.min(newIndex, newQueue.length - 1), currentSong: newQueue[Math.min(newIndex, newQueue.length - 1)] || null });
       },
       next: () => {
+        const { queue, currentIndex, loopMode } = get();
+        if (queue.length === 0) return;
+        let nextIndex: number;
+        if (loopMode === 'shuffle') {
+          nextIndex = Math.floor(Math.random() * queue.length);
+        } else if (loopMode === 'single') {
+          nextIndex = currentIndex;
+        } else {
+          nextIndex = (currentIndex + 1) % queue.length;
+        }
+        const nextSong = queue[nextIndex];
+        set({ currentIndex: nextIndex, currentSong: nextSong, playbackId: get().playbackId + 1 });
+        if (nextSong?.cover) Image.prefetch(nextSong.cover);
         NativeModules.TrackPlayerModule.skipNext();
       },
       previous: () => {
+        const { queue, currentIndex, loopMode } = get();
+        if (queue.length === 0) return;
+        let prevIndex: number;
+        if (loopMode === 'shuffle') {
+          prevIndex = Math.floor(Math.random() * queue.length);
+        } else {
+          prevIndex = (currentIndex - 1 + queue.length) % queue.length;
+        }
+        const prevSong = queue[prevIndex];
+        set({ currentIndex: prevIndex, currentSong: prevSong, playbackId: get().playbackId + 1 });
+        if (prevSong?.cover) Image.prefetch(prevSong.cover);
         NativeModules.TrackPlayerModule.skipPrevious();
       },
       seekTo: (index) => {
         const { queue } = get();
         if (index < 0 || index >= queue.length) return;
-        set({ currentIndex: index, currentSong: queue[index] });
+        const song = queue[index];
+        set({ currentIndex: index, currentSong: song });
+        if (song?.cover) Image.prefetch(song.cover);
       },
       playIndex: (index) => {
         const { queue } = get();
         if (index < 0 || index >= queue.length) return;
+        const song = queue[index];
+        set({ currentIndex: index, currentSong: song, playbackId: get().playbackId + 1 });
+        if (song?.cover) Image.prefetch(song.cover);
         NativeModules.TrackPlayerModule.skipTo(index);
       },
       togglePlay: () => set((state) => ({ isPlaying: !state.isPlaying })),
