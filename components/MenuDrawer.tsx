@@ -28,7 +28,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export const SettingsDrawer = React.memo(() => {
+export const MenuDrawer = React.memo(() => {
   const insets = useSafeAreaInsets();
   const isOpen = useUIStore((s) => s.drawerVisible);
   const onClose = useCallback(() => useUIStore.getState().setDrawerVisible(false), []);
@@ -99,7 +99,7 @@ export const SettingsDrawer = React.memo(() => {
               <Ionicons name="close" size={22} color="rgba(255,255,255,0.7)" />
             </TouchableOpacity>
             <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', marginLeft: 12 }}>
-              设置
+              菜单
             </Text>
           </View>
 

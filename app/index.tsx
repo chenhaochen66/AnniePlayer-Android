@@ -1,6 +1,5 @@
-import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import { View, FlatList, Text, Image, TouchableOpacity, Alert } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import React, { useState, useCallback, useRef } from 'react';
+import { View, Text, Image, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -16,30 +15,29 @@ import { searchMusic, searchArtist, searchAlbum, buildAlbumCoverUrl, getAlbumSon
 import { fetchAndCacheCover } from '../services/assetProxy';
 import { downloadSong } from '../services/downloadService';
 import { parseQobuzUrl } from '../services/platforms/qobuzApi';
+import { parseKkboxUrl } from '../services/platforms/kkboxApi';
 import { SearchBar } from '../components/SearchBar';
-import { ResultItem } from '../components/ResultItem';
-import { AlbumCard } from '../components/AlbumCard';
-import { SkeletonLoader } from '../components/SkeletonLoader';
-import { DrawerController, SettingsDrawer } from '../components/SettingsDrawer';
+import { ModeDropdown } from '../components/ModeDropdown';
+import { DrawerController, MenuDrawer } from '../components/MenuDrawer';
 import { QobuzTokenOverlay } from '../components/QobuzTokenOverlay';
 import { KkboxAccountOverlay } from '../components/KkboxAccountOverlay';
 import { AlbumDetailOverlay } from '../components/AlbumDetailOverlay';
-import { QobuzLinkFetch } from '../components/QobuzLinkFetch';
-import { KkboxLinkFetch } from '../components/KkboxLinkFetch';
-import { parseKkboxUrl } from '../services/platforms/kkboxApi';
 import { SingerDetailOverlay } from '../components/SingerDetailOverlay';
 import { DownloadsOverlay } from '../components/DownloadsOverlay';
 import { QualityPicker } from '../components/QualityPicker';
+import { SongSearchResults } from '../components/SongSearchResults';
+import { AlbumSearchResults } from '../components/AlbumSearchResults';
+import { SingerSearchResults } from '../components/SingerSearchResults';
+import { ForeignSearchView } from '../components/ForeignSearchView';
 import { Song, Quality, Album, Artist } from '../types';
 import { enqueueDownload } from '../utils/downloadQueue';
 import { useSearchSelectionStore } from '../store/useSearchSelectionStore';
 
 type SearchMode = 'song' | 'album' | 'singer' | 'qobuz';
-type ForeignService = 'qobuz' | 'kkbox';
 
 export default function HomeScreen() {
   const [mode, setMode] = useState<SearchMode>('song');
-  const [foreignService, setForeignService] = useState<ForeignService>('qobuz');
+  const [modePickerVisible, setModePickerVisible] = useState(false);
   const [query, setQuery] = useState('');
   const [songSubmitted, setSongSubmitted] = useState('');
   const [albumSubmitted, setAlbumSubmitted] = useState('');
@@ -66,6 +64,11 @@ export default function HomeScreen() {
   const completeTask = useDownloadStore((s) => s.completeTask);
   const failTask = useDownloadStore((s) => s.failTask);
   const { extractColors } = useColorExtractor();
+
+  const handleModeSelect = useCallback((m: SearchMode) => {
+    setMode(m);
+    setModePickerVisible(false);
+  }, []);
 
   const handleSearch = useCallback(() => {
     const q = query.trim();
@@ -114,10 +117,6 @@ export default function HomeScreen() {
   const allNeteaseSongs = (neteaseQuery.data ?? []);
   const allAlbums = (albumQuery.data ?? []);
   const allArtists = (artistQuery.data ?? []);
-  const songsRef = useRef<Song[]>(allSongs);
-  songsRef.current = allSongs;
-  const neteaseSongsRef = useRef<Song[]>(allNeteaseSongs);
-  neteaseSongsRef.current = allNeteaseSongs;
 
   const handlePlaySong = useCallback(
     async (song: Song, songs: Song[]) => {
@@ -232,195 +231,7 @@ export default function HomeScreen() {
     });
   }, [addTask, updateProgress, completeTask, addDownloadedId, addToQueue, failTask]);
 
-  const activeSongId = usePlayerStore((s) => s.currentSong?.id);
-
   const selectedSongs = useSearchSelectionStore((s) => s.selectedSongs);
-
-  const renderSongItem = useCallback(
-    ({ item }: { item: Song }) => {
-      const songs = item.platform === 'netease' ? neteaseSongsRef.current : songsRef.current;
-      const isActive = item.id === activeSongId;
-      const isSelected = selectedSongs.some((s) => s.id === item.id);
-      return (
-        <ResultItem
-          song={item}
-          isActive={isActive}
-          selected={isSelected}
-          onPress={() => handlePlaySong(item, songs)}
-          onDownload={handleDownload}
-          onToggleSelect={handleLongPress}
-        />
-      );
-    },
-    [handlePlaySong, handleDownload, handleLongPress, songsRef, neteaseSongsRef, activeSongId, selectedSongs],
-  );
-
-  const renderAlbumItem = useCallback(
-    ({ item }: { item: Album }) => (
-      <AlbumCard album={item} onPress={handleAlbumPress} />
-    ),
-    [handleAlbumPress],
-  );
-
-  const renderArtistItem = useCallback(
-    ({ item }: { item: Artist }) => (
-      <TouchableOpacity
-        onPress={() => handleArtistPress(item)}
-        activeOpacity={0.7}
-        style={{
-          flexDirection: 'row', alignItems: 'center',
-          paddingVertical: 10, paddingHorizontal: 12,
-        }}
-      >
-        <Image
-          source={{ uri: item.picture }}
-          style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.03)' }}
-        />
-        <View style={{ marginLeft: 14, flex: 1 }}>
-          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
-            {item.name}
-          </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginTop: 2 }}>
-            {item.musicNum} 首歌曲
-          </Text>
-        </View>
-      </TouchableOpacity>
-    ),
-    [handleArtistPress],
-  );
-
-  const searchContent = useMemo(() => (
-    mode === 'qobuz' ? (
-      <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: 'row', paddingHorizontal: 32, gap: 8, paddingTop: 12, paddingBottom: 4 }}>
-          {(['qobuz', 'kkbox'] as const).map((s) => (
-            <TouchableOpacity
-              key={s}
-              onPress={() => setForeignService(s)}
-              activeOpacity={0.7}
-              style={{
-                paddingHorizontal: 16, paddingVertical: 6, borderRadius: 8,
-                backgroundColor: foreignService === s ? '#818cf8' : 'rgba(255,255,255,0.05)',
-              }}
-            >
-              <Text style={{ color: foreignService === s ? '#fff' : 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '600' }}>
-                {s === 'qobuz' ? 'Qobuz' : 'KKBOX'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        {foreignService === 'qobuz' ? (
-          <QobuzLinkFetch onSubmit={handleQobuzSubmit} />
-        ) : (
-          <KkboxLinkFetch onSubmit={handleKkboxSubmit} />
-        )}
-      </View>
-    ) : mode === 'song' ? (
-      <View style={{ flex: 1 }}>
-        {(songQuery.isLoading || neteaseQuery.isLoading) ? (
-          <SkeletonLoader />
-        ) : (allSongs.length > 0 || allNeteaseSongs.length > 0) ? (
-          <Animated.View entering={FadeInDown.duration(400)} key={`song-${songSubmitted}`} style={{ flex: 1, flexDirection: 'row', paddingHorizontal: 8 }}>
-            <View style={{ flex: 1 }}>
-              {allSongs.length > 0 ? (
-                <FlatList
-                  data={allSongs}
-                  renderItem={renderSongItem}
-                  keyExtractor={(item) => item.id}
-                  windowSize={5}
-                  maxToRenderPerBatch={15}
-                  initialNumToRender={10}
-                  removeClippedSubviews
-                  contentContainerStyle={{ paddingBottom: 120 }}
-                  showsVerticalScrollIndicator={false}
-                />
-              ) : (
-                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
-                </View>
-              )}
-            </View>
-            <View style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.04)', marginVertical: 8 }} />
-            <View style={{ flex: 1 }}>
-              {neteaseQuery.isLoading ? (
-                <SkeletonLoader />
-              ) : allNeteaseSongs.length > 0 ? (
-                <FlatList
-                  data={allNeteaseSongs}
-                  renderItem={renderSongItem}
-                  keyExtractor={(item) => item.id}
-                  windowSize={5}
-                  maxToRenderPerBatch={15}
-                  initialNumToRender={10}
-                  removeClippedSubviews
-                  contentContainerStyle={{ paddingBottom: 120 }}
-                  showsVerticalScrollIndicator={false}
-                />
-              ) : allNeteaseSongs.length === 0 && !neteaseQuery.isLoading && songSubmitted.length > 0 ? (
-                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
-                </View>
-              ) : null}
-            </View>
-          </Animated.View>
-        ) : songSubmitted.length > 0 ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
-          </View>
-        ) : null}
-      </View>
-    ) : mode === 'singer' ? (
-      <View style={{ flex: 1 }}>
-        {artistQuery.isLoading ? (
-          <SkeletonLoader />
-        ) : allArtists.length > 0 ? (
-          <Animated.View entering={FadeInDown.duration(400)} key={`artist-${artistSubmitted}`} style={{ flex: 1 }}>
-            <FlatList
-              data={allArtists}
-              renderItem={renderArtistItem}
-              keyExtractor={(item) => item.id}
-              windowSize={5}
-              maxToRenderPerBatch={15}
-              initialNumToRender={10}
-              removeClippedSubviews
-              contentContainerStyle={{ paddingBottom: 120, paddingTop: 4 }}
-              showsVerticalScrollIndicator={false}
-            />
-          </Animated.View>
-        ) : artistSubmitted.length > 0 ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
-          </View>
-        ) : null}
-      </View>
-    ) : (
-      <View style={{ flex: 1 }}>
-        {albumQuery.isLoading ? (
-          <SkeletonLoader />
-        ) : allAlbums.length > 0 ? (
-          <Animated.View entering={FadeInDown.duration(400)} key={`album-${albumSubmitted}`} style={{ flex: 1 }}>
-            <FlatList
-              data={allAlbums}
-              renderItem={renderAlbumItem}
-              keyExtractor={(item) => item.albumid}
-              numColumns={2}
-              windowSize={5}
-              maxToRenderPerBatch={10}
-              initialNumToRender={6}
-              removeClippedSubviews
-              columnWrapperStyle={{ gap: 10, paddingHorizontal: 8 }}
-              contentContainerStyle={{ gap: 10, paddingBottom: 120, paddingTop: 4 }}
-              showsVerticalScrollIndicator={false}
-            />
-          </Animated.View>
-        ) : albumSubmitted.length > 0 ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>未找到结果</Text>
-          </View>
-        ) : null}
-      </View>
-    )
-  ), [mode, foreignService, songQuery.isLoading, neteaseQuery.isLoading, albumQuery.isLoading, artistQuery.isLoading, allSongs, allNeteaseSongs, allAlbums, allArtists, renderSongItem, renderAlbumItem, renderArtistItem, songSubmitted, albumSubmitted, artistSubmitted, handleSearch, handleQobuzSubmit, handleKkboxSubmit]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a1a' }} edges={['top']}>
@@ -435,23 +246,13 @@ export default function HomeScreen() {
         />
       </View>
 
-      <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 8, gap: 6 }}>
-        {(['song', 'album', 'singer', 'qobuz'] as const).map((m) => (
-          <TouchableOpacity
-            key={m}
-            onPress={() => { setMode(m); }}
-            activeOpacity={0.7}
-            style={{
-              flex: 1, height: 36, borderRadius: 10,
-              alignItems: 'center', justifyContent: 'center',
-              backgroundColor: mode === m ? '#818cf8' : 'rgba(255,255,255,0.05)',
-            }}
-          >
-            <Text style={{ color: mode === m ? '#fff' : 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '600' }}>
-              {m === 'song' ? '单曲搜索' : m === 'album' ? '专辑搜索' : m === 'singer' ? '歌手搜索' : '国外解析'}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+        <ModeDropdown
+          mode={mode}
+          open={modePickerVisible}
+          onToggle={() => setModePickerVisible((v) => !v)}
+          onSelect={handleModeSelect}
+        />
       </View>
 
       {mode === 'song' && selectedSongs.length > 0 && (
@@ -497,10 +298,37 @@ export default function HomeScreen() {
 
       {mode !== 'qobuz' && <SearchBar query={query} onQueryChange={setQuery} onSubmit={handleSearch} />}
 
-      {searchContent}
+      {mode === 'qobuz' ? (
+        <ForeignSearchView onQobuzSubmit={handleQobuzSubmit} onKkboxSubmit={handleKkboxSubmit} />
+      ) : mode === 'song' ? (
+        <SongSearchResults
+          kuwoSongs={allSongs}
+          neteaseSongs={allNeteaseSongs}
+          kuwoLoading={songQuery.isLoading}
+          neteaseLoading={neteaseQuery.isLoading}
+          query={songSubmitted}
+          onPlay={handlePlaySong}
+          onDownload={handleDownload}
+          onToggleSelect={handleLongPress}
+        />
+      ) : mode === 'singer' ? (
+        <SingerSearchResults
+          artists={allArtists}
+          loading={artistQuery.isLoading}
+          query={artistSubmitted}
+          onArtistPress={handleArtistPress}
+        />
+      ) : (
+        <AlbumSearchResults
+          albums={allAlbums}
+          loading={albumQuery.isLoading}
+          query={albumSubmitted}
+          onAlbumPress={handleAlbumPress}
+        />
+      )}
 
 
-      <SettingsDrawer />
+      <MenuDrawer />
       <QobuzTokenOverlay />
       <KkboxAccountOverlay />
       <SingerDetailOverlay />
