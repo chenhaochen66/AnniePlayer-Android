@@ -8,68 +8,73 @@ const QQ_HEADERS = {
 
 // ── 歌单 ──
 
+const mapQQSong = (s: any): Song => {
+  const singer = s.singer?.[0]?.name || '';
+  const qual: Quality[] = [];
+  if (s.sizeflac) qual.push('flac');
+  if (s.size320) qual.push('320k');
+  if (s.size128) qual.push('128k');
+  if (qual.length === 0) qual.push('128k');
+  const albumMid = s.albummid || '';
+  const coverUrl = albumMid ? `https://y.gtimg.cn/music/photo_new/T002R800x800M000${albumMid}.jpg` : '';
+  const artist = decodeHtmlEntities(singer);
+  return {
+    id: `qq:${s.songmid || ''}`,
+    title: decodeHtmlEntities(s.songname || '未知歌曲'),
+    artist,
+    cover: coverUrl,
+    album: decodeHtmlEntities(s.albumname || ''),
+    albumId: s.albummid || undefined,
+    duration: s.interval || 0,
+    platform: 'qq',
+    playUrl: '',
+    lyric: undefined,
+    tlyric: undefined,
+    qualities: qual,
+    albumArtist: artist,
+  };
+};
+
+async function fetchQQPage(disstid: string, begin: number, pageSize: number): Promise<{ songs: Song[]; total: number; name: string; creator: string; cover: string } | null> {
+  const url = `https://c.y.qq.com/v8/fcg-bin/fcg_v8_playlist_cp.fcg?id=${disstid}&format=json&song_begin=${begin}&song_num=${pageSize}&loginUin=0&hostUin=0&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0`;
+  try {
+    const resp = await fetch(url, { headers: QQ_HEADERS });
+    const text = await resp.text();
+    const data = JSON.parse(text.replace(/^\xef\xbb\xbf/, ''));
+    if (data.code !== 0) return null;
+    const cd = data.data?.cdlist?.[0];
+    if (!cd) return null;
+    return {
+      songs: (cd.songlist || []).map(mapQQSong),
+      total: cd.cur_song_num || 0,
+      name: cd.dissname || '',
+      creator: cd.nickname || '',
+      cover: cd.logo || '',
+    };
+  } catch { return null; }
+}
+
 export async function getQQPlaylist(disstid: string): Promise<{
   name: string; creator: string; cover: string; songs: Song[];
 } | null> {
-  try {
-    const allSongs: Song[] = [];
-    let name = '', creator = '', cover = '';
-    let total = 0;
-    let begin = 0;
-    const PAGE_SIZE = 200;
+  const PAGE_SIZE = 200;
+  const first = await fetchQQPage(disstid, 0, PAGE_SIZE);
+  if (!first || first.songs.length === 0) return null;
 
-    while (true) {
-      const url = `https://c.y.qq.com/v8/fcg-bin/fcg_v8_playlist_cp.fcg?id=${disstid}&format=json&song_begin=${begin}&song_num=${PAGE_SIZE}&loginUin=0&hostUin=0&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0`;
-      const resp = await fetch(url, { headers: QQ_HEADERS });
-      const text = await resp.text();
-      const data = JSON.parse(text.replace(/^\xef\xbb\xbf/, ''));
-      if (data.code !== 0) break;
-      const cd = data.data?.cdlist?.[0];
-      if (!cd) break;
+  const total = first.total;
+  const pages = Math.ceil(total / PAGE_SIZE);
 
-      if (begin === 0) {
-        name = cd.dissname || '';
-        creator = cd.nickname || '';
-        cover = cd.logo || '';
-        total = cd.cur_song_num || 0;
-      }
-
-      const list = cd.songlist || [];
-      for (const s of list) {
-        const singer = s.singer?.[0]?.name || '';
-        const qual: Quality[] = [];
-        if (s.sizeflac) qual.push('flac');
-        if (s.size320) qual.push('320k');
-        if (s.size128) qual.push('128k');
-        if (qual.length === 0) qual.push('128k');
-
-        const albumMid = s.albummid || '';
-        const coverUrl = albumMid ? `https://y.gtimg.cn/music/photo_new/T002R800x800M000${albumMid}.jpg` : '';
-        allSongs.push({
-          id: `qq:${s.songmid || ''}`,
-          title: decodeHtmlEntities(s.songname || '未知歌曲'),
-          artist: decodeHtmlEntities(singer),
-          cover: coverUrl,
-          album: decodeHtmlEntities(s.albumname || ''),
-          albumId: s.albummid || undefined,
-          duration: s.interval || 0,
-          platform: 'qq',
-          playUrl: '',
-          lyric: undefined,
-          tlyric: undefined,
-          qualities: qual,
-        });
-      }
-
-      if (begin + PAGE_SIZE >= total) break;
-      begin += PAGE_SIZE;
+  let allSongs = first.songs;
+  if (pages > 1) {
+    const rest = await Promise.all(
+      Array.from({ length: pages - 1 }, (_, i) => fetchQQPage(disstid, (i + 1) * PAGE_SIZE, PAGE_SIZE))
+    );
+    for (const page of rest) {
+      if (page) allSongs = allSongs.concat(page.songs);
     }
-
-    if (allSongs.length === 0) return null;
-    return { name, creator, cover, songs: allSongs };
-  } catch {
-    return null;
   }
+
+  return { name: first.name, creator: first.creator, cover: first.cover, songs: allSongs };
 }
 
 // ── 歌词 (简化版：通过第三方 API 获取) ──

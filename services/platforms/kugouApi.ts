@@ -1,6 +1,6 @@
 import type { Quality, Song } from '../../types';
 import { decodeHtmlEntities } from '../../utils/stringUtils';
-import pako from 'pako';
+import { inflate } from 'pako';
 const md5 = require('js-md5') as (data: string) => string;
 
 function signParams(params: Record<string, string>, key: string, body = ''): string {
@@ -69,7 +69,7 @@ async function fetchPlaylistInfo(globalId: string): Promise<{ name: string; cove
     const data = await resp.json();
     if (data.status === 1) {
       const info = data.data;
-      return { name: info.specialname || info.name || '', cover: (info.img || info.pic || '').replace('{size}', '800') };
+      return { name: info.specialname || info.name || '', cover: (info.imgurl || info.img || info.pic || '').replace('{size}', '800') };
     }
   } catch {}
   return { name: '', cover: '' };
@@ -124,16 +124,22 @@ export async function getKugouPlaylist(input: string): Promise<{
     if (input.includes('gcid_') || (!/^\d+$/.test(input) && input.length > 15)) {
       const gcid = (input.match(/gcid_([a-z0-9]+)/i)?.[1] || input).toLowerCase();
       const globalId = await decodeGcid(gcid);
-      const info = await fetchPlaylistInfo(globalId);
+      const [info, firstPage] = await Promise.all([
+        fetchPlaylistInfo(globalId),
+        fetchSongPage(globalId, 1, 300),
+      ]);
       name = info.name;
       cover = info.cover;
-      const firstPage = await fetchSongPage(globalId, 1, 300);
       let rawSongs = firstPage.info || [];
       const total = firstPage.total || 0;
       const pages = Math.ceil(total / 300);
-      for (let p = 2; p <= pages; p++) {
-        const more = await fetchSongPage(globalId, p, 300);
-        rawSongs = rawSongs.concat(more.info || []);
+      if (pages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: pages - 1 }, (_, i) => fetchSongPage(globalId, i + 2, 300))
+        );
+        for (const page of rest) {
+          if (page.info) rawSongs = rawSongs.concat(page.info);
+        }
       }
       // CDN enrichment for covers and album names
       const enrichMap: Record<string, { cover: string; album_name: string; publish_date: string }> = {};
@@ -168,11 +174,12 @@ export async function getKugouPlaylist(input: string): Promise<{
       songs = rawSongs.map((s: any) => {
         const hash = (s.hash || '').toUpperCase();
         const enriched = enrichMap[hash];
+        const artist = decodeHtmlEntities(s.singername || s.filename?.split(' - ')[0] || '未知歌手');
         return {
           id: `kugou:${s.hash || ''}`,
           title: decodeHtmlEntities(s.songname || s.filename?.split(' - ')[1]?.replace(/\.[^.]+$/, '') || '未知歌曲'),
-          artist: decodeHtmlEntities(s.singername || s.filename?.split(' - ')[0] || '未知歌手'),
-          cover: (s.cover || enriched?.cover || '').replace('{size}', '800'),
+          artist,
+          cover: (s.cover || enriched?.cover || s.trans_param?.union_cover || '').replace('{size}', '800'),
           album: decodeHtmlEntities(s.album_name || enriched?.album_name || ''),
           albumId: s.album_id || undefined,
           duration: parseSongDuration(s.timelen || s.duration),
@@ -182,6 +189,7 @@ export async function getKugouPlaylist(input: string): Promise<{
           tlyric: undefined,
           qualities: getKuGouQualities(s),
           releaseDate: enriched?.publish_date || s._publish_date || undefined,
+          albumArtist: artist,
         };
       });
     } else {
@@ -190,21 +198,25 @@ export async function getKugouPlaylist(input: string): Promise<{
       const page = await fetchSpecialPage(pid);
       name = page.name;
       cover = page.cover;
-      songs = page.songs.map((s: any) => ({
-        id: `kugou:${s.hash || ''}`,
-        title: decodeHtmlEntities(s.songname || s.filename?.split(' - ')[1]?.replace(/\.[^.]+$/, '') || '未知歌曲'),
-        artist: decodeHtmlEntities(s.singername || s.filename?.split(' - ')[0] || '未知歌手'),
-        cover: (s.cover || s._cover || '').replace('{size}', '800'),
-        album: decodeHtmlEntities(s.album_name || s._album_name || ''),
-        albumId: s.album_id || undefined,
-        duration: parseSongDuration(s.timelen || s.duration),
-        platform: 'kugou',
-        playUrl: '',
-        lyric: undefined,
-        tlyric: undefined,
-        qualities: getKuGouQualities(s),
-        releaseDate: s._publish_date || undefined,
-      }));
+      songs = page.songs.map((s: any) => {
+        const artist = decodeHtmlEntities(s.singername || s.filename?.split(' - ')[0] || '未知歌手');
+        return {
+          id: `kugou:${s.hash || ''}`,
+          title: decodeHtmlEntities(s.songname || s.filename?.split(' - ')[1]?.replace(/\.[^.]+$/, '') || '未知歌曲'),
+          artist,
+          cover: (s.cover || s._cover || '').replace('{size}', '800'),
+          album: decodeHtmlEntities(s.album_name || s._album_name || ''),
+          albumId: s.album_id || undefined,
+          duration: parseSongDuration(s.timelen || s.duration),
+          platform: 'kugou',
+          playUrl: '',
+          lyric: undefined,
+          tlyric: undefined,
+          qualities: getKuGouQualities(s),
+          releaseDate: s._publish_date || undefined,
+          albumArtist: artist,
+        };
+      });
     }
 
     if (songs.length === 0) return null;
@@ -219,7 +231,7 @@ export async function getKugouPlaylist(input: string): Promise<{
 const KRC_XOR_KEY = [0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47, 0x51, 0x36, 0x31, 0x2d, 0xce, 0xd2, 0x6e, 0x69];
 
 function decodeKrc(contentB64: string): string {
-  const raw = atob(contentB64);
+  const raw = atob(contentB64.replace(/[\r\n]/g, ''));
   const buf = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) {
     buf[i] = raw.charCodeAt(i);
@@ -229,9 +241,10 @@ function decodeKrc(contentB64: string): string {
   for (let i = 0; i < sliced.length; i++) {
     sliced[i] ^= KRC_XOR_KEY[i % 16];
   }
-  const decompressed = pako.inflate(sliced);
+  const decompressed = inflate(sliced);
   let str = '';
   for (let i = 0; i < decompressed.length; i++) str += String.fromCharCode(decompressed[i]);
+  try { str = decodeURIComponent(escape(str)); } catch {}
   return str;
 }
 
@@ -254,7 +267,7 @@ function parseKrcTranslation(krcText: string): { time: number; text: string }[] 
   const m = krcText.match(/\[language:([\w=+/]+)\]/);
   if (!m) return [];
   try {
-    const data = JSON.parse(atob(m[1]));
+    const data = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
     const tlyric = data.content?.find((item: any) => item.type === 1)?.lyricContent;
     if (!tlyric) return [];
     return tlyric.map((entry: any) => {
@@ -274,10 +287,11 @@ const fmtTime = (ms: number) => {
   return `[${String(min).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}]`;
 };
 
-export async function fetchKugouLyric(songId: string): Promise<{ lrc: string; tlyric: string | null }> {
+export async function fetchKugouLyric(songId: string, keyword = ''): Promise<{ lrc: string; tlyric: string | null }> {
   const hash = songId.replace(/^kugou:/, '');
   try {
-    const searchResp = await fetch(`http://lyrics.kugou.com/search?ver=1&man=yes&client=pc&hash=${hash}&timelength=254`, {
+    const searchUrl = `http://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=${encodeURIComponent(keyword)}&hash=${hash}&timelength=254`;
+    const searchResp = await fetch(searchUrl, {
       headers: { 'KG-RC': '1', 'KG-THash': 'expand_search_manager.cpp:852736169:451', 'User-Agent': 'KuGou2012-9020-ExpandSearchManager' },
     });
     const searchData = await searchResp.json();
@@ -392,8 +406,8 @@ export async function enrichKuGouSong(songId: string): Promise<{ trackNumber?: s
     const lookup = await fetchKugouAlbumTracks(info.albumId);
     const matched = lookup[hash] || {};
     return {
-      trackNumber: matched.sort || undefined,
-      discNumber: matched.disc || undefined,
+      trackNumber: matched.sort != null ? String(matched.sort) : undefined,
+      discNumber: matched.disc != null ? String(matched.disc) : undefined,
       releaseDate: info.publishDate || undefined,
     };
   } catch {

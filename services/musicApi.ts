@@ -49,7 +49,7 @@ export async function fetchLyric(songId: string, title: string, artist: string):
     } else if (songId.startsWith('qq:')) {
       result = await fetchQQLyric(songId);
     } else if (songId.startsWith('kugou:')) {
-      result = await fetchKugouLyric(songId);
+      result = await fetchKugouLyric(songId, title + ' ' + artist);
     } else {
       result = await fetchKuwoLyric(songId, title, artist);
     }
