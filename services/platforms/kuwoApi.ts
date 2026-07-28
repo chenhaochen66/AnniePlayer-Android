@@ -608,9 +608,18 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
         console.log('[kuwo] all retries failed, resp:', resp?.status);
         break;
       }
-      const json = await resp.json();
-      console.log('[kuwo] API code:', json.code, 'msg:', json.msg);
-      if (json.code !== 200) break;
+      const respText = await resp.text();
+      console.log('[kuwo] raw response (first 200):', respText.substring(0, 200));
+      let json: any;
+      try { json = JSON.parse(respText); } catch {
+        console.log('[kuwo] response is not JSON');
+        break;
+      }
+      console.log('[kuwo] response keys:', Object.keys(json));
+      if (json.code !== 200 && json.success !== true) {
+        console.log('[kuwo] API rejected:', json.message || json.msg || 'unknown');
+        break;
+      }
 
       const data = json.data;
       if (pn === 1) {
