@@ -536,18 +536,6 @@ export async function fetchKuwoLyric(songId: string, title: string, artist: stri
 const KW_COOKIE_NAME = 'Hm_Iuvt_cdb524f42f23cer9b268564v7y735ewrq2324';
 const KW_HARDCODED_COOKIE = 'RiGQWD34iKkZrnSYQycpmdGKAkaawJEA';
 
-async function getFreshKuwoCookie(): Promise<string> {
-  try {
-    const resp = await fetch('https://www.kuwo.cn/', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-    });
-    const setCookie = resp.headers.get('set-cookie') || '';
-    const match = setCookie.match(new RegExp(KW_COOKIE_NAME + '=([^;]+)'));
-    if (match) return match[1];
-  } catch {}
-  return KW_HARDCODED_COOKIE;
-}
-
 function charAt(s: string, i: number): string {
   return i >= 0 && i < s.length ? s[i] : '';
 }
@@ -588,9 +576,7 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
   name: string; creator: string; cover: string; songs: Song[];
 } | null> {
   console.log('[kuwo] getKuwoPlaylist called, id:', playlistId);
-  // Get a fresh cookie first (hardcoded one may be expired)
-  const freshCookie = await getFreshKuwoCookie();
-  console.log('[kuwo] using cookie:', freshCookie.substring(0, 15) + '...');
+  const cookieVal = KW_HARDCODED_COOKIE;
 
   const songs: Song[] = [];
   let name = '', creator = '', cover = '';
@@ -606,15 +592,15 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
       let json: any = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         // Generate fresh secret on each attempt (random d changes each time)
-        const freshSecret = generateKuwoSecret(freshCookie);
+        const secret = generateKuwoSecret(cookieVal);
         resp = await fetch(url, {
           credentials: 'omit',
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
-            'Cookie': `${KW_COOKIE_NAME}=${freshCookie}`,
-            'Secret': freshSecret,
+            'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
+            'Secret': secret,
           },
         });
         console.log('[kuwo] attempt', attempt, 'status:', resp.status);
