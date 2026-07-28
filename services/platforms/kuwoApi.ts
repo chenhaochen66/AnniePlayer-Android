@@ -2,6 +2,7 @@ import type { Quality, Song, Artist, Album, AlbumSong } from '../../types';
 import { cacheService } from '../cacheService';
 import { retryUntilSuccess } from '../../utils/retry';
 import { decodeHtmlEntities } from '../../utils/stringUtils';
+import CookieManager from '@react-native-cookies/cookies';
 
 const SEARCH_CACHE_TTL = 10 * 60 * 1000;
 const PLAY_URL_CACHE_TTL = 30 * 60 * 1000;
@@ -576,7 +577,21 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
   name: string; creator: string; cover: string; songs: Song[];
 } | null> {
   console.log('[kuwo] getKuwoPlaylist called, id:', playlistId);
-  const cookieVal = KW_HARDCODED_COOKIE;
+
+  // Get fresh cookie from homepage and store in jar to avoid conflicts
+  let cookieVal = KW_HARDCODED_COOKIE;
+  try {
+    const homeResp = await fetch('https://www.kuwo.cn/', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    });
+    const setCookie = homeResp.headers.get('set-cookie') || '';
+    const match = setCookie.match(new RegExp(KW_COOKIE_NAME + '=([^;]+)'));
+    if (match) {
+      cookieVal = match[1];
+      // Store in cookie jar so OkHttp sends it automatically
+      CookieManager.setFromResponse('https://www.kuwo.cn', setCookie).catch(() => {});
+    }
+  } catch {}
 
   const songs: Song[] = [];
   let name = '', creator = '', cover = '';
@@ -594,12 +609,10 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
         // Generate fresh secret on each attempt (random d changes each time)
         const secret = generateKuwoSecret(cookieVal);
         resp = await fetch(url, {
-          credentials: 'omit',
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
-            'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
             'Secret': secret,
           },
         });
