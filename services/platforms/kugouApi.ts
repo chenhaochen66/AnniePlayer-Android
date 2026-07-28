@@ -135,21 +135,55 @@ export async function getKugouPlaylist(input: string): Promise<{
         const more = await fetchSongPage(globalId, p, 300);
         rawSongs = rawSongs.concat(more.info || []);
       }
-      songs = rawSongs.map((s: any) => ({
-        id: `kugou:${s.hash || ''}`,
-        title: decodeHtmlEntities(s.songname || s.filename?.split(' - ')[1]?.replace(/\.[^.]+$/, '') || '未知歌曲'),
-        artist: decodeHtmlEntities(s.singername || s.filename?.split(' - ')[0] || '未知歌手'),
-        cover: (s.cover || s._cover || '').replace('{size}', '800'),
-        album: decodeHtmlEntities(s.album_name || s._album_name || ''),
-        albumId: s.album_id || undefined,
-        duration: parseSongDuration(s.timelen || s.duration),
-        platform: 'kugou',
-        playUrl: '',
-        lyric: undefined,
-        tlyric: undefined,
-        qualities: getKuGouQualities(s),
-        releaseDate: s._publish_date || undefined,
-      }));
+      // CDN enrichment for covers and album names
+      const enrichMap: Record<string, { cover: string; album_name: string; publish_date: string }> = {};
+      try {
+        const key2 = 'NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt';
+        const ct2 = String(Date.now());
+        const params2: Record<string, string> = {
+          appid: '1058', clienttime: ct2, clientver: '20000', global_collection_id: globalId,
+          mid: ct2, module: 'playlist', page: '1', pagesize: '300', specialid: '0',
+          srcappid: '2919', type: '0',
+        };
+        const sig2 = signParams(params2, key2, '');
+        const qs2 = Object.entries(params2).map(([k, v]) => `${k}=${v}`).join('&');
+        const cdnResp = await fetch(`https://pubsongscdn.kugou.com/v2/get_other_list_file?${qs2}&signature=${sig2}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 11_0)', 'Referer': 'https://m3ws.kugou.com/share/index.php' },
+        });
+        const cdnData = await cdnResp.json();
+        if (cdnData.error_code === 0) {
+          for (const s of cdnData.data?.info || []) {
+            const h = s.hash || '';
+            if (h) {
+              enrichMap[h.toUpperCase()] = {
+                cover: s.cover || '',
+                album_name: s.albuminfo?.name || '',
+                publish_date: s.publish_date || '',
+              };
+            }
+          }
+        }
+      } catch {}
+
+      songs = rawSongs.map((s: any) => {
+        const hash = (s.hash || '').toUpperCase();
+        const enriched = enrichMap[hash];
+        return {
+          id: `kugou:${s.hash || ''}`,
+          title: decodeHtmlEntities(s.songname || s.filename?.split(' - ')[1]?.replace(/\.[^.]+$/, '') || '未知歌曲'),
+          artist: decodeHtmlEntities(s.singername || s.filename?.split(' - ')[0] || '未知歌手'),
+          cover: (s.cover || enriched?.cover || '').replace('{size}', '800'),
+          album: decodeHtmlEntities(s.album_name || enriched?.album_name || ''),
+          albumId: s.album_id || undefined,
+          duration: parseSongDuration(s.timelen || s.duration),
+          platform: 'kugou',
+          playUrl: '',
+          lyric: undefined,
+          tlyric: undefined,
+          qualities: getKuGouQualities(s),
+          releaseDate: enriched?.publish_date || s._publish_date || undefined,
+        };
+      });
     } else {
       // Numeric ID path
       const pid = input.replace(/[^0-9]/g, '');
