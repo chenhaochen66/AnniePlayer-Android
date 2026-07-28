@@ -569,13 +569,14 @@ function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NA
     const s = jsParseInt(nStr.substring(0, 10)) + jsParseInt(nStr.substring(10));
     nStr = jsNumToString(s);
   }
-  let nVal = (r * parseInt(nStr, 10) + c) % l;
+  const rb = BigInt(r), cb = BigInt(c), lb = BigInt(l);
+  let nVal = (rb * BigInt(parseInt(nStr, 10)) + cb) % lb;
   let h = '';
   for (let i = 0; i < cookieVal.length; i++) {
-    const xorKey = Math.floor(nVal / l * 255);
+    const xorKey = Number((nVal * 255n) / lb);
     const fVal = cookieVal.charCodeAt(i) ^ xorKey;
     h += (fVal < 16 ? '0' : '') + fVal.toString(16);
-    nVal = (r * nVal + c) % l;
+    nVal = (rb * nVal + cb) % lb;
   }
   return h + d.toString(16).padStart(8, '0');
 }

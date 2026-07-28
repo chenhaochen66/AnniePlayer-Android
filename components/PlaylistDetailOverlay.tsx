@@ -18,6 +18,7 @@ import { enrichQQSong } from '../services/platforms/qqApi';
 import { enrichKuGouSong } from '../services/platforms/kugouApi';
 import { QualityPicker } from './QualityPicker';
 import { enqueueDownload } from '../utils/downloadQueue';
+import { bestQuality } from '../utils/quality';
 
 const ROW_H = 52;
 
@@ -194,12 +195,13 @@ export const PlaylistDetailOverlay = React.memo(() => {
     enqueueDownload(batchId, async () => {
       for (const song of songs) {
         try {
-          const url = await fetchDownloadUrlBySong(song, quality);
+          const actualQuality = bestQuality(quality, song.qualities);
+          const url = await fetchDownloadUrlBySong(song, actualQuality);
           const { lrc: lyric, tlyric } = await fetchLyric(song.id, song.title, song.artist);
           const extra: any = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : song.platform === 'kugou' ? await enrichKuGouSong(song.id) : song.platform === 'qq' ? await enrichQQSong(song.id) : {};
           const filePath = await downloadSong(
             song.id, song.title, song.artist,
-            song.cover, song.album, url, quality,
+            song.cover, song.album, url, actualQuality,
             () => {},
             lyric, tlyric ?? undefined,
             song.albumArtist, song.trackNumber || extra.trackNumber, song.discNumber || extra.discNumber, song.releaseDate || extra.releaseDate,
