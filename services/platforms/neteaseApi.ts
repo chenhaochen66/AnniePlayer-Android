@@ -163,6 +163,40 @@ export async function getNeteaseAlbumDetail(albumId: string): Promise<{
 
 // ── 歌单 ──
 
+async function fetchNeteaseSongDetails(chunk: { id: number; v: number }[]): Promise<Song[]> {
+  try {
+    const resp = await fetch('https://music.163.com/api/v3/song/detail', {
+      method: 'POST',
+      headers: NETEASE_API_HEADERS,
+      body: new URLSearchParams({ c: JSON.stringify(chunk) }).toString(),
+    });
+    const data = await resp.json();
+    const list = data.songs || [];
+    return list.map((s: any) => {
+      const cover = (s.al?.picUrl || '') + '?param=800y800';
+      const qualities: Quality[] = [];
+      if (s.hr) qualities.push('hires');
+      if (s.sq) qualities.push('flac');
+      if (s.h) qualities.push('320k');
+      if (s.l || s.m) qualities.push('128k');
+      return {
+        id: `netease:${s.id}`,
+        title: decodeHtmlEntities(s.name || ''),
+        artist: decodeHtmlEntities((s.ar || []).map((a: any) => a.name).join(' / ')),
+        cover,
+        album: decodeHtmlEntities(s.al?.name || ''),
+        albumId: s.al?.id ? String(s.al.id) : undefined,
+        duration: Math.floor((s.dt || 0) / 1000),
+        platform: 'netease',
+        playUrl: '',
+        lyric: undefined,
+        tlyric: undefined,
+        qualities: qualities.length > 0 ? qualities : ['128k'],
+      };
+    });
+  } catch { return []; }
+}
+
 export async function getNeteasePlaylist(playlistId: string): Promise<{
   name: string; creator: string; cover: string; songs: Song[];
 } | null> {
@@ -176,40 +210,15 @@ export async function getNeteasePlaylist(playlistId: string): Promise<{
     if (data.code !== 200 || !data.playlist) return null;
     const pl = data.playlist;
     const trackIds = pl.trackIds || [];
-    const songs: Song[] = [];
 
-    for (let i = 0; i < trackIds.length; i += 200) {
-      const chunk = trackIds.slice(i, i + 200).map((t: any) => ({ id: t.id, v: t.v || 0 }));
-      const detailResp = await fetch('https://music.163.com/api/v3/song/detail', {
-        method: 'POST',
-        headers: NETEASE_API_HEADERS,
-        body: new URLSearchParams({ c: JSON.stringify(chunk) }).toString(),
-      });
-      const detailData = await detailResp.json();
-      const list = detailData.songs || [];
-      for (const s of list) {
-        const cover = (s.al?.picUrl || '') + '?param=800y800';
-        const qualities: Quality[] = [];
-        if (s.hr) qualities.push('hires');
-        if (s.sq) qualities.push('flac');
-        if (s.h) qualities.push('320k');
-        if (s.l || s.m) qualities.push('128k');
-        songs.push({
-          id: `netease:${s.id}`,
-          title: decodeHtmlEntities(s.name || ''),
-          artist: decodeHtmlEntities((s.ar || []).map((a: any) => a.name).join(' / ')),
-          cover,
-          album: decodeHtmlEntities(s.al?.name || ''),
-          albumId: s.al?.id ? String(s.al.id) : undefined,
-          duration: Math.floor((s.dt || 0) / 1000),
-          platform: 'netease',
-          playUrl: '',
-          lyric: undefined,
-          tlyric: undefined,
-          qualities: qualities.length > 0 ? qualities : ['128k'],
-        });
-      }
+    const CHUNK = 200;
+    const chunks: { id: number; v: number }[][] = [];
+    for (let i = 0; i < trackIds.length; i += CHUNK) {
+      chunks.push(trackIds.slice(i, i + CHUNK).map((t: any) => ({ id: t.id, v: t.v || 0 })));
     }
+
+    const results = await Promise.all(chunks.map(fetchNeteaseSongDetails));
+    const songs = results.flat();
 
     return {
       name: pl.name || '',

@@ -4,6 +4,7 @@ import { retryUntilSuccess } from '../../utils/retry';
 import { decodeHtmlEntities } from '../../utils/stringUtils';
 
 
+
 const SEARCH_CACHE_TTL = 10 * 60 * 1000;
 const PLAY_URL_CACHE_TTL = 30 * 60 * 1000;
 const LYRIC_CACHE_TTL = 60 * 60 * 1000;
@@ -572,90 +573,77 @@ function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NA
 
 // ── 歌单 ──
 
+const MOBILE_API_BASE = 'https://m.kuwo.cn/newh5app/wapi/api/www';
+
+const mapKuwoSong = (item: any): Song => {
+  const coverUrl = (item.pic || item.albumpic || '').replace('/120/', '/800/');
+  const qualities: Quality[] = ['320k', '128k'];
+  if (item.hasLossless) qualities.unshift('flac');
+  return {
+    id: String(item.rid || ''),
+    title: item.name || '未知歌曲',
+    artist: item.artist || '未知歌手',
+    cover: coverUrl,
+    album: item.album || '',
+    albumId: item.albumid ? String(item.albumid) : undefined,
+    duration: item.duration || 0,
+    platform: 'kuwo',
+    playUrl: '',
+    lyric: undefined,
+    tlyric: undefined,
+    qualities,
+  };
+};
+
+async function fetchKuwoPage(playlistId: string, pn: number, pageSize: number): Promise<{ songs: Song[]; total: number; name: string; creator: string; cover: string } | null> {
+  const reqId = generateReqId();
+  const url = `${MOBILE_API_BASE}/playlist/playListInfo?pid=${playlistId}&pn=${pn}&rn=${pageSize}&httpsStatus=1&reqId=${reqId}&plat=web_www&from=`;
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': `https://m.kuwo.cn/newh5app/playlist_detail/${playlistId}`,
+      },
+    });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    if (json.code !== 200) return null;
+    const d = json.data;
+    return {
+      songs: (d.musicList || []).map(mapKuwoSong),
+      total: d.total || 0,
+      name: d.name || '',
+      creator: d.userName || d.uname || '',
+      cover: d.img || d.pic || '',
+    };
+  } catch { return null; }
+}
+
 export async function getKuwoPlaylist(playlistId: string): Promise<{
   name: string; creator: string; cover: string; songs: Song[];
 } | null> {
-  console.log('[kuwo] getKuwoPlaylist called, id:', playlistId);
-
-  // Use hardcoded Cookie+Secret pair (same scheme as artist APIs, verified working)
-  const KW_COOKIE = `${KW_COOKIE_NAME}=cpJCjsAFxxPra6XYMwztCpNMfjC4k7wn`;
-  const KW_SECRET = '4020c1e17b54296da65df0e32a8ce97445b88ba3748ad24a6fea38adedb112e202abc8c8';
-
-  const songs: Song[] = [];
-  let name = '', creator = '', cover = '';
-  let pn = 1;
   const PAGE_SIZE = 100;
+  const first = await fetchKuwoPage(playlistId, 1, PAGE_SIZE);
+  if (!first || first.songs.length === 0) return null;
 
-  while (true) {
-    const reqId = generateReqId();
-    const url = `${API_BASE}/playlist/playListInfo?pid=${playlistId}&pn=${pn}&rn=${PAGE_SIZE}&httpsStatus=1&reqId=${reqId}&plat=web_www&from=`;
+  const total = first.total;
+  const pages = Math.ceil(total / PAGE_SIZE);
 
-    try {
-      let json: any = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const resp = await fetch(url, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'application/json, text/plain, */*',
-              'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
-              'Cookie': KW_COOKIE,
-              'Secret': KW_SECRET,
-            },
-          });
-          const text = await resp.text();
-          json = JSON.parse(text);
-          if (json.code === 200) break;
-          if (resp.status === 504 || json.message === 'The request is illegal!') continue;
-        } catch {
-          continue;
-        }
-        break;
-      }
-      if (!json || json.code !== 200) {
-        console.log('[kuwo] all retries failed');
-        break;
-      }
-
-      const data = json.data;
-      if (pn === 1) {
-        name = data.name || '';
-        creator = data.userName || data.uname || '';
-        cover = data.img || data.pic || '';
-      }
-
-      const list = data.musicList || [];
-      for (const item of list) {
-        const coverUrl = (item.pic || item.albumpic || '').replace('/120/', '/800/');
-        const qualities: Quality[] = ['320k', '128k'];
-        if (item.hasLossless) qualities.unshift('flac');
-        songs.push({
-          id: String(item.rid || ''),
-          title: item.name || '未知歌曲',
-          artist: item.artist || '未知歌手',
-          cover: coverUrl,
-          album: item.album || '',
-          albumId: item.albumid ? String(item.albumid) : undefined,
-          duration: item.duration || 0,
-          platform: 'kuwo',
-          playUrl: '',
-          lyric: undefined,
-          tlyric: undefined,
-          qualities,
-        });
-      }
-
-      if (songs.length >= (data.total || 0)) break;
-      pn++;
-    } catch {
-      break;
+  let allSongs = first.songs;
+  if (pages > 1) {
+    const rest = await Promise.all(
+      Array.from({ length: pages - 1 }, (_, i) => fetchKuwoPage(playlistId, i + 2, PAGE_SIZE))
+    );
+    for (const page of rest) {
+      if (page) allSongs = allSongs.concat(page.songs);
     }
   }
 
-  if (songs.length === 0) {
-    console.log('[kuwo] no songs fetched, returning null');
-    return null;
-  }
-  console.log('[kuwo] success,', songs.length, 'songs');
-  return { name, creator, cover: cover.replace('/120/', '/800/'), songs };
+  return {
+    name: first.name,
+    creator: first.creator,
+    cover: first.cover.replace('/120/', '/800/'),
+    songs: allSongs,
+  };
 }

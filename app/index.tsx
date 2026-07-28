@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, Image, TouchableOpacity, Alert } from 'react-native';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { View, Text, Image, TouchableOpacity, Alert, BackHandler } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -73,6 +73,13 @@ export default function HomeScreen() {
     setMode(m);
     setModePickerVisible(false);
   }, []);
+
+  useEffect(() => {
+    if (!modePickerVisible) return;
+    const onBack = () => { setModePickerVisible(false); return true; };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [modePickerVisible]);
 
   const handleSearch = useCallback(() => {
     const q = query.trim();

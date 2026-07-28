@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 type SearchMode = 'song' | 'album' | 'singer' | 'qobuz' | 'playlist';
@@ -37,38 +37,44 @@ export const ModeDropdown = React.memo(({ mode, open, onToggle, onSelect }: Mode
     </TouchableOpacity>
 
     {open && (
-      <View style={{
-        position: 'absolute', top: 40, left: 0,
-        backgroundColor: '#1a1a2e', borderRadius: 12,
-        paddingVertical: 4, paddingHorizontal: 4,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
-        zIndex: 100, elevation: 10,
-        minWidth: 140,
-      }}>
-        {OPTIONS.map((o) => {
-          const active = mode === o.key;
-          return (
-            <TouchableOpacity
-              key={o.key}
-              onPress={() => onSelect(o.key)}
-              activeOpacity={0.7}
-              style={{
-                flexDirection: 'row', alignItems: 'center',
-                backgroundColor: active ? 'rgba(129,140,248,0.12)' : 'transparent',
-                borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, gap: 8,
-              }}
-            >
-              <Text style={{
-                color: active ? '#fff' : 'rgba(255,255,255,0.6)',
-                fontSize: 14, fontWeight: '500', flex: 1,
-              }}>
-                {o.label}
-              </Text>
-              {active && <Ionicons name="checkmark" size={16} color="#818cf8" />}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      <>
+        <Pressable
+          onPress={onToggle}
+          style={{ position: 'absolute', top: -9999, left: -9999, right: -9999, bottom: -9999, zIndex: 99 }}
+        />
+        <View style={{
+          position: 'absolute', top: 40, left: 0,
+          backgroundColor: '#1a1a2e', borderRadius: 12,
+          paddingVertical: 4, paddingHorizontal: 4,
+          borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+          zIndex: 100, elevation: 10,
+          minWidth: 140,
+        }}>
+          {OPTIONS.map((o) => {
+            const active = mode === o.key;
+            return (
+              <TouchableOpacity
+                key={o.key}
+                onPress={() => onSelect(o.key)}
+                activeOpacity={0.7}
+                style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  backgroundColor: active ? 'rgba(129,140,248,0.12)' : 'transparent',
+                  borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, gap: 8,
+                }}
+              >
+                <Text style={{
+                  color: active ? '#fff' : 'rgba(255,255,255,0.6)',
+                  fontSize: 14, fontWeight: '500', flex: 1,
+                }}>
+                  {o.label}
+                </Text>
+                {active && <Ionicons name="checkmark" size={16} color="#818cf8" />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </>
     )}
   </View>
 ));
