@@ -540,20 +540,6 @@ function charAt(s: string, i: number): string {
   return i >= 0 && i < s.length ? s[i] : '';
 }
 
-function jsParseInt(s: string): number {
-  let i = 0;
-  while (i < s.length && s[i] >= '0' && s[i] <= '9') i++;
-  return i > 0 ? parseInt(s.substring(0, i), 10) : 0;
-}
-
-function jsNumToString(n: number): string {
-  if (Math.abs(n) >= 1e21 || (Math.abs(n) > 0 && Math.abs(n) < 1e-6)) {
-    return n.toExponential().replace(/e\+0+(\d+)/, 'e+\$1');
-  }
-  const s = n.toString();
-  return s.indexOf('.') >= 0 ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
-}
-
 function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NAME): string {
   let n = '';
   for (let i = 0; i < cookieName.length; i++) n += cookieName.charCodeAt(i).toString();
@@ -564,13 +550,16 @@ function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NA
   const l = Math.pow(2, 31) - 1;
   if (r < 2) return '';
   const d = Math.floor(1e9 * Math.random()) % 100000000;
-  let nStr = n + d.toString();
-  while (nStr.length > 10) {
-    const s = jsParseInt(nStr.substring(0, 10)) + jsParseInt(nStr.substring(10));
-    nStr = jsNumToString(s);
+  // Use BigInt for precision, but split the string the same way as Python
+  let nStr2 = n + d.toString();
+  while (nStr2.length > 10) {
+    const first = nStr2.substring(0, 10);
+    const rest = nStr2.substring(10);
+    const s = BigInt(first) + BigInt(rest);
+    nStr2 = s.toString();
   }
   const rb = BigInt(r), cb = BigInt(c), lb = BigInt(l);
-  let nVal = (rb * BigInt(parseInt(nStr, 10)) + cb) % lb;
+  let nVal = (rb * BigInt(nStr2) + cb) % lb;
   let h = '';
   for (let i = 0; i < cookieVal.length; i++) {
     const xorKey = Number((nVal * 255n) / lb);
