@@ -552,22 +552,20 @@ function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NA
   const d = Math.floor(1e9 * Math.random()) % 100000000;
   let nStr = n + d.toString();
 
-  // Reduce digit string by splitting and adding (like Python's js_parse_int approach)
-  // Use BigInt for precision to match Python's arbitrary precision
-  const rb = BigInt(r), cb = BigInt(c), lb = BigInt(l);
-  let nBig = BigInt(nStr);
-  while (nBig > 9999999999n) {
-    const first10 = nBig % 10000000000n;
-    const rest = (nBig - first10) / 10000000000n;
-    nBig = first10 + rest;
+  // Use Number-based approach that the server actually accepts
+  // (r * nVal stays within JS safe integer range: r <= 99999, nVal <= 2^31)
+  while (nStr.length > 10) {
+    const first = parseInt(nStr.substring(0, 10), 10);
+    const rest = parseInt(nStr.substring(10), 10);
+    nStr = (first + rest).toString();
   }
-  let nVal = (rb * nBig + cb) % lb;
+  let nVal = (r * parseInt(nStr, 10) + c) % l;
   let h = '';
   for (let i = 0; i < cookieVal.length; i++) {
-    const xorKey = Number((nVal * 255n) / lb);
+    const xorKey = Math.floor(nVal / l * 255);
     const fVal = cookieVal.charCodeAt(i) ^ xorKey;
     h += (fVal < 16 ? '0' : '') + fVal.toString(16);
-    nVal = (rb * nVal + cb) % lb;
+    nVal = (r * nVal + c) % l;
   }
   return h + d.toString(16).padStart(8, '0');
 }
