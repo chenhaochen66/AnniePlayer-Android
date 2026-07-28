@@ -577,6 +577,7 @@ function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NA
 export async function getKuwoPlaylist(playlistId: string): Promise<{
   name: string; creator: string; cover: string; songs: Song[];
 } | null> {
+  console.log('[kuwo] getKuwoPlaylist called, id:', playlistId);
   const songs: Song[] = [];
   let name = '', creator = '', cover = '';
   let pn = 1;
@@ -587,6 +588,7 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
     const secret = generateKuwoSecret(cookieVal);
     const reqId = generateReqId();
     const url = `${API_BASE}/playlist/playListInfo?pid=${playlistId}&pn=${pn}&rn=${PAGE_SIZE}&httpsStatus=1&reqId=${reqId}&plat=web_www&from=`;
+    console.log('[kuwo] fetching page', pn, 'secret prefix:', secret.substring(0, 10));
 
     try {
       let resp: Response | null = null;
@@ -601,10 +603,15 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
             'Secret': secret,
           },
         });
+        console.log('[kuwo] attempt', attempt, 'status:', resp.status);
         if (resp.ok || resp.status !== 504) break;
       }
-      if (!resp || !resp.ok) break;
+      if (!resp || !resp.ok) {
+        console.log('[kuwo] all retries failed, resp:', resp?.status);
+        break;
+      }
       const json = await resp.json();
+      console.log('[kuwo] API code:', json.code, 'msg:', json.msg);
       if (json.code !== 200) break;
 
       const data = json.data;
@@ -642,6 +649,10 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
     }
   }
 
-  if (songs.length === 0) return null;
+  if (songs.length === 0) {
+    console.log('[kuwo] no songs fetched, returning null');
+    return null;
+  }
+  console.log('[kuwo] success,', songs.length, 'songs');
   return { name, creator, cover: cover.replace('/120/', '/800/'), songs };
 }

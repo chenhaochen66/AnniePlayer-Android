@@ -95,6 +95,7 @@ export const PlaylistDetailOverlay = React.memo(() => {
 
   useEffect(() => {
     if (!visible || !data) return;
+    console.log('[playlist] fetching:', data.platform, data.id);
     setLoading(true);
     setError('');
     setPlaylist(null);
@@ -102,11 +103,14 @@ export const PlaylistDetailOverlay = React.memo(() => {
     setSelectedIds(new Set());
     fetchPlaylist(data.platform, data.id).then((result) => {
       if (result) {
+        console.log('[playlist] success:', result.name, result.songs.length, 'songs');
         setPlaylist({ name: result.name, creator: result.creator, songs: result.songs });
       } else {
+        console.log('[playlist] failed - null result');
         setError('获取歌单失败，请检查链接是否正确');
       }
-    }).catch(() => {
+    }).catch((e: any) => {
+      console.log('[playlist] error:', e?.message);
       setError('网络请求失败');
     }).finally(() => setLoading(false));
   }, [visible, data]);
