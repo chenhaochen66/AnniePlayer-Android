@@ -99,11 +99,11 @@ export async function fetchQQLyric(songId: string): Promise<{ lrc: string; tlyri
 
     try {
       const lrcB64 = typeof d.lyric === 'string' ? d.lyric : '';
-      const lrc = atob(lrcB64);
+      const lrc = decodeURIComponent(escape(atob(lrcB64)));
       let tlyric: string | null = null;
       if (d.trans) {
         const transB64 = typeof d.trans === 'string' ? d.trans : '';
-        const trans = atob(transB64);
+        const trans = decodeURIComponent(escape(atob(transB64)));
         tlyric = trans;
       }
       return { lrc, tlyric };
