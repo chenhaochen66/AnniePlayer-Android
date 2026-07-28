@@ -2,7 +2,7 @@ import type { Quality, Song, Artist, Album, AlbumSong } from '../../types';
 import { cacheService } from '../cacheService';
 import { retryUntilSuccess } from '../../utils/retry';
 import { decodeHtmlEntities } from '../../utils/stringUtils';
-import CookieManager from '@react-native-cookies/cookies';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 
 const SEARCH_CACHE_TTL = 10 * 60 * 1000;
 const PLAY_URL_CACHE_TTL = 30 * 60 * 1000;
@@ -579,14 +579,6 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
   console.log('[kuwo] getKuwoPlaylist called, id:', playlistId);
 
   const cookieVal = KW_HARDCODED_COOKIE;
-  // Clear any stale cookies, then set the fresh one
-  CookieManager.clearAll().catch(() => {});
-  CookieManager.set('https://www.kuwo.cn', {
-    name: KW_COOKIE_NAME,
-    value: cookieVal,
-    domain: '.kuwo.cn',
-    path: '/',
-  }).catch(() => {});
 
   const songs: Song[] = [];
   let name = '', creator = '', cover = '';
@@ -598,32 +590,28 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
     const url = `${API_BASE}/playlist/playListInfo?pid=${playlistId}&pn=${pn}&rn=${PAGE_SIZE}&httpsStatus=1&reqId=${reqId}&plat=web_www&from=`;
 
     try {
-      let resp: Response | null = null;
       let json: any = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         // Generate fresh secret on each attempt (random d changes each time)
         const secret = generateKuwoSecret(cookieVal);
-        resp = await fetch(url, {
-          headers: {
+        try {
+          const blobResp = await ReactNativeBlobUtil.fetch('GET', url, {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
             'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
             'Secret': secret,
-          },
-        });
-        console.log('[kuwo] attempt', attempt, 'status:', resp.status);
-        if (!resp.ok && resp.status === 504) continue; // retry on 504
-        // Try to parse JSON
-        try {
-          const text = await resp.text();
+          });
+          const status = blobResp.respInfo?.status || 0;
+          console.log('[kuwo] attempt', attempt, 'status:', status);
+          if (status === 504) continue;
+          const text = await blobResp.text();
           json = JSON.parse(text);
-          if (json.code === 200) break; // success
+          if (json.code === 200) break;
           console.log('[kuwo] attempt', attempt, 'rejected:', json.message?.substring(0, 50));
-          // Retry on "illegal" response too
           if (json.message === 'The request is illegal!') continue;
         } catch {
-          console.log('[kuwo] attempt', attempt, 'not JSON');
+          console.log('[kuwo] attempt', attempt, 'exception');
         }
         break;
       }
