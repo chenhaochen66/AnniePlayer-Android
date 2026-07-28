@@ -81,7 +81,7 @@ export async function fetchQQLyric(songId: string): Promise<{ lrc: string; tlyri
       request: {
         module: 'music.musichallSong.PlayLyricInfo',
         method: 'GetPlayLyricInfo',
-        param: { songMID: songMid, crypt: 1, qrc: 1, trans: 1 },
+        param: { songMID: songMid, crypt: 0, qrc: 0, trans: 1 },
       },
     };
     const resp = await fetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
@@ -98,87 +98,21 @@ export async function fetchQQLyric(songId: string): Promise<{ lrc: string; tlyri
     if (!d?.lyric) return { lrc: '[00:00.00]暂无歌词', tlyric: null };
 
     try {
-      const { decryptQQLyric } = require('./qqLyricDecrypt');
-      const origXml = decryptQQLyric(d.lyric);
-      let transLrc = '';
+      const lrcB64 = typeof d.lyric === 'string' ? d.lyric : '';
+      const lrc = atob(lrcB64);
+      let tlyric: string | null = null;
       if (d.trans) {
-        try { transLrc = decryptQQLyric(d.trans); } catch { transLrc = ''; }
+        const transB64 = typeof d.trans === 'string' ? d.trans : '';
+        const trans = atob(transB64);
+        tlyric = trans;
       }
-      return separateQQLyrics(origXml, transLrc);
+      return { lrc, tlyric };
     } catch {
       return { lrc: '[00:00.00]暂无歌词', tlyric: null };
     }
   } catch {
     return { lrc: '[00:00.00]暂无歌词', tlyric: null };
   }
-}
-
-function parseQQOriginal(xml: string): { time: number; text: string }[] {
-  const lines: { time: number; text: string }[] = [];
-  const re = /\[(\d+),(\d+)\](.*?)(?=\[\d+,|\[ti:|\[ar:|\[al:|\[by:|\[offset:|\[total:|\Z)/g;
-  let m;
-  while ((m = re.exec(xml)) !== null) {
-    const text = m[3].replace(/\(\d+,\d+\)/g, '').trim();
-    if (text) lines.push({ time: parseInt(m[1]), text });
-  }
-  return lines;
-}
-
-function parseLrcTimed(lrc: string): { time: number; text: string }[] {
-  const lines: { time: number; text: string }[] = [];
-  const re = /\[(\d+):(\d+)\.(\d+)\](.*)/g;
-  let m;
-  while ((m = re.exec(lrc)) !== null) {
-    const text = m[4].trim();
-    if (text && text !== '//') {
-      lines.push({ time: (parseInt(m[1])*60 + parseInt(m[2]))*1000 + parseInt(m[3])*10, text });
-    }
-  }
-  return lines;
-}
-
-function separateQQLyrics(origXml: string, transLrc: string): { lrc: string; tlyric: string | null } {
-  const lrcLines = parseQQOriginal(origXml).map((l) => fmtTime(l.time / 1000) + l.text).join('\n');
-  if (!transLrc) return { lrc: lrcLines, tlyric: null };
-
-  const trans = parseLrcTimed(transLrc);
-  const used = new Set<number>();
-  const pairs: [typeof orig[0], string][] = [];
-  const soloOrig: typeof orig = [];
-  const soloTrans: typeof trans = [];
-
-  const orig = parseQQOriginal(origXml);
-  for (const t of trans) {
-    let bestIdx = -1, bestDist = Infinity;
-    for (let j = 0; j < orig.length; j++) {
-      if (used.has(j)) continue;
-      const d = Math.abs(orig[j].time - t.time);
-      if (d < bestDist) { bestDist = d; bestIdx = j; }
-    }
-    if (bestIdx >= 0 && bestDist <= 500) {
-      pairs.push([orig[bestIdx], t.text]);
-      used.add(bestIdx);
-    } else {
-      soloTrans.push(t);
-    }
-  }
-  for (let j = 0; j < orig.length; j++) { if (!used.has(j)) soloOrig.push(orig[j]); }
-
-  const all: { time: number; line: string }[] = [];
-  for (const [o, t] of pairs) {
-    const ts = fmtTime(o.time / 1000);
-    all.push({ time: o.time, line: ts + t });
-  }
-  for (const t of soloTrans) all.push({ time: t.time, line: fmtTime(t.time / 1000) + t.text });
-  all.sort((a, b) => a.time - b.time);
-
-  const tlyricStr = all.map((a) => a.line).join('\n');
-  return { lrc: lrcLines, tlyric: tlyricStr || null };
-}
-
-function fmtTime(sec: number): string {
-  const m = Math.floor(sec / 60), s = Math.floor(sec % 60), cs = Math.floor((sec % 1) * 100);
-  return `[${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}]`;
 }
 
 // ── 单曲详情（补音轨号/碟号/发行日期） ──
