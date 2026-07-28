@@ -582,42 +582,42 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
   const PAGE_SIZE = 100;
 
   while (true) {
-    const cookieVal = KW_HARDCODED_COOKIE;
-    const secret = generateKuwoSecret(cookieVal);
     const reqId = generateReqId();
     const url = `${API_BASE}/playlist/playListInfo?pid=${playlistId}&pn=${pn}&rn=${PAGE_SIZE}&httpsStatus=1&reqId=${reqId}&plat=web_www&from=`;
-    console.log('[kuwo] fetching page', pn, 'secret prefix:', secret.substring(0, 10));
 
     try {
       let resp: Response | null = null;
+      let json: any = null;
       for (let attempt = 0; attempt < 3; attempt++) {
+        // Generate fresh secret on each attempt (random d changes each time)
+        const freshSecret = generateKuwoSecret(KW_HARDCODED_COOKIE);
         resp = await fetch(url, {
           credentials: 'omit',
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
-            'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
-            'Secret': secret,
+            'Cookie': `${KW_COOKIE_NAME}=${KW_HARDCODED_COOKIE}`,
+            'Secret': freshSecret,
           },
         });
         console.log('[kuwo] attempt', attempt, 'status:', resp.status);
-        if (resp.ok || resp.status !== 504) break;
-      }
-      if (!resp || !resp.ok) {
-        console.log('[kuwo] all retries failed, resp:', resp?.status);
+        if (!resp.ok && resp.status === 504) continue; // retry on 504
+        // Try to parse JSON
+        try {
+          const text = await resp.text();
+          json = JSON.parse(text);
+          if (json.code === 200) break; // success
+          console.log('[kuwo] attempt', attempt, 'rejected:', json.message?.substring(0, 50));
+          // Retry on "illegal" response too
+          if (json.message === 'The request is illegal!') continue;
+        } catch {
+          console.log('[kuwo] attempt', attempt, 'not JSON');
+        }
         break;
       }
-      const respText = await resp.text();
-      console.log('[kuwo] raw response (first 200):', respText.substring(0, 200));
-      let json: any;
-      try { json = JSON.parse(respText); } catch {
-        console.log('[kuwo] response is not JSON');
-        break;
-      }
-      console.log('[kuwo] response keys:', Object.keys(json));
-      if (json.code !== 200 && json.success !== true) {
-        console.log('[kuwo] API rejected:', json.message || json.msg || 'unknown');
+      if (!json || json.code !== 200) {
+        console.log('[kuwo] all retries failed, last response:', json?.message || json?.code || 'no response');
         break;
       }
 
