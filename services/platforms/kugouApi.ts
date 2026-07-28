@@ -1,17 +1,7 @@
 import type { Quality, Song } from '../../types';
 import { decodeHtmlEntities } from '../../utils/stringUtils';
-
-function md5(s: string): string {
-  // Simple MD5 for signing - use a lightweight implementation
-  // In real app, use js-md5 or similar
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    const chr = s.charCodeAt(i);
-    hash = ((hash << 5) - hash) + chr;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(16);
-}
+import pako from 'pako';
+const md5 = require('js-md5') as (data: string) => string;
 
 function signParams(params: Record<string, string>, key: string, body = ''): string {
   const sorted = Object.keys(params).sort();
@@ -200,16 +190,11 @@ function decodeKrc(contentB64: string): string {
   for (let i = 0; i < raw.length; i++) {
     buf[i] = raw.charCodeAt(i) ^ KRC_XOR_KEY[i % 16];
   }
-  // Strip first 4 bytes
   const sliced = buf.slice(4);
-  // Inflate
-  let pako: any = null;
-  try { pako = require('pako'); } catch {}
-  if (pako) {
-    const decompressed = pako.inflate(sliced);
-    return String.fromCharCode.apply(null, decompressed);
-  }
-  throw new Error('pako required for krc decode');
+  const decompressed = pako.inflate(sliced);
+  let str = '';
+  for (let i = 0; i < decompressed.length; i++) str += String.fromCharCode(decompressed[i]);
+  return str;
 }
 
 function parseKrcLines(krcText: string): { time: number; text: string }[] {
