@@ -160,3 +160,64 @@ export async function getNeteaseAlbumDetail(albumId: string): Promise<{
     return null;
   }
 }
+
+// ── 歌单 ──
+
+export async function getNeteasePlaylist(playlistId: string): Promise<{
+  name: string; creator: string; cover: string; songs: Song[];
+} | null> {
+  try {
+    const resp = await fetch('https://music.163.com/api/v6/playlist/detail', {
+      method: 'POST',
+      headers: NETEASE_API_HEADERS,
+      body: new URLSearchParams({ id: playlistId, n: '100000' }).toString(),
+    });
+    const data = await resp.json();
+    if (data.code !== 200 || !data.playlist) return null;
+    const pl = data.playlist;
+    const trackIds = pl.trackIds || [];
+    const songs: Song[] = [];
+
+    for (let i = 0; i < trackIds.length; i += 200) {
+      const chunk = trackIds.slice(i, i + 200).map((t: any) => ({ id: t.id, v: t.v || 0 }));
+      const detailResp = await fetch('https://music.163.com/api/v3/song/detail', {
+        method: 'POST',
+        headers: NETEASE_API_HEADERS,
+        body: new URLSearchParams({ c: JSON.stringify(chunk) }).toString(),
+      });
+      const detailData = await detailResp.json();
+      const list = detailData.songs || [];
+      for (const s of list) {
+        const cover = (s.al?.picUrl || '') + '?param=800y800';
+        const qualities: Quality[] = [];
+        if (s.hr) qualities.push('hires');
+        if (s.sq) qualities.push('flac');
+        if (s.h) qualities.push('320k');
+        if (s.l || s.m) qualities.push('128k');
+        songs.push({
+          id: `netease:${s.id}`,
+          title: decodeHtmlEntities(s.name || ''),
+          artist: decodeHtmlEntities((s.ar || []).map((a: any) => a.name).join(' / ')),
+          cover,
+          album: decodeHtmlEntities(s.al?.name || ''),
+          albumId: s.al?.id ? String(s.al.id) : undefined,
+          duration: Math.floor((s.dt || 0) / 1000),
+          platform: 'netease',
+          playUrl: '',
+          lyric: undefined,
+          tlyric: undefined,
+          qualities: qualities.length > 0 ? qualities : ['128k'],
+        });
+      }
+    }
+
+    return {
+      name: pl.name || '',
+      creator: pl.creator?.nickname || '',
+      cover: (pl.coverImgUrl || '') + '?param=800y800',
+      songs,
+    };
+  } catch {
+    return null;
+  }
+}

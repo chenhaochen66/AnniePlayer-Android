@@ -13,6 +13,7 @@
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@tanstack/react-query": "^5.0.0",
+    "aes-js": "^3.1.2",
     "expo": "~54.0.0",
     "expo-constants": "~18.0.13",
     "expo-file-system": "~19.0.0",
@@ -25,6 +26,7 @@
     "kkbox-decoder": "file:./modules/kkbox-decoder",
     "media-scanner": "file:./modules/media-scanner",
     "nativewind": "^4.0.0",
+    "pako": "^3.0.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
@@ -41,6 +43,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
+    "@types/aes-js": "^3.1.4",
     "@types/react": "~19.1.10",
     "patch-package": "^8.0.1",
     "tailwindcss": "^3.4.0",

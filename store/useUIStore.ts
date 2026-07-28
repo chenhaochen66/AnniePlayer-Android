@@ -14,6 +14,13 @@ interface SingerDetailData {
   picture: string;
 }
 
+interface PlaylistDetailData {
+  id: string;
+  platform: string;
+  name?: string;
+  cover?: string;
+}
+
 interface UIState {
   playerOverlayVisible: boolean;
   queueVisible: boolean;
@@ -30,6 +37,8 @@ interface UIState {
   downloadQueueVisible: boolean;
   qobuzTokenVisible: boolean;
   kkboxAccountVisible: boolean;
+  playlistDetailVisible: boolean;
+  playlistDetailData: PlaylistDetailData | null;
   setPlayerOverlayVisible: (visible: boolean) => void;
   setQueueVisible: (visible: boolean) => void;
   setDrawerVisible: (visible: boolean) => void;
@@ -41,6 +50,7 @@ interface UIState {
   setDownloadQueueVisible: (visible: boolean) => void;
   setQobuzTokenVisible: (visible: boolean) => void;
   setKkboxAccountVisible: (visible: boolean) => void;
+  setPlaylistDetailVisible: (visible: boolean, data?: PlaylistDetailData | null) => void;
   showLyricsTranslation: boolean;
   setShowLyricsTranslation: (visible: boolean) => void;
   currentLineIndex: number;
@@ -63,6 +73,8 @@ export const useUIStore = create<UIState>()((set) => ({
   downloadQueueVisible: false,
   qobuzTokenVisible: false,
   kkboxAccountVisible: false,
+  playlistDetailVisible: false,
+  playlistDetailData: null,
   setPlayerOverlayVisible: (visible) => set({ playerOverlayVisible: visible }),
   setQueueVisible: (visible) => set({ queueVisible: visible }),
   setDrawerVisible: (visible) => set({ drawerVisible: visible }),
@@ -74,6 +86,7 @@ export const useUIStore = create<UIState>()((set) => ({
   setDownloadQueueVisible: (visible) => set({ downloadQueueVisible: visible }),
   setQobuzTokenVisible: (visible) => set({ qobuzTokenVisible: visible }),
   setKkboxAccountVisible: (visible) => set({ kkboxAccountVisible: visible }),
+  setPlaylistDetailVisible: (visible, data) => set({ playlistDetailVisible: visible, playlistDetailData: data ?? null }),
   showLyricsTranslation: true,
   setShowLyricsTranslation: (visible) => set({ showLyricsTranslation: visible }),
   currentLineIndex: -1,

@@ -1,4 +1,4 @@
-export type Platform = 'netease' | 'kuwo' | 'kkbox';
+export type Platform = 'netease' | 'kuwo' | 'kkbox' | 'qq' | 'kugou';
 
 export type Quality = '128k' | '320k' | 'flac' | 'hires';
 
@@ -33,6 +33,16 @@ export interface Song {
   trackNumber?: string;
   discNumber?: string;
   releaseDate?: string;
+}
+
+export interface Playlist {
+  id: string;
+  name: string;
+  creator?: string;
+  cover: string;
+  platform: Platform;
+  songs: Song[];
+  songCount: number;
 }
 
 export type LoopMode = 'sequential' | 'single' | 'shuffle';

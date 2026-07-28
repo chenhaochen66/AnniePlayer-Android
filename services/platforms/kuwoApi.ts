@@ -530,3 +530,122 @@ export async function fetchKuwoLyric(songId: string, title: string, artist: stri
     tlyric: tlyricLines.length > 0 ? tlyricLines.join('\n') : null,
   };
 }
+
+// ── Kuwo secret generation (ported from Python script) ──
+
+const KW_COOKIE_NAME = 'Hm_Iuvt_cdb524f42f23cer9b268564v7y735ewrq2324';
+const KW_HARDCODED_COOKIE = 'RiGQWD34iKkZrnSYQycpmdGKAkaawJEA';
+
+function charAt(s: string, i: number): string {
+  return i >= 0 && i < s.length ? s[i] : '';
+}
+
+function jsParseInt(s: string): number {
+  let i = 0;
+  while (i < s.length && s[i] >= '0' && s[i] <= '9') i++;
+  return i > 0 ? parseInt(s.substring(0, i), 10) : 0;
+}
+
+function jsNumToString(n: number): string {
+  if (Math.abs(n) >= 1e21 || (Math.abs(n) > 0 && Math.abs(n) < 1e-6)) {
+    return n.toExponential().replace(/e\+0+(\d+)/, 'e+\$1');
+  }
+  const s = n.toString();
+  return s.indexOf('.') >= 0 ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
+}
+
+function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NAME): string {
+  let n = '';
+  for (let i = 0; i < cookieName.length; i++) n += cookieName.charCodeAt(i).toString();
+  const o = Math.floor(n.length / 5);
+  const rStr = charAt(n, o) + charAt(n, 2 * o) + charAt(n, 3 * o) + charAt(n, 4 * o) + charAt(n, 5 * o);
+  const r = rStr ? parseInt(rStr, 10) : 0;
+  const c = Math.ceil(cookieName.length / 2);
+  const l = Math.pow(2, 31) - 1;
+  if (r < 2) return '';
+  const d = Math.floor(1e9 * Math.random()) % 100000000;
+  let nStr = n + d.toString();
+  while (nStr.length > 10) {
+    const s = jsParseInt(nStr.substring(0, 10)) + jsParseInt(nStr.substring(10));
+    nStr = jsNumToString(s);
+  }
+  let nVal = (r * parseInt(nStr, 10) + c) % l;
+  let h = '';
+  for (let i = 0; i < cookieVal.length; i++) {
+    const xorKey = Math.floor(nVal / l * 255);
+    const fVal = cookieVal.charCodeAt(i) ^ xorKey;
+    h += (fVal < 16 ? '0' : '') + fVal.toString(16);
+    nVal = (r * nVal + c) % l;
+  }
+  return h + d.toString(16).padStart(8, '0');
+}
+
+// ── 歌单 ──
+
+export async function getKuwoPlaylist(playlistId: string): Promise<{
+  name: string; creator: string; cover: string; songs: Song[];
+} | null> {
+  const songs: Song[] = [];
+  let name = '', creator = '', cover = '';
+  let pn = 1;
+  const PAGE_SIZE = 100;
+
+  while (true) {
+    const cookieVal = KW_HARDCODED_COOKIE;
+    const secret = generateKuwoSecret(cookieVal);
+    const reqId = generateReqId();
+    const url = `${API_BASE}/playlist/playListInfo?pid=${playlistId}&pn=${pn}&rn=${PAGE_SIZE}&httpsStatus=1&reqId=${reqId}&plat=web_www&from=`;
+
+    try {
+      const resp = await fetch(url, {
+        credentials: 'omit',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
+          'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
+          'Secret': secret,
+        },
+      });
+      if (!resp.ok) break;
+      const json = await resp.json();
+      if (json.code !== 200) break;
+
+      const data = json.data;
+      if (pn === 1) {
+        name = data.name || '';
+        creator = data.userName || data.uname || '';
+        cover = data.img || data.pic || '';
+      }
+
+      const list = data.musicList || [];
+      for (const item of list) {
+        const coverUrl = (item.pic || item.albumpic || '').replace('/120/', '/800/');
+        const qualities: Quality[] = ['320k', '128k'];
+        if (item.hasLossless) qualities.unshift('flac');
+        songs.push({
+          id: String(item.rid || ''),
+          title: item.name || '未知歌曲',
+          artist: item.artist || '未知歌手',
+          cover: coverUrl,
+          album: item.album || '',
+          albumId: item.albumid ? String(item.albumid) : undefined,
+          duration: item.duration || 0,
+          platform: 'kuwo',
+          playUrl: '',
+          lyric: undefined,
+          tlyric: undefined,
+          qualities,
+        });
+      }
+
+      if (songs.length >= (data.total || 0)) break;
+      pn++;
+    } catch {
+      break;
+    }
+  }
+
+  if (songs.length === 0) return null;
+  return { name, creator, cover: cover.replace('/120/', '/800/'), songs };
+}

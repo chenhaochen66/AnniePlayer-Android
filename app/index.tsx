@@ -12,11 +12,14 @@ import { useColorExtractor } from '../hooks/useColorExtractor';
 import { fetchDownloadUrlBySong, fetchLyric } from '../services/musicApi';
 import { searchNeteaseMusic } from '../services/platforms/neteaseApi';
 import { searchMusic, searchArtist, searchAlbum, buildAlbumCoverUrl, getAlbumSongs, enrichKuwoSong } from '../services/platforms/kuwoApi';
+import { enrichQQSong } from '../services/platforms/qqApi';
+import { enrichKuGouSong } from '../services/platforms/kugouApi';
 import { fetchAndCacheCover } from '../services/assetProxy';
 import { downloadSong } from '../services/downloadService';
 import { parseQobuzUrl } from '../services/platforms/qobuzApi';
 import { parseKkboxUrl } from '../services/platforms/kkboxApi';
 import { SearchBar } from '../components/SearchBar';
+import { PlaylistSearchView } from '../components/PlaylistSearchView';
 import { ModeDropdown } from '../components/ModeDropdown';
 import { DrawerController, MenuDrawer } from '../components/MenuDrawer';
 import { QobuzTokenOverlay } from '../components/QobuzTokenOverlay';
@@ -29,11 +32,12 @@ import { SongSearchResults } from '../components/SongSearchResults';
 import { AlbumSearchResults } from '../components/AlbumSearchResults';
 import { SingerSearchResults } from '../components/SingerSearchResults';
 import { ForeignSearchView } from '../components/ForeignSearchView';
+import { PlaylistDetailOverlay } from '../components/PlaylistDetailOverlay';
 import { Song, Quality, Album, Artist } from '../types';
 import { enqueueDownload } from '../utils/downloadQueue';
 import { useSearchSelectionStore } from '../store/useSearchSelectionStore';
 
-type SearchMode = 'song' | 'album' | 'singer' | 'qobuz';
+type SearchMode = 'song' | 'album' | 'singer' | 'qobuz' | 'playlist';
 
 export default function HomeScreen() {
   const [mode, setMode] = useState<SearchMode>('song');
@@ -167,7 +171,7 @@ export default function HomeScreen() {
         try {
           const url = await fetchDownloadUrlBySong(song, quality);
           const { lrc: lyric, tlyric } = await fetchLyric(song.id, song.title, song.artist);
-          const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : {};
+          const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : song.platform === 'kugou' ? await enrichKuGouSong(song.id) : song.platform === 'qq' ? await enrichQQSong(song.id) : {};
           const filePath = await downloadSong(
             song.id, song.title, song.artist,
             song.cover, song.album || '', url, quality,
@@ -209,7 +213,7 @@ export default function HomeScreen() {
           ? { lrc: song.lyric, tlyric: song.tlyric }
           : await fetchLyric(sId, song.title, song.artist);
         console.log('[dl] lyric length:', lyric?.length || 0);
-        const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : {};
+        const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : song.platform === 'kugou' ? await enrichKuGouSong(song.id) : song.platform === 'qq' ? await enrichQQSong(song.id) : {};
         const filePath = await downloadSong(
           sId, song.title, song.artist,
           song.cover, song.album, url, quality,
@@ -296,9 +300,11 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {mode !== 'qobuz' && <SearchBar query={query} onQueryChange={setQuery} onSubmit={handleSearch} />}
+      {mode !== 'qobuz' && mode !== 'playlist' && <SearchBar query={query} onQueryChange={setQuery} onSubmit={handleSearch} />}
 
-      {mode === 'qobuz' ? (
+      {mode === 'playlist' ? (
+        <PlaylistSearchView />
+      ) : mode === 'qobuz' ? (
         <ForeignSearchView onQobuzSubmit={handleQobuzSubmit} onKkboxSubmit={handleKkboxSubmit} />
       ) : mode === 'song' ? (
         <SongSearchResults
@@ -333,6 +339,7 @@ export default function HomeScreen() {
       <KkboxAccountOverlay />
       <SingerDetailOverlay />
       <AlbumDetailOverlay />
+      <PlaylistDetailOverlay />
       <DownloadsOverlay />
 
       <QualityPicker onSelect={handleDownloadWithQuality} />

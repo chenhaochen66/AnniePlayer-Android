@@ -2,16 +2,30 @@ import type { Quality, Song } from '../types';
 import { cacheService } from './cacheService';
 import { fetchPlayUrl as kuwoFetchPlayUrl, fetchDownloadUrl as kuwoFetchDownloadUrl, fetchKuwoLyric } from './platforms/kuwoApi';
 import { fetchNeteasePlayUrl, fetchNeteaseDownloadUrl, fetchNeteaseLyric } from './platforms/neteaseApi';
+import { fetchQQLyric } from './platforms/qqApi';
+import { fetchKugouLyric } from './platforms/kugouApi';
+import { fetchAnnieMusicUrl } from './annieSource';
 
 const LYRIC_CACHE_TTL = 60 * 60 * 1000;
 
 export async function fetchPlayUrlBySong(song: Song): Promise<string> {
   if (song.platform === 'netease') return fetchNeteasePlayUrl(song.id);
+  if (song.platform === 'qq' || song.platform === 'kugou') {
+    const source = song.platform === 'qq' ? 'tx' : 'kg';
+    const id = song.id.replace(/^(qq:|kugou:)/, '');
+    const quality: Quality = song.qualities.includes('320k') ? '320k' : '128k';
+    return fetchAnnieMusicUrl(source, id, quality);
+  }
   return kuwoFetchPlayUrl(song.id);
 }
 
 export async function fetchDownloadUrlBySong(song: Song, quality: Quality): Promise<string> {
   if (song.platform === 'netease') return fetchNeteaseDownloadUrl(song.id, quality);
+  if (song.platform === 'qq' || song.platform === 'kugou') {
+    const source = song.platform === 'qq' ? 'tx' : 'kg';
+    const id = song.id.replace(/^(qq:|kugou:)/, '');
+    return fetchAnnieMusicUrl(source, id, quality);
+  }
   return kuwoFetchDownloadUrl(song.id, quality);
 }
 
@@ -29,9 +43,16 @@ export async function fetchLyric(songId: string, title: string, artist: string):
   }
 
   try {
-    const result = songId.startsWith('netease:')
-      ? await fetchNeteaseLyric(songId)
-      : await fetchKuwoLyric(songId, title, artist);
+    let result: { lrc: string; tlyric: string | null };
+    if (songId.startsWith('netease:')) {
+      result = await fetchNeteaseLyric(songId);
+    } else if (songId.startsWith('qq:')) {
+      result = await fetchQQLyric(songId);
+    } else if (songId.startsWith('kugou:')) {
+      result = await fetchKugouLyric(songId);
+    } else {
+      result = await fetchKuwoLyric(songId, title, artist);
+    }
 
     await cacheService.set(cacheKey, JSON.stringify({ lrc: result.lrc, tlyric: result.tlyric }), LYRIC_CACHE_TTL);
     return result;

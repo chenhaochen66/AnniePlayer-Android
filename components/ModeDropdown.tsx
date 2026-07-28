@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-type SearchMode = 'song' | 'album' | 'singer' | 'qobuz';
+type SearchMode = 'song' | 'album' | 'singer' | 'qobuz' | 'playlist';
 
 interface ModeDropdownProps {
   mode: SearchMode;
@@ -15,6 +15,7 @@ const OPTIONS: { key: SearchMode; label: string }[] = [
   { key: 'song', label: '单曲搜索' },
   { key: 'album', label: '专辑搜索' },
   { key: 'singer', label: '歌手搜索' },
+  { key: 'playlist', label: '歌单解析' },
   { key: 'qobuz', label: '国外解析' },
 ];
 
@@ -29,7 +30,6 @@ export const ModeDropdown = React.memo(({ mode, open, onToggle, onSelect }: Mode
         borderRadius: 10, height: 36, paddingHorizontal: 12, gap: 6,
       }}
     >
-      <Ionicons name="grid-outline" size={15} color="rgba(255,255,255,0.8)" />
       <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
         {OPTIONS.find((o) => o.key === mode)?.label}
       </Text>
