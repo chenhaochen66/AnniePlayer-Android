@@ -550,16 +550,18 @@ function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NA
   const l = Math.pow(2, 31) - 1;
   if (r < 2) return '';
   const d = Math.floor(1e9 * Math.random()) % 100000000;
-  // Use BigInt for precision, but split the string the same way as Python
-  let nStr2 = n + d.toString();
-  while (nStr2.length > 10) {
-    const first = nStr2.substring(0, 10);
-    const rest = nStr2.substring(10);
-    const s = BigInt(first) + BigInt(rest);
-    nStr2 = s.toString();
-  }
+  let nStr = n + d.toString();
+
+  // Reduce digit string by splitting and adding (like Python's js_parse_int approach)
+  // Use BigInt for precision to match Python's arbitrary precision
   const rb = BigInt(r), cb = BigInt(c), lb = BigInt(l);
-  let nVal = (rb * BigInt(nStr2) + cb) % lb;
+  let nBig = BigInt(nStr);
+  while (nBig > 9999999999n) {
+    const first10 = nBig % 10000000000n;
+    const rest = (nBig - first10) / 10000000000n;
+    nBig = first10 + rest;
+  }
+  let nVal = (rb * nBig + cb) % lb;
   let h = '';
   for (let i = 0; i < cookieVal.length; i++) {
     const xorKey = Number((nVal * 255n) / lb);
@@ -587,17 +589,21 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
     const url = `${API_BASE}/playlist/playListInfo?pid=${playlistId}&pn=${pn}&rn=${PAGE_SIZE}&httpsStatus=1&reqId=${reqId}&plat=web_www&from=`;
 
     try {
-      const resp = await fetch(url, {
-        credentials: 'omit',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'application/json, text/plain, */*',
-          'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
-          'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
-          'Secret': secret,
-        },
-      });
-      if (!resp.ok) break;
+      let resp: Response | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        resp = await fetch(url, {
+          credentials: 'omit',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
+            'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
+            'Secret': secret,
+          },
+        });
+        if (resp.ok || resp.status !== 504) break;
+      }
+      if (!resp || !resp.ok) break;
       const json = await resp.json();
       if (json.code !== 200) break;
 

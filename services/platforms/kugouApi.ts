@@ -222,9 +222,13 @@ function decodeKrc(contentB64: string): string {
   const raw = atob(contentB64);
   const buf = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) {
-    buf[i] = raw.charCodeAt(i) ^ KRC_XOR_KEY[i % 16];
+    buf[i] = raw.charCodeAt(i);
   }
+  // Strip first 4 bytes, then XOR the rest (matching Python script order)
   const sliced = buf.slice(4);
+  for (let i = 0; i < sliced.length; i++) {
+    sliced[i] ^= KRC_XOR_KEY[i % 16];
+  }
   const decompressed = pako.inflate(sliced);
   let str = '';
   for (let i = 0; i < decompressed.length; i++) str += String.fromCharCode(decompressed[i]);
