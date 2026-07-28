@@ -2,7 +2,7 @@ import type { Quality, Song, Artist, Album, AlbumSong } from '../../types';
 import { cacheService } from '../cacheService';
 import { retryUntilSuccess } from '../../utils/retry';
 import { decodeHtmlEntities } from '../../utils/stringUtils';
-import ReactNativeBlobUtil from 'react-native-blob-util';
+
 
 const SEARCH_CACHE_TTL = 10 * 60 * 1000;
 const PLAY_URL_CACHE_TTL = 30 * 60 * 1000;
@@ -553,11 +553,10 @@ function generateKuwoSecret(cookieVal: string, cookieName: string = KW_COOKIE_NA
   const d = Math.floor(1e9 * Math.random()) % 100000000;
   let nStr = n + d.toString();
 
-  // Use Number-based approach that the server actually accepts
-  // (r * nVal stays within JS safe integer range: r <= 99999, nVal <= 2^31)
+  // Take first 10 digits + next 15 digits (avoids Infinity/exponential across all JS engines)
   while (nStr.length > 10) {
     const first = parseInt(nStr.substring(0, 10), 10);
-    const rest = parseInt(nStr.substring(10), 10);
+    const rest = parseInt(nStr.substring(10, 25), 10);
     nStr = (first + rest).toString();
   }
   let nVal = (r * parseInt(nStr, 10) + c) % l;
@@ -578,7 +577,9 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
 } | null> {
   console.log('[kuwo] getKuwoPlaylist called, id:', playlistId);
 
-  const cookieVal = KW_HARDCODED_COOKIE;
+  // Use hardcoded Cookie+Secret pair (same scheme as artist APIs, verified working)
+  const KW_COOKIE = `${KW_COOKIE_NAME}=cpJCjsAFxxPra6XYMwztCpNMfjC4k7wn`;
+  const KW_SECRET = '4020c1e17b54296da65df0e32a8ce97445b88ba3748ad24a6fea38adedb112e202abc8c8';
 
   const songs: Song[] = [];
   let name = '', creator = '', cover = '';
@@ -592,31 +593,27 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
     try {
       let json: any = null;
       for (let attempt = 0; attempt < 3; attempt++) {
-        // Generate fresh secret on each attempt (random d changes each time)
-        const secret = generateKuwoSecret(cookieVal);
         try {
-          const blobResp = await ReactNativeBlobUtil.fetch('GET', url, {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
-            'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
-            'Secret': secret,
+          const resp = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept': 'application/json, text/plain, */*',
+              'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
+              'Cookie': KW_COOKIE,
+              'Secret': KW_SECRET,
+            },
           });
-          const status = blobResp.respInfo?.status || 0;
-          console.log('[kuwo] attempt', attempt, 'status:', status);
-          if (status === 504) continue;
-          const text = await blobResp.text();
+          const text = await resp.text();
           json = JSON.parse(text);
           if (json.code === 200) break;
-          console.log('[kuwo] attempt', attempt, 'rejected:', json.message?.substring(0, 50));
-          if (json.message === 'The request is illegal!') continue;
+          if (resp.status === 504 || json.message === 'The request is illegal!') continue;
         } catch {
-          console.log('[kuwo] attempt', attempt, 'exception');
+          continue;
         }
         break;
       }
       if (!json || json.code !== 200) {
-        console.log('[kuwo] all retries failed, last response:', json?.message || json?.code || 'no response');
+        console.log('[kuwo] all retries failed');
         break;
       }
 
