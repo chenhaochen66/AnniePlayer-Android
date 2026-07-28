@@ -14,6 +14,8 @@ import { useColorStore } from '../store/useColorStore';
 import { useColorExtractor } from '../hooks/useColorExtractor';
 import { fetchDownloadUrlBySong, fetchLyric } from '../services/musicApi';
 import { getArtistSongs, getArtistAlbums, enrichKuwoSong, fetchPlayUrl, fetchDownloadUrl } from '../services/platforms/kuwoApi';
+import { enrichQQSong } from '../services/platforms/qqApi';
+import { enrichKuGouSong } from '../services/platforms/kugouApi';
 import { downloadSong } from '../services/downloadService';
 import { fetchAndCacheCover } from '../services/assetProxy';
 
@@ -329,7 +331,7 @@ export const SingerDetailOverlay = React.memo(() => {
         try {
           const url = await fetchDownloadUrlBySong(song, quality);
           const { lrc: lyric, tlyric } = await fetchLyric(song.id, song.title, song.artist);
-          const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : {};
+          const extra = song.platform === 'kuwo' ? await enrichKuwoSong(song.id, song.albumId || '') : song.platform === 'kugou' ? await enrichKuGouSong(song.id) : song.platform === 'qq' ? await enrichQQSong(song.id) : {};
           const filePath = await downloadSong(
             song.id, song.title, song.artist,
             song.cover, song.album || '', url, quality,
