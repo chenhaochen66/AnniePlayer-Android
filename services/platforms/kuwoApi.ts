@@ -578,20 +578,15 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
 } | null> {
   console.log('[kuwo] getKuwoPlaylist called, id:', playlistId);
 
-  // Get fresh cookie from homepage and store in jar to avoid conflicts
-  let cookieVal = KW_HARDCODED_COOKIE;
-  try {
-    const homeResp = await fetch('https://www.kuwo.cn/', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-    });
-    const setCookie = homeResp.headers.get('set-cookie') || '';
-    const match = setCookie.match(new RegExp(KW_COOKIE_NAME + '=([^;]+)'));
-    if (match) {
-      cookieVal = match[1];
-      // Store in cookie jar so OkHttp sends it automatically
-      CookieManager.setFromResponse('https://www.kuwo.cn', setCookie).catch(() => {});
-    }
-  } catch {}
+  const cookieVal = KW_HARDCODED_COOKIE;
+  // Clear any stale cookies, then set the fresh one
+  CookieManager.clearAll().catch(() => {});
+  CookieManager.set('https://www.kuwo.cn', {
+    name: KW_COOKIE_NAME,
+    value: cookieVal,
+    domain: '.kuwo.cn',
+    path: '/',
+  }).catch(() => {});
 
   const songs: Song[] = [];
   let name = '', creator = '', cover = '';
@@ -613,6 +608,7 @@ export async function getKuwoPlaylist(playlistId: string): Promise<{
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Referer': `https://www.kuwo.cn/playlist_detail/${playlistId}`,
+            'Cookie': `${KW_COOKIE_NAME}=${cookieVal}`,
             'Secret': secret,
           },
         });
