@@ -68,7 +68,34 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   }, []);
   useTrackPlayerEvents(remoteNextPrevEvents, onRemoteNextPrev);
 
-  const syncFromNative = useCallback(async () => {
+  const onActiveTrackChanged = useCallback(async (event: any) => {
+    const trackIndex = event.index;
+    if (trackIndex == null || trackIndex < 0) return;
+    const { queue, currentIndex } = usePlayerStore.getState();
+    if (trackIndex < queue.length && trackIndex !== currentIndex) {
+      if (Date.now() - lastLocalSkipRef.current > 3000) {
+        usePlayerStore.setState({
+          currentIndex: trackIndex,
+          currentSong: queue[trackIndex],
+          playbackId: usePlayerStore.getState().playbackId + 1,
+        });
+      }
+    }
+    try {
+      const ps = await NativeModules.TrackPlayerModule.getPlaybackState();
+      if (ps?.state) {
+        const s = ps.state;
+        usePlayerStore.getState().setIsPlaying(
+          s === 'playing' || s === 'ready' || s === 'buffering' || s === 'loading'
+        );
+      }
+    } catch {}
+  }, []);
+
+  const trackChangeEvents = useMemo(() => [Event.PlaybackActiveTrackChanged], []);
+  useTrackPlayerEvents(trackChangeEvents, onActiveTrackChanged);
+
+  const pollSyncFromNative = useCallback(async () => {
     if (Date.now() - lastSyncRef.current < 2000) return;
     try {
       const [idx, playbackState] = await Promise.all([
@@ -95,22 +122,19 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   }, []);
 
-  const trackChangeEvents = useMemo(() => [Event.PlaybackActiveTrackChanged], []);
-  useTrackPlayerEvents(trackChangeEvents, syncFromNative);
-
   useEffect(() => {
-    const interval = setInterval(syncFromNative, 5000);
+    const interval = setInterval(pollSyncFromNative, 5000);
     return () => clearInterval(interval);
-  }, [syncFromNative]);
+  }, [pollSyncFromNative]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', async (state) => {
       if (state !== 'active') return;
       foregroundRef.current = true;
-      await syncFromNative();
+      await pollSyncFromNative();
     });
     return () => sub.remove();
-  }, [syncFromNative]);
+  }, [pollSyncFromNative]);
 
   useEffect(() => {
     if (!currentSong?.id || currentSong.lyric !== undefined) return;
