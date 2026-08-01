@@ -35,8 +35,9 @@ call :sync_version
 echo === Build Release APK ===
 cd android
 call gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+set BUILD_RESULT=%errorlevel%
 cd ..
-if %errorlevel% neq 0 ( echo Build FAILED & pause & exit /b %errorlevel% )
+if %BUILD_RESULT% neq 0 ( echo Build FAILED & pause & exit /b %BUILD_RESULT% )
 
 echo.
 echo APK: android\app\build\outputs\apk\release\app-release.apk
@@ -81,8 +82,9 @@ call :sync_version
 echo === Build Debug APK ===
 cd android
 call gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a
+set BUILD_RESULT=%errorlevel%
 cd ..
-if %errorlevel% neq 0 ( echo Build FAILED & pause & exit /b %errorlevel% )
+if %BUILD_RESULT% neq 0 ( echo Build FAILED & pause & exit /b %BUILD_RESULT% )
 
 echo.
 echo APK: android\app\build\outputs\apk\debug\app-debug.apk
