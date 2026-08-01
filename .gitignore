@@ -18,3 +18,8 @@ android/.gradle/
 android/app/build/
 android/build/
 modules/*/android/build/
+
+# build artifacts
+release/
+.agents/out*.json
+.omo/
