@@ -1,11 +1,11 @@
 import type { Quality } from '../types';
-import aesjs from 'aes-js';
 
-const ENCRYPT_URL = 'https://yy.mxpy.cn/api/encrypt';
 const MUSIC_URL = 'http://8.148.232.102/music/';
-const AES_KEY = 'xtmpi6jzGrzQ1E0w';
-const SALT = '2e39f9eedb53e1f1ed83161e6e48716c';
-const FIXED_TIMESTAMP = '1784744546107';
+const KEY = '8d3b41fe49279d1d41648f01fdc588ff';
+const INDEX = [7, 15, 3, 21, 45, 36, 18, 27, 55, 14, 26, 39, 40, 8, 19, 48];
+
+const md5 = require('js-md5') as (data: string) => string;
+const CryptoJS = require('crypto-js');
 
 const SERVER_MAP: Record<string, string> = { kg: 'kg', tx: 'qq', wy: 'wy', kw: 'kw' };
 const QUALITY_MAP: Record<string, Record<string, string>> = {
@@ -18,51 +18,51 @@ function getLevel(server: string, quality: string): string {
   return QUALITY_MAP.common[quality] || 'standard';
 }
 
-function aesEncrypt(plaintext: string): string {
-  const key = Array.from(AES_KEY).map((c) => c.charCodeAt(0));
-  const textBytes = Array.from(plaintext).map((c) => c.charCodeAt(0));
+// 从 SHA256 hex (64字符) 提取 sign (16字符)
+function extractSign(aHex: string): string {
+  return INDEX.map((i) => aHex[i]).join('');
+}
 
-  // PKCS7 padding
-  const padding = 16 - (textBytes.length % 16);
-  const padded = new Uint8Array(textBytes.length + padding);
-  padded.set(textBytes);
-  for (let i = textBytes.length; i < padded.length; i++) padded[i] = padding;
-
-  // AES-128-ECB
-  const ecb = new aesjs.ModeOfOperation.ecb(key);
-  const encrypted = ecb.encrypt(padded);
-
-  // Base64
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let b64 = '';
-  for (let i = 0; i < encrypted.length; i += 3) {
-    const n = (encrypted[i] << 16) | ((i + 1 < encrypted.length ? encrypted[i + 1] : 0) << 8) | (i + 2 < encrypted.length ? encrypted[i + 2] : 0);
-    b64 += chars[(n >> 18) & 63] + chars[(n >> 12) & 63];
-    b64 += i + 1 < encrypted.length ? chars[(n >> 6) & 63] : '=';
-    b64 += i + 2 < encrypted.length ? chars[n & 63] : '=';
+// C[0] = 0x67; C[i+1] = data[i] ^ (ord(sign[i % 16]) ^ 0x67); 返回小写 hex
+function xorEncrypt(data: string, sign: string): string {
+  const bytes: number[] = [0x67];
+  for (let i = 0; i < data.length; i++) {
+    bytes.push(data.charCodeAt(i) ^ (sign.charCodeAt(i % 16) ^ 0x67));
   }
-  return b64;
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// 苏澜加密: Ro = 'v2' + G + E + sign + F
+function encryptRo(query: string): string {
+  const mid = query.match(/id=([^&]+)/)?.[1] ?? '';
+  const mtime = query.match(/time=([^&]+)/)?.[1] ?? '';
+
+  // A = SHA256(id + time + key) -> sign
+  const A = CryptoJS.SHA256(mid + mtime + KEY).toString();
+  const sign = extractSign(A);
+
+  // E = xorEncrypt(query + '&sign=' + sign)
+  const E = xorEncrypt(query + '&sign=' + sign, sign);
+
+  // G = '0' + 毫秒时间戳 (14 字符)
+  const G = ('0' + String(Date.now())).slice(0, 14);
+
+  // F = MD5(E + sign + KEY)
+  const F = md5(E + sign + KEY);
+
+  return 'v2' + G + E + sign + F;
 }
 
 export async function fetchAnnieMusicUrl(source: string, id: string, quality: Quality): Promise<string> {
   const server = SERVER_MAP[source] || source;
   const level = getLevel(server, quality);
-  const plaintext = `time=${FIXED_TIMESTAMP}&server=${server}&id=${id}&level=${level}`;
-  const inputData = aesEncrypt(plaintext);
+  const query = `time=${Date.now()}&server=${server}&id=${id}&level=${level}`;
+  const ro = encryptRo(query);
 
-  const resp1 = await fetch(ENCRYPT_URL, {
-    method: 'POST',
-    headers: { 'User-Agent': 'okhttp/4.12.0', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input: inputData, salt: SALT }),
+  const resp = await fetch(`${MUSIC_URL}?Ro=${encodeURIComponent(ro)}`, {
+    headers: { 'User-Agent': 'Sulune/10.99-release' },
   });
-  const body1 = await resp1.json();
-  const sign = body1.sign;
-  if (!sign) throw new Error(`获取sign失败: ${JSON.stringify(body1)}`);
-
-  const resp2 = await fetch(`${MUSIC_URL}?Ro=${sign}`, {
-    headers: { 'User-Agent': 'Roche/6.9-release' },
-  });
-  const body2 = await resp2.json();
-  if (body2.code === 200 && body2.data?.url) return body2.data.url;
-  throw new Error(body2.msg || body2.tip || '安妮音源获取失败');
+  const body = await resp.json();
+  if (body.code === 200 && body.data?.url) return body.data.url;
+  throw new Error(body.msg || body.tip || '苏澜音源获取失败');
 }
