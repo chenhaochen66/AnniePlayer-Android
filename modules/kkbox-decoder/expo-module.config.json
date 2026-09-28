@@ -1,9 +1,0 @@
-{
-  "platforms": ["android", "ios"],
-  "android": {
-    "modules": ["expo.modules.kkboxdecoder.KkboxDecoderModule"]
-  },
-  "ios": {
-    "modules": ["KkboxDecoderModule"]
-  }
-}

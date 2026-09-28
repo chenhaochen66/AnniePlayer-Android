@@ -1,6 +1,0 @@
-{
-  "name": "kkbox-decoder",
-  "version": "1.0.0",
-  "main": "src/KkboxDecoder.ts",
-  "keywords": ["expo-module"]
-}

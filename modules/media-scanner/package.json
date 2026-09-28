@@ -1,6 +1,0 @@
-{
-  "name": "media-scanner",
-  "version": "1.0.0",
-  "main": "src/MediaScanner.ts",
-  "keywords": ["expo-module"]
-}
