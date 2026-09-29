@@ -1,161 +1,126 @@
-package com.annieplayer.annie_music.kt.features.search
+package com.annieplayer.annie_music.kt.features.shell
 
-import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import android.widget.Toast
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
-import com.annieplayer.annie_music.kt.R
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.ViewModelStoreOwner
 import com.annieplayer.annie_music.kt.core.audio.MediaPlayerBackend
 import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
 import com.annieplayer.annie_music.kt.core.platform.isManageStorageGranted
 import com.annieplayer.annie_music.kt.core.platform.requestManageStorage
-import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
+import com.annieplayer.annie_music.kt.core.state.AppShellViewModel
+import com.annieplayer.annie_music.kt.core.state.AppTab
+import com.annieplayer.annie_music.kt.features.library.LocalLibraryScreen
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.QobuzViewModel
-import com.annieplayer.annie_music.kt.core.state.PlaylistDetailData
 import com.annieplayer.annie_music.kt.core.state.SearchSelectionViewModel
-import com.annieplayer.annie_music.kt.core.state.SingerDetailData
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
-import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.core.util.cancelPending
 import com.annieplayer.annie_music.kt.core.util.extractPaletteFromCover
 import com.annieplayer.annie_music.kt.data.AssetCache
+import com.annieplayer.annie_music.kt.data.CacheCategory
+import com.annieplayer.annie_music.kt.data.CacheItem
 import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.DownloadService
-import com.annieplayer.annie_music.kt.data.LyricResult
-import com.annieplayer.annie_music.kt.data.enrichSong
-import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
-import com.annieplayer.annie_music.kt.data.fetchLyric
-import com.annieplayer.annie_music.kt.data.model.Album
-import com.annieplayer.annie_music.kt.widgets.SingerSearchResults
-import com.annieplayer.annie_music.kt.widgets.AlbumSearchResults
-import com.annieplayer.annie_music.kt.data.model.Artist
 import com.annieplayer.annie_music.kt.data.model.LoopMode
-import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
-import com.annieplayer.annie_music.kt.data.model.Song
-import com.annieplayer.annie_music.kt.data.PlaylistService
-import com.annieplayer.annie_music.kt.data.resolveArtist
-import com.annieplayer.annie_music.kt.data.searchAlbumByPlatform
-import com.annieplayer.annie_music.kt.data.searchArtistByPlatform
-import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
-import com.annieplayer.annie_music.kt.data.sources.parseKkboxUrl
-import com.annieplayer.annie_music.kt.data.sources.parseQobuzUrl
-import com.annieplayer.annie_music.kt.data.sources.searchKugouMusic
-import com.annieplayer.annie_music.kt.data.sources.searchMusic
-import com.annieplayer.annie_music.kt.data.sources.searchNeteaseMusic
-import com.annieplayer.annie_music.kt.data.sources.searchQQMusic
+import com.annieplayer.annie_music.kt.features.kkbox.KkboxDetailScreen
+import com.annieplayer.annie_music.kt.features.library.LocalLibraryScreen
+import com.annieplayer.annie_music.kt.features.player.PlayerScreen
+import com.annieplayer.annie_music.kt.features.qobuz.QobuzDetailScreen
+import com.annieplayer.annie_music.kt.features.search.HomeDownloadingToast
+import com.annieplayer.annie_music.kt.features.search.SearchScreen
+import com.annieplayer.annie_music.kt.features.search.SearchScreenState
 import com.annieplayer.annie_music.kt.ui.theme.Annie
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
-import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
-import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
-import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
-import com.annieplayer.annie_music.kt.ui.theme.AppLetterSpacing
-import com.annieplayer.annie_music.kt.ui.theme.AppRadius
-import com.annieplayer.annie_music.kt.ui.theme.AppSize
-import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.AlbumDetailSheet
+import com.annieplayer.annie_music.kt.widgets.CacheClearModal
+import com.annieplayer.annie_music.kt.widgets.ContactModal
 import com.annieplayer.annie_music.kt.widgets.DownloadQueueSheet
 import com.annieplayer.annie_music.kt.widgets.GlobalOverlays
-import com.annieplayer.annie_music.kt.widgets.MenuDrawer
-import com.annieplayer.annie_music.kt.widgets.MenuDrawerButton
-import com.annieplayer.annie_music.kt.widgets.MenuDrawerCacheSize
-import com.annieplayer.annie_music.kt.widgets.MiniPlayerBar
-import com.annieplayer.annie_music.kt.widgets.ModeDropdown
-import com.annieplayer.annie_music.kt.widgets.ModeDropdownMode
-import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
-import com.annieplayer.annie_music.kt.widgets.PlayerOverlay
-import com.annieplayer.annie_music.kt.widgets.ContactModal
 import com.annieplayer.annie_music.kt.widgets.KkboxAccountSheet
-import com.annieplayer.annie_music.kt.widgets.QobuzTokenSheet
+import com.annieplayer.annie_music.kt.widgets.MenuDrawer
+import com.annieplayer.annie_music.kt.widgets.MenuDrawerCacheSize
+import com.annieplayer.annie_music.kt.widgets.PlayerOverlay
 import com.annieplayer.annie_music.kt.widgets.PlaylistDetailSheet
+import com.annieplayer.annie_music.kt.widgets.QobuzTokenSheet
 import com.annieplayer.annie_music.kt.widgets.QualityPickerSheet
 import com.annieplayer.annie_music.kt.widgets.QueueSheet
-import com.annieplayer.annie_music.kt.widgets.SearchBarField
 import com.annieplayer.annie_music.kt.widgets.SearchSelectionOverlay
 import com.annieplayer.annie_music.kt.widgets.SingerDetailSheet
 import com.annieplayer.annie_music.kt.widgets.SongActionsSheet
-import com.annieplayer.annie_music.kt.widgets.SongArtistRef
-import com.annieplayer.annie_music.kt.widgets.SongSearchColumn
-import com.annieplayer.annie_music.kt.widgets.SongSearchResults
 import com.annieplayer.annie_music.kt.widgets.SourcePickerSheet
-import com.annieplayer.annie_music.kt.widgets.closeOtherDetailOverlays
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
-import com.annieplayer.annie_music.kt.features.player.PlayerScreen
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
-import com.annieplayer.annie_music.kt.features.kkbox.KkboxDetailScreen
-import com.annieplayer.annie_music.kt.features.qobuz.QobuzDetailScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/** 顶栏头像占位尺寸（对齐 Dart `Image.asset(width: 40, height: 40)`） */
-private val HomeHeaderAvatarSize = 40.dp
-
 /**
- * 首页（1:1 移植 Flutter `lib/features/search/home_screen.dart`）。
+ * 应用外壳（首页宿主屏 + 覆盖层栈，1:1 移植 Flutter `lib/features/search/home_screen.dart`
+ * 的接线部分）。
  *
  * 本 App 不是常规导航栈，而是「单屏 + 覆盖层栈」：本文件就是那个**宿主屏**，负责
- * 1) 搜索状态机（单曲双列 / 专辑 / 歌手 / 歌单解析 / 国外解析）；
- * 2) 把 `ui/theme` token、状态容器（`core/state`）与既有的自驱动浮层组件接线起来。
+ * 1) App 级接线（状态收集、搜索状态容器 `SearchScreenState`、音频引擎接线、存储权限 /
+ *    缓存清理 / SAF 目录流程）；
+ * 2) 把 `ui/theme` token、状态容器（`core/state`）与既有的自驱动浮层组件接线起来；
+ * 3) 在内容列的位置渲染 `features/search/SearchScreen.kt`（搜索内容与 ⇄ 按钮；
+ *    搜索状态机见 `SearchScreenState`）。
  *
  * 覆盖层渲染顺序严格对齐 `core/routing/OverlayStack.kt` 的 `Overlay.RENDER_ORDER`
  * （同层靠后者后绘制 → 在上层）：
- * Column → GlobalOverlays → MenuDrawer → MiniPlayer → PlayerOverlay →
+ * Column → GlobalOverlays → MenuDrawer → **底栏槽位** → PlayerOverlay →
  * SongActionsSheet（内部含 ArtistPickerSheet）→ QualityPicker(下载) →
  * QualityPicker(批量) → QueueSheet → SourcePickerSheet → 下载中 toast。
+ * 「底栏槽位」即旧 MiniPlayerBar 的原位，常驻**同一颗胶囊** `AppBottomBar`，只切换内容：
+ * - 主页面（无任何浮层 / 详情路由）→ **底栏态**：左「搜索」、中封面盒、右「本地曲库」；
+ * - 其它二级页面 → **迷你播放器态**：封面左滑到左侧、左右 tab 淡出、标题/歌手/播放/进度淡入
+ *   （反向即原路恢复；由 `isMiniPlayer = !isPrimaryPage` 驱动）。
+ * 槽位声明在 MenuDrawer 之后、PlayerOverlay 之前，因此后声明的浮层天然盖住它；
+ * （此前挂在 `Scaffold.bottomBar` 槽位会被 Material3 Scaffold 画在内容之上，导致
+ * 打开全屏播放页时底栏仍然可见，已修正）。
  * 返回手势优先级因此天然成立（后声明的 BackHandler 先收到返回事件）。
  *
  * 浮层可见性变化（抽屉 / 任意面板 / 任意 sheet）会收起搜索框焦点，避免文本选择
  * 工具条浮在浮层之上（对齐 Dart 的 `FocusManager.instance.primaryFocus?.unfocus()`）。
  *
- * 与 Dart 的已知差异（未移植模块，均为结构性缺位而非行为改写）：
- * - 「联系我们」弹窗（ContactModal）与 Qobuz Token / KKBOX 账号浮层尚未移植；
- *   抽屉对应入口仍会置位 `UiState` 的两个可见性布尔，等对应浮层落地后即可挂载。
- * - Qobuz / KKBOX / 歌单链接解析：Dart 成功后 `context.push` 详情路由；Kotlin 侧
- *   详情页正在并行移植，当前仅完成「解析 + 非法链接 SnackBar」。
- * - 顶栏右侧的 `assets/annie.jpg` 资源尚未进入 Android 工程，暂以音符占位块渲染。
+ * 与 Dart 的对应关系（原 KDoc 中「尚未移植」的模块现均已是已实现状态）：
+ * - 「联系我们」弹窗（ContactModal）、Qobuz Token 浮层（QobuzTokenSheet）与 KKBOX
+ *   账号浮层（KkboxAccountSheet）均已挂载：抽屉入口置位 `UiState` 可见性布尔，本文件
+ *   按布尔渲染对应浮层。
+ * - Qobuz / KKBOX 链接解析成功后进入全屏详情页（`QobuzDetailScreen` / `KkboxDetailScreen`，
+ *   分别由 `qobuzDetailRoute` / `kkboxDetailRoute` 驱动）；歌单链接解析进入
+ *   `PlaylistDetailSheet`；非法链接弹 SnackBar。
+ * - 顶栏右侧头像已使用工程内资源 `res/drawable-nodpi/annie.jpg`（`R.drawable.annie`），
+ *   不再是音符占位块。
  */
 @Composable
-fun HomeScreen(
+fun AppShell(
     modifier: Modifier = Modifier,
     uiViewModel: UiViewModel = activityViewModel(),
     playerViewModel: PlayerViewModel = activityViewModel(),
@@ -164,6 +129,7 @@ fun HomeScreen(
     colorViewModel: ColorViewModel = activityViewModel(),
     kkboxViewModel: KkboxViewModel = activityViewModel(),
     qobuzViewModel: QobuzViewModel = activityViewModel(),
+    appShellViewModel: AppShellViewModel = activityViewModel(),
 ) {
     // ── 状态（对齐 Dart Riverpod providers + `_HomeScreenState` 字段） ──
     val uiState by uiViewModel.state.collectAsState()
@@ -172,15 +138,17 @@ fun HomeScreen(
     val selection by selectionViewModel.state.collectAsState()
     val colorState by colorViewModel.state.collectAsState()
     val palette = Annie.palette
+    // 当前 tab（搜索 / 本地曲库）：Activity 作用域 VM，切 tab 不重建任何 ViewModel
+    val selectedTab by appShellViewModel.selectedTab.collectAsState()
 
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
 
-    // 首页状态与业务逻辑（搜索 / 播放 / 下载 / 链接解析 / 详情入口）已抽到 HomeScreenState；
+    // 首页状态与业务逻辑（搜索 / 播放 / 下载 / 链接解析 / 详情入口）已抽到 SearchScreenState；
     // 下面用 `with(st) { ... }` 渲染，字段与 handler 的引用写法保持不变。
     val st = remember(scope) {
-        HomeScreenState(
+        SearchScreenState(
             scope = scope,
             uiViewModel = uiViewModel,
             playerViewModel = playerViewModel,
@@ -219,6 +187,12 @@ fun HomeScreen(
         }
     }
     var cacheSize by remember { mutableStateOf<MenuDrawerCacheSize>(MenuDrawerCacheSize.Loading) }
+
+    // 「清除缓存」弹窗状态（体积数据异步加载，勾选项由本地维护）
+    var cacheItemsLoading by remember { mutableStateOf(false) }
+    var cacheClearing by remember { mutableStateOf(false) }
+    var cacheItems by remember { mutableStateOf<List<CacheItem>>(emptyList()) }
+    var cacheSelected by remember { mutableStateOf<Set<CacheCategory>>(emptySet()) }
 
     // 抽屉里的缓存大小（对齐 Dart `cacheSizeProvider` 首次计算）
     LaunchedEffect(Unit) {
@@ -274,6 +248,7 @@ fun HomeScreen(
         uiState.qobuzTokenVisible ||
         uiState.kkboxAccountVisible ||
         uiState.contactVisible ||
+        uiState.cacheClearVisible ||
         st.sourcePickerVisible ||
         st.batchPickerVisible
     LaunchedEffect(anyOverlayVisible) {
@@ -283,158 +258,57 @@ fun HomeScreen(
     val currentSong = playerState.currentSong
     val toastId = st.downloadingId
 
+    // 系统导航 / 手势条底部 inset。注意：直接读取的 WindowInsets 不会被父级 padding
+    // 「消费」清零（`asPaddingValues()` 不感知 ModifierLocalConsumedWindowInsets，已对
+    // 依赖字节码核实），所以这里是完整值；底栏槽位用它抵消外层 `systemBarsPadding()`
+    // 的底部内缩（详见槽位处注释），使玻璃面板仍能贴到屏幕底边。
+    // 底栏底部内缩：**必须与父层 Box 的 `systemBarsPadding()` 同源**（用 systemBars，
+    // 而不是 navigationBars）——底栏靠这个值把玻璃向下补偿到屏幕底边；若两者不一致，
+    // 胶囊下缘会留下一条没被玻璃盖住的缝，下层列表透色。
+    val bottomInset = WindowInsets.systemBars.asPaddingValues().calculateBottomPadding()
+
     with(st) {
+    // 主页面判定：没有任何浮层 / 抽屉 / sheet（`anyOverlayVisible` 已含 ⇄ 源选择与批量音质
+    // 面板），且没有打开 Qobuz / KKBOX 全屏详情页。主页面显示常驻毛玻璃底栏；
+    // 其余二级页面一律换成旧迷你播放条（两者互斥、画在同一槽位，不会同时出现）。
+    val isPrimaryPage = !anyOverlayVisible && qobuzDetailRoute == null && kkboxDetailRoute == null
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = AppColors.background,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) {
-        // 键盘弹出时不压缩 body（Scaffold/Compose 默认不消费 IME inset），
-        // 与 Dart `resizeToAvoidBottomInset: false` 一致：迷你条固定屏幕底部。
-        Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-            // ── 基础内容列（Overlay.COLUMN） ──
-            Column(modifier = Modifier.fillMaxSize()) {
-                // 顶栏
-                Row(
-                    modifier = Modifier.padding(
-                        start = AppSpacing.sp16,
-                        top = AppSpacing.sp40,
-                        end = AppSpacing.sp16,
-                        bottom = AppSpacing.sp20,
-                    ),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    MenuDrawerButton(
-                        onOpen = { uiViewModel.setDrawerVisible(true) },
-                        modifier = Modifier.size(AppSize.headerActionHeight),
-                    )
-                    Text(
-                        text = "安妮音乐盒",
-                        modifier = Modifier.weight(1f),
-                        color = AppColors.white,
-                        fontSize = AppFontSize.size26,
-                        fontWeight = AppFontWeight.bold,
-                        letterSpacing = AppLetterSpacing.tight,
-                    )
-                    // Dart: Image.asset('assets/annie.jpg')（资源已在 res/drawable-nodpi/annie.jpg）
-                    Image(
-                        painter = painterResource(R.drawable.annie),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(HomeHeaderAvatarSize)
-                            .clip(RoundedCornerShape(AppRadius.r10)),
-                        contentScale = ContentScale.Crop,
-                    )
-                }
-                // 模式切换
-                Box(
-                    modifier = Modifier.padding(
-                        start = AppSpacing.sp16,
-                        end = AppSpacing.sp16,
-                        bottom = AppSpacing.sp8,
-                    ),
-                ) {
-                    ModeDropdown(
-                        mode = mode,
-                        open = modePickerVisible,
-                        onToggle = { modePickerVisible = !modePickerVisible },
-                        onSelect = { handleModeSelect(it) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                // 待下载条
-                if (mode == ModeDropdownMode.song && selection.selectedSongs.isNotEmpty()) {
-                    HomePendingDownloadBar(
-                        count = selection.selectedSongs.size,
-                        batchDownloading = batchDownloading,
-                        onView = { selectionViewModel.setOverlayVisible(true) },
-                        onClear = { selectionViewModel.clearAll() },
-                        onBatch = { batchPickerVisible = true },
-                    )
-                }
-                // 搜索栏（歌单解析 / 国外解析模式隐藏）
-                if (mode != ModeDropdownMode.qobuz && mode != ModeDropdownMode.playlist) {
-                    SearchBarField(
-                        value = queryText,
-                        onValueChange = { queryText = it },
-                        onSubmit = { handleSearch() },
-                    )
-                }
-                // 内容区
-                Box(modifier = Modifier.weight(1f)) {
-                    when (mode) {
-                        ModeDropdownMode.song -> SongSearchResults(
-                            columns = songColumns,
-                            query = songSubmitted,
-                            // 每次提交搜索 / 换源分组自增：同词同源重搜也能重置分页状态（修复旧分页串页）
-                            searchToken = songGeneration,
-                            onPlay = { song, songs -> handlePlaySong(song, songs) },
-                            onDownload = { handleDownload(it) },
-                            onToggleSelect = { handleToggleSelect(it) },
-                            onLoadMore = { source, page -> searchBySource(source, songSubmitted, page) },
-                            activeSongId = currentSong?.id,
-                            selectedSongs = selection.selectedSongs,
-                            downloadStatusOf = { song -> downloadTasks[song.id]?.status },
-                        )
-                        ModeDropdownMode.album -> AlbumSearchResults(
-                            albums = albums,
-                            query = albumSubmitted,
-                            source = albumPlatform,
-                            onAlbumPress = { album ->
-                                uiViewModel.setAlbumDetailVisible(
-                                    true,
-                                    AlbumDetailData(
-                                        id = album.albumid,
-                                        cover = buildAlbumCoverUrl(album),
-                                        name = album.name,
-                                        artist = album.artist,
-                                        platform = album.platform,
-                                    ),
-                                )
-                            },
-                            isLoading = albumsLoading,
-                        )
-                        ModeDropdownMode.singer -> SingerSearchResults(
-                            artists = artists,
-                            query = artistSubmitted,
-                            source = artistPlatform,
-                            onArtistPress = { artist ->
-                                uiViewModel.setSingerDetailVisible(
-                                    true,
-                                    SingerDetailData(
-                                        id = artist.id,
-                                        name = artist.name,
-                                        picture = artist.picture,
-                                        platform = artistPlatform,
-                                    ),
-                                )
-                            },
-                            isLoading = artistsLoading,
-                        )
-                        ModeDropdownMode.qobuz -> HomeForeignLinkView(
-                            onQobuzSubmit = { handleQobuzSubmit(it) },
-                            onKkboxSubmit = { handleKkboxSubmit(it) },
-                        )
-                        ModeDropdownMode.playlist -> HomePlaylistLinkView(
-                            onSubmit = { handlePlaylistSubmit(it) },
-                        )
-                    }
-                }
+        // 键盘弹出时不压缩 body，与 Dart `resizeToAvoidBottomInset: false` 一致：迷你条固定屏幕底部。
+        // 【inset 责任】这里**故意不再统一内缩**：App 本身是 edge-to-edge（Android 15+ 强制），
+        // 各浮层自带 inset（播放页 / 全屏 sheet 用 systemBarsPadding，底部 sheet 用
+        // navigationBarsPadding，抽屉自带 statusBarTop）。统一内缩的后果是：① 浮层背景到不了
+        // 状态栏后面（状态栏那一条露出纯色底，看着像「没做全屏」）；② 自带 inset 的浮层被缩两次。
+        // 注意**不要**改用 safeDrawingPadding：它含 IME 内边距，键盘一弹就会把迷你条和 ⇄ 一起顶上去。
+        Box(modifier = Modifier.fillMaxSize()) {
+            // tab 返回键：声明在全部浮层之前 → 任何打开的 sheet/播放页仍优先吃掉返回事件。
+            // 只有在非默认 tab（搜索）时才拦截，退回搜索。
+            BackHandler(enabled = selectedTab != AppTab.Search) {
+                appShellViewModel.selectTab(AppTab.Search)
             }
 
-            // ⇄ 呼出「搜索选择」面板（歌单/国外解析模式隐藏；抽屉/播放页/详情页打开时让位）
-            if (mode != ModeDropdownMode.playlist &&
-                mode != ModeDropdownMode.qobuz &&
-                !uiState.drawerVisible &&
-                !uiState.playerOverlayVisible &&
-                qobuzDetailRoute == null &&
-                kkboxDetailRoute == null
-            ) {
-                HomeSourceSwitchButton(
-                    onTap = { sourcePickerVisible = true },
+            // ── 基础内容列（Overlay.COLUMN）：按 tab 切换 —— 搜索内容 / 本地曲库（占位页） ──
+            when (selectedTab) {
+                AppTab.Search -> SearchScreen(
+                    modifier = Modifier.fillMaxSize(),
+                    st = st,
+                    uiViewModel = uiViewModel,
+                    selectionViewModel = selectionViewModel,
+                    uiState = uiState,
+                    selection = selection,
+                    downloadTasks = downloadTasks,
+                    currentSong = currentSong,
+                )
+
+                AppTab.Library -> LocalLibraryScreen(
+                    // 顶栏左侧菜单按钮：与搜索页同一个动作（打开菜单抽屉）
+                    onOpenMenu = { uiViewModel.setDrawerVisible(true) },
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
-
             // ── 详情浮层（RN zIndex 150） ──
             GlobalOverlays(
                 downloadQueueSheet = {
@@ -494,30 +368,26 @@ fun HomeScreen(
             MenuDrawer(
                 visible = uiState.drawerVisible,
                 onClose = { uiViewModel.setDrawerVisible(false) },
-                onQobuzToken = {
-                    uiViewModel.setDrawerVisible(false)
-                    uiViewModel.setQobuzTokenVisible(true)
-                },
-                onKkboxAccount = {
-                    uiViewModel.setDrawerVisible(false)
-                    uiViewModel.setKkboxAccountVisible(true)
-                },
-                onDownloadQueue = {
-                    uiViewModel.setDrawerVisible(false)
-                    uiViewModel.setDownloadQueueVisible(true)
-                },
+                // 从抽屉进入子页面时**不收抽屉**：子页面声明在抽屉之后（z 序更高）会自然盖住抽屉，
+                // 返回后仍停在抽屉里，方便连续改多项设置。
+                onQobuzToken = { uiViewModel.setQobuzTokenVisible(true) },
+                onKkboxAccount = { uiViewModel.setKkboxAccountVisible(true) },
+                onDownloadQueue = { uiViewModel.setDownloadQueueVisible(true) },
                 cacheSize = cacheSize,
                 onClearCache = {
+                    // 不再直接清空：先弹窗列出各类缓存体积，由用户勾选后清理
                     uiViewModel.setDrawerVisible(false)
+                    uiViewModel.setCacheClearVisible(true)
                     scope.launch {
-                        AssetCache.clearAllCache()
-                        AssetCache.clearAssetCache()
-                        cacheSize = try {
-                            MenuDrawerCacheSize.Ready(AssetCache.getFileCacheSize())
+                        cacheItemsLoading = true
+                        val items = try {
+                            AssetCache.cacheItems()
                         } catch (_: Exception) {
-                            MenuDrawerCacheSize.Error
+                            emptyList()
                         }
-                        snackbarHostState.showSnackbar("已清除缓存")
+                        cacheItems = items
+                        cacheSelected = items.filter { it.bytes > 0L }.map { it.category }.toSet()
+                        cacheItemsLoading = false
                     }
                 },
                 // 「所有文件访问」权限流程尚未移植：保持未授权文案，点击暂为空操作
@@ -533,23 +403,41 @@ fun HomeScreen(
                 onContact = { uiViewModel.setContactVisible(true) },
             )
 
-            // ── 迷你播放条（置于详情浮层之上） ──
-            if (currentSong != null) {
-                MiniPlayerBar(
-                    title = currentSong.title,
-                    artist = currentSong.artist,
-                    coverUrl = currentSong.cover,
-                    fallbackCoverUrl = colorState.currentCoverUrl,
-                    isPlaying = playerState.isPlaying,
-                    currentTime = playerState.currentTime,
-                    duration = playerState.duration,
-                    visible = !uiState.playerOverlayVisible,
-                    onOpenPlayer = { uiViewModel.setPlayerOverlayVisible(true) },
-                    onTogglePlay = { playerViewModel.togglePlay() },
-                    // 关键：必须贴底居中；否则在根 Box 里会默认落到左上角（压住顶栏）
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                )
-            }
+            // ── Qobuz Token / KKBOX 账号管理浮层（抽屉入口；之前仅置位布尔、未挂载） ──
+            QobuzTokenSheet(
+                visible = uiState.qobuzTokenVisible,
+                qobuzViewModel = qobuzViewModel,
+                onClose = { uiViewModel.setQobuzTokenVisible(false) },
+            )
+            KkboxAccountSheet(
+                visible = uiState.kkboxAccountVisible,
+                kkboxViewModel = kkboxViewModel,
+                onClose = { uiViewModel.setKkboxAccountVisible(false) },
+            )
+
+            // ── 底栏槽位（旧 MiniPlayerBar 原位：MenuDrawer 之后、PlayerOverlay 之前）──
+            // 常驻**同一颗胶囊**：主页面（搜索 / 本地曲库）是「底栏态」，其余二级页面
+            // （抽屉 / 各类 sheet / 详情页 / 播放页之下）自动 morph 成「迷你播放器态」——
+            // 封面左滑、左右 tab 淡出、标题-歌手-播放-进度淡入，反向即原路恢复。
+            // 声明在本槽位 → 之后声明的浮层（播放页、各 sheet、详情路由）天然把它盖住；
+            // 例外：Qobuz Token / KKBOX 账号两个配置页声明在**本槽位之前**（见上方），
+            // 于是迷你播放器浮在它们之上常驻可见（弹窗类 sheet 仍在其后声明、仍盖住它）。
+            AppBottomBar(
+                selectedTab = selectedTab,
+                onSelectTab = { appShellViewModel.selectTab(it) },
+                isMiniPlayer = !isPrimaryPage,
+                bottomInset = bottomInset,
+                coverUrl = currentSong?.cover.orEmpty(),
+                fallbackCoverUrl = colorState.currentCoverUrl,
+                title = currentSong?.title.orEmpty(),
+                artist = currentSong?.artist.orEmpty(),
+                isPlaying = playerState.isPlaying,
+                currentTime = playerState.currentTime,
+                duration = playerState.duration,
+                onOpenPlayer = { uiViewModel.setPlayerOverlayVisible(true) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter),
+            )
 
             // ── 全屏播放页浮层（RN zIndex 300） ──
             PlayerOverlay(
@@ -659,20 +547,48 @@ fun HomeScreen(
                 onClose = { sourcePickerVisible = false },
             )
 
-            // ── Qobuz Token / KKBOX 账号管理浮层（抽屉入口；之前仅置位布尔、未挂载） ──
-            QobuzTokenSheet(
-                visible = uiState.qobuzTokenVisible,
-                qobuzViewModel = qobuzViewModel,
-                onClose = { uiViewModel.setQobuzTokenVisible(false) },
-            )
-            KkboxAccountSheet(
-                visible = uiState.kkboxAccountVisible,
-                kkboxViewModel = kkboxViewModel,
-                onClose = { uiViewModel.setKkboxAccountVisible(false) },
-            )
             ContactModal(
                 visible = uiState.contactVisible,
                 onClose = { uiViewModel.setContactVisible(false) },
+            )
+            CacheClearModal(
+                visible = uiState.cacheClearVisible,
+                loading = cacheItemsLoading,
+                clearing = cacheClearing,
+                items = cacheItems,
+                selected = cacheSelected,
+                onToggle = { category ->
+                    cacheSelected = if (category in cacheSelected) {
+                        cacheSelected - category
+                    } else {
+                        cacheSelected + category
+                    }
+                },
+                onConfirm = {
+                    scope.launch {
+                        cacheClearing = true
+                        try {
+                            // 播放缓存必须走 Media3 的 Cache API（目录正被 SimpleCache 占用）
+                            if (CacheCategory.PLAYBACK in cacheSelected) {
+                                playerViewModel.clearPlaybackCache()
+                            }
+                            AssetCache.clearCacheCategories(
+                                cacheSelected - CacheCategory.PLAYBACK,
+                            )
+                        } catch (_: Exception) {
+                        }
+                        cacheClearing = false
+                        uiViewModel.setCacheClearVisible(false)
+                        cacheSize = try {
+                            MenuDrawerCacheSize.Ready(AssetCache.getFileCacheSize())
+                        } catch (_: Exception) {
+                            MenuDrawerCacheSize.Error
+                        }
+                        // 用户要求：清缓存提示用安卓原生 Toast
+                        Toast.makeText(ctx, "已清除缓存", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onClose = { uiViewModel.setCacheClearVisible(false) },
             )
 
             // ── 「下载中」轻提示（根级最上层） ──

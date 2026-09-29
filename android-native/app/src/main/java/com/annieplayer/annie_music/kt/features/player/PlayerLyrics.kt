@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -33,6 +32,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
@@ -325,7 +328,23 @@ private fun PlayerLyricLine(
         modifier = Modifier
             .fillMaxWidth()
             .clickableNoRipple { onSeek(line.time) }
-            .onGloballyPositioned { coordinates -> onHeight(coordinates.size.height.toFloat()) },
+            .onGloballyPositioned { coordinates -> onHeight(coordinates.size.height.toFloat()) }
+            .drawBehind {
+                // 当前行左侧高亮竖线（Flutter：Positioned(left:24, top:12, bottom:12, width:3)）。
+                // 直接在本行 Box 上绘制：Box 的边界就是 Flutter Stack 的「行盒」，
+                // 既避开 LazyColumn item 主轴无界导致 fillMaxHeight 塌成 0 高，
+                // 也避开 matchParentSize 的固定约束把 3dp 宽居中（那样竖线会跑到文字中间）。
+                if (isActive) {
+                    val top = AppSpacing.sp12.toPx()
+                    val bottom = AppSpacing.sp12.toPx()
+                    drawRoundRect(
+                        color = primary,
+                        topLeft = Offset(AppSpacing.sp24.toPx(), top),
+                        size = Size(3.dp.toPx(), (size.height - top - bottom).coerceAtLeast(0f)),
+                        cornerRadius = CornerRadius(AppRadius.r1_5.toPx()),
+                    )
+                }
+            },
     ) {
         Column(
             modifier = Modifier
@@ -349,19 +368,6 @@ private fun PlayerLyricLine(
             }
         }
 
-        // 当前行左侧高亮竖线（Flutter：left 24 / top 12 / bottom 12 / 宽 3）
-        // 注意：LazyColumn item 主轴约束无界，fillMaxHeight 会解析为 minHeight=0 而塌缩为 0 高；
-        // 改用 matchParentSize 按行 Box 的内容高度撑满（等价 Flutter 的 Positioned(top:12,bottom:12)）；
-        // 宽度必须用 requiredWidth：matchParentSize 传入的是固定宽度约束，width 会被强制取父宽
-        if (isActive) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .padding(start = AppSpacing.sp24, top = AppSpacing.sp12, bottom = AppSpacing.sp12)
-                    .requiredWidth(3.dp)
-                    .background(primary, RoundedCornerShape(AppRadius.r1_5)),
-            )
-        }
     }
 }
 

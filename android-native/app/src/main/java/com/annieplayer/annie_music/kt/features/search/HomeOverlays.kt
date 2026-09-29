@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -83,6 +85,8 @@ internal fun BoxScope.HomeDownloadingToast(title: String) {
     Box(
         modifier = Modifier
             .align(Alignment.BottomCenter)
+            // 宿主已不再统一内缩 → 自己补导航栏 inset，toast 与底栏的相对位置不变
+            .navigationBarsPadding()
             .fillMaxWidth()
             .padding(
                 start = AppSpacing.sp20,
@@ -179,12 +183,14 @@ internal fun HomePendingDownloadBar(
  */
 @Composable
 internal fun BoxScope.HomeSourceSwitchButton(onTap: () -> Unit) {
-    val shape = RoundedCornerShape(AppRadius.panel)
+    // 圆形 FAB：原先「圆角方块 + 满宽双箭头」显得扁扁的，改成圆形并把图标收小更协调
+    val shape: androidx.compose.ui.graphics.Shape = CircleShape
     val shadowColor = AppColors.black.copy(alpha = 0.35f)
     Box(
         modifier = Modifier
             .align(Alignment.BottomEnd)
-            .padding(end = AppSpacing.sp16, bottom = AppSpacing.sheetBottomInset)
+            // 相对 Flutter 的 right:16 再往左让出「半个按钮」（48/2 = 24dp）→ 16 + 24 = 40dp
+            .padding(end = AppSpacing.sp40, bottom = AppSpacing.sheetBottomInset)
             .size(AppSize.headerActionHeight)
             .shadow(
                 elevation = AppShadow.blurXl,
@@ -197,7 +203,7 @@ internal fun BoxScope.HomeSourceSwitchButton(onTap: () -> Unit) {
             .clickableNoRipple(onTap),
         contentAlignment = Alignment.Center,
     ) {
-        HomeSourceSwitchGlyph(modifier = Modifier.size(AppIconSize.icon26), tint = AppColors.white)
+        HomeSourceSwitchGlyph(modifier = Modifier.size(AppIconSize.icon24), tint = AppColors.white)
     }
 }
 

@@ -19,9 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -35,12 +32,14 @@ import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
+import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppShadow
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 
@@ -55,6 +54,10 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSize
  * - 点击整条打开播放页；右侧圆钮切换播放/暂停。
  *
  * 封面：[coverUrl] 为空时用 [fallbackCoverUrl]（对齐 Flutter 用取色器缓存的当前封面兜底）。
+ *
+ * 复用说明：常驻底栏（`features/shell/AppBottomBar.kt`）的「本地曲库」态中键会复用本文件的
+ * [MiniPlayerCover] / [MiniPlayPauseButton] / [MiniProgressBar]（三个组件均已参数化尺寸，
+ * 默认值保持旧迷你条原样），因此它们不再是 `private`。
  */
 @Composable
 fun MiniPlayerBar(
@@ -146,23 +149,31 @@ fun MiniPlayerBar(
     }
 }
 
-/** 封面：62dp 圆角 14，加载失败显示音符占位（对齐 Flutter `_Cover`） */
+/**
+ * 封面：[size] 边长、[cornerRadius] 圆角（默认对齐 Flutter `_Cover` 的 62dp / 半径 14），
+ * 加载失败或 URL 为空时显示音符占位（占位随 [size] 等比缩放）。
+ */
 @Composable
-private fun MiniPlayerCover(url: String) {
+fun MiniPlayerCover(
+    url: String,
+    modifier: Modifier = Modifier,
+    size: Dp = AppSize.miniPlayerHeight,
+    cornerRadius: Dp = AppRadius.panel,
+) {
     Box(
-        modifier = Modifier
-            .size(AppSize.miniPlayerHeight)
-            .clip(RoundedCornerShape(14.dp))
+        modifier = modifier
+            .size(size)
+            .clip(RoundedCornerShape(cornerRadius))
             .background(Color.White.copy(alpha = 0.04f)),
         contentAlignment = Alignment.Center,
     ) {
         // 占位始终垫底：URL 为空或图片加载失败时可见（对齐 Flutter `errorBuilder` 音符占位）
-        MusicNotePlaceholder(modifier = Modifier.size(28.dp))
+        MusicNotePlaceholder(modifier = Modifier.size(size * 0.45f))
         if (url.isNotEmpty()) {
             // 图片加载：Coil（对应 Flutter Image.network 的缓存行为）
             NetworkCoverImage(
                 url = url,
-                modifier = Modifier.size(AppSize.miniPlayerHeight),
+                modifier = Modifier.size(size),
             )
         }
     }
@@ -205,39 +216,48 @@ private fun MusicNotePlaceholder(modifier: Modifier = Modifier, tint: Color = Co
     }
 }
 
-/** 播放/暂停圆钮：50dp，white12 底，24dp 图标 */
+/** 播放/暂停圆钮：[size] 直径（默认 50dp），[iconSize] 图标边长（默认 24dp） */
 @Composable
-private fun MiniPlayPauseButton(isPlaying: Boolean, onTogglePlay: () -> Unit) {
+fun MiniPlayPauseButton(
+    isPlaying: Boolean,
+    onTogglePlay: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = AppSize.playCircle,
+    iconSize: Dp = 24.dp,
+) {
     val interaction = remember { MutableInteractionSource() }
     Box(
-        modifier = Modifier
-            .size(AppSize.playCircle)
+        modifier = modifier
+            .size(size)
             .clip(RoundedCornerShape(percent = 50))
             .background(AppColors.white12)
             .clickable(interactionSource = interaction, indication = null, onClick = onTogglePlay),
         contentAlignment = Alignment.Center,
     ) {
         if (isPlaying) {
-            PauseIcon(modifier = Modifier.size(24.dp))
+            PauseIcon(modifier = Modifier.size(iconSize))
         } else {
-            Icon(
-                imageVector = Icons.Default.PlayArrow,
-                contentDescription = null,
+            PlayIcon(
+                modifier = Modifier.size(iconSize),
                 tint = Color.White,
-                modifier = Modifier.size(24.dp),
             )
         }
     }
 }
 
-/** 进度条：4dp 高，左对齐按比例填充（white @ 0.25），轨道透明 */
+/** 进度条：默认 4dp 高（[height] 可调），左对齐按比例填充（white @ 0.25），轨道透明 */
 @Composable
-private fun MiniProgressBar(position: Double, duration: Double) {
+fun MiniProgressBar(
+    position: Double,
+    duration: Double,
+    modifier: Modifier = Modifier,
+    height: Dp = 4.dp,
+) {
     val fraction = if (duration > 0) (position / duration).coerceIn(0.0, 1.0) else 0.0
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(4.dp),
+            .height(height),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(

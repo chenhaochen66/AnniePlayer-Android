@@ -362,15 +362,22 @@ private fun _mapNeteaseAlbums(raw: Any?): List<Album> {
     return out
 }
 
-/** 获取网易云专辑曲目（`/api/album/{id}`） */
+/**
+ * 获取网易云专辑曲目（`/api/v1/album/{id}`）。
+ *
+ * 注意：旧的 `/api/album/{id}` 现在会返回 `code:-462「请登录手机号」`，解析不到 `album.songs`，
+ * 于是专辑页「只有专辑信息、没有歌曲、点了也放不出来」。v1 接口免登录可用，且歌曲自带
+ * `ar[].id`（歌手 id），所以歌手跳转也不必再补别的接口。
+ */
 suspend fun getNeteaseAlbumSongs(albumId: String): List<AlbumSong> {
     return try {
         val data = httpGetJson(
-            "https://music.163.com/api/album/$albumId",
+            "https://music.163.com/api/v1/album/$albumId",
             neteaseApiHeaders,
         )
         val album = data["album"]
-        val songsRaw = if (album is Map<*, *>) album["songs"] else null
+        // v1 把歌曲放在**顶层 `songs`**（旧结构在 `album.songs`）—— 两者都兼容
+        val songsRaw = data["songs"] ?: if (album is Map<*, *>) album["songs"] else null
         val list = if (songsRaw is List<*>) songsRaw else emptyList<Any?>()
         val out = ArrayList<AlbumSong>()
         for (m in _listOfMaps(list)) {
@@ -592,8 +599,9 @@ suspend fun fetchNeteaseLyric(songId: String): NeteaseLyric {
 /** 获取网易云专辑详情；失败返回 null（对齐 RN 版） */
 suspend fun getNeteaseAlbumDetail(albumId: String): NeteaseAlbumDetail? {
     return try {
+        // 与 getNeteaseAlbumSongs 同因：旧 `/api/album/{id}` 已需登录，改用免登录的 v1 接口
         val data = httpGetJson(
-            "https://music.163.com/api/album/$albumId",
+            "https://music.163.com/api/v1/album/$albumId",
             neteaseApiHeaders,
         )
 
@@ -613,16 +621,18 @@ suspend fun getNeteaseAlbumDetail(albumId: String): NeteaseAlbumDetail? {
                 )
             ?: ""
 
-        val songsRaw = album["songs"]
+        // v1 把歌曲放在顶层 `songs`
+        val songsRaw = data["songs"] ?: album["songs"]
         val songsList = if (songsRaw is List<*>) songsRaw else emptyList<Any?>()
         val songs = _listOfMaps(songsList).map { sm ->
-            val sArtistList = _listOfMaps(sm["artists"])
+            // v1 歌曲的歌手字段是 `ar`（旧接口是 `artists`）
+            val sArtistList = _listOfMaps(sm["ar"] ?: sm["artists"])
             val no = sm["no"]
             NeteaseAlbumSong(
                 id = "netease:${sm["id"]}",
                 name = decodeHtmlEntities((sm["name"] ?: "").toString()),
                 no = if (no is Number) no.toInt() else 0,
-                disc = (sm["disc"] ?: "1").toString(),
+                disc = (sm["disc"] ?: sm["cd"] ?: "1").toString(),
                 artist = decodeHtmlEntities(
                     sArtistList.map { (it["name"] ?: "").toString() }.joinToString(" / "),
                 ),

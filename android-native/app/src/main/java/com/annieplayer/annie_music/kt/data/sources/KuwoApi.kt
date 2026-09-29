@@ -732,16 +732,27 @@ suspend fun getAlbumSongs(albumId: String): KuwoAlbumSongs {
     }
 
     val songs = songList.map { item ->
+        val artistNameRaw = decodeHtmlEntities(_strOr(item["artist"], "未知歌手"))
+        // 酷我专辑歌曲自带 `artistid`（单歌手）与 `allartistid`（多歌手，逗号分隔）。
+        // 必须在这里拆名并带上 id：否则 UI 层按下标配对时 id 为空，「跳歌手」会退化成
+        // 按名字联网搜索（用户反馈的「点跳转歌手要等一会儿」）。
+        val artistNames = splitArtistNames(artistNameRaw)
+        val artistIds = splitArtistIds(
+            _s(item["allartistid"]).ifEmpty { _s(item["artistid"]) },
+        )
         AlbumSong(
             id = _s(item["id"]),
             name = decodeHtmlEntities(_strOr(item["name"], "未知歌曲")),
-            artistName = decodeHtmlEntities(_strOr(item["artist"], "未知歌手")),
+            artistName = artistNameRaw,
             duration = _toInt(item["duration"]),
             track = if (_truthy(item["track"])) {
                 _s(item["track"]).toDoubleOrNull()?.toInt()
             } else {
                 null
             },
+            artistNames = artistNames.ifEmpty { listOf(artistNameRaw) },
+            // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
+            artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),
         )
     }
     return KuwoAlbumSongs(songs = songs, pub = pub)

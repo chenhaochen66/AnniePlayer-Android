@@ -9,6 +9,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -181,6 +182,10 @@ class MediaPlayerBackend(
                 .setMediaSourceFactory(_cachedSourceFactory ?: DefaultMediaSourceFactory(cacheFactory))
                 .setAudioAttributes(_mediaAudioAttributes, true)
                 .setHandleAudioBecomingNoisy(true)
+                // 熄屏后继续串流：必须显式拿 wake lock（WAKE_LOCK 权限已在 Manifest 声明）。
+                // 不设置时屏幕熄灭后 CPU 可休眠 → 后台自动切歌要做的「下一首解析 URL + 拉流」
+                // 会偶发失败（现象：歌停在上一首结束处不切下一首），前台手动点一下又正常。
+                .setWakeMode(C.WAKE_MODE_NETWORK)
                 .build()
             player.addListener(AnniePlayerListener())
             _player = player
@@ -192,7 +197,9 @@ class MediaPlayerBackend(
                 Intent(_context, MainActivity::class.java),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            val session = MediaSession.Builder(_context, player)
+            // 会话拿到的是「补声明了上一首/下一首」的包装播放器：通知栏 / 锁屏 / 蓝牙
+            // 才会显示切歌键；应用内其余逻辑仍使用真实 player（应用侧只用 _player）。
+            val session = MediaSession.Builder(_context, CommandAdvertisedPlayer(player))
                 .setSessionActivity(sessionActivity)
                 .setCallback(AnnieSessionCallback())
                 .build()
@@ -415,6 +422,26 @@ class MediaPlayerBackend(
         withContext(Dispatchers.Main.immediate) {
             _player?.volume = volume.toFloat()
         }
+    }
+
+    /**
+     * 清理播放缓存（「清除缓存」弹窗里的「播放缓存」项）。
+     *
+     * 用 Media3 的 [Cache] API 逐项 `removeResource`，**不直接删目录** —— 缓存目录正被
+     * `SimpleCache`（含其索引库）占用，直接 `deleteRecursively` 会让索引与文件不一致。
+     */
+    override suspend fun clearPlaybackCache(): Long = withContext(Dispatchers.IO) {
+        val cache = _cache ?: return@withContext 0L
+        var freed = 0L
+        try {
+            for (key in cache.keys.toList()) {
+                freed += cache.getCachedBytes(key, 0L, Long.MAX_VALUE)
+                cache.removeResource(key)
+            }
+        } catch (_: Throwable) {
+            // 单个 key 失败不影响整体清理
+        }
+        freed
     }
 
     // ── 核心：解析 + 设置音源 + 自动前进 ──
@@ -712,6 +739,35 @@ class MediaPlayerBackend(
         }
     }
 
+    /**
+     * 让「上一首 / 下一首」在 Media3 眼里**可用**，否则通知栏 / 锁屏 / 蓝牙不会画出切歌键。
+     *
+     * 本引擎每次只装 1 个 MediaItem（每首歌的直链都要按需解析），ExoPlayer 因此把
+     * `COMMAND_SEEK_TO_NEXT(_MEDIA_ITEM)` / `..PREVIOUS..` 从可用命令里剔掉 →
+     * `DefaultMediaNotificationProvider` 判定「没有上一首/下一首」→ 媒体通知里没有切歌按钮。
+     *
+     * 这里只覆盖 [getAvailableCommands]（其余全部转发给真实 player，应用侧逻辑用的仍是原
+     * ExoPlayer 实例），把这两条命令补回可用集合；真正的切歌仍由
+     * [AnnieSessionCallback.onPlayerCommandRequest] 转发到 skipNext / skipPrevious。
+     */
+    private inner class CommandAdvertisedPlayer(player: ExoPlayer) : ForwardingPlayer(player) {
+        private val seekCommands: Player.Commands = Player.Commands.Builder()
+            .addAll(
+                Player.COMMAND_SEEK_TO_NEXT,
+                Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                Player.COMMAND_SEEK_TO_PREVIOUS,
+                Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+            )
+            .build()
+
+        override fun getAvailableCommands(): Player.Commands {
+            val base = super.getAvailableCommands()
+            // 队列只有一首时不要凭空声明切歌能力，避免通知栏出现「点了没反应」的按钮
+            if (_queue.size <= 1) return base
+            return base.buildUpon().addAll(seekCommands).build()
+        }
+    }
+
     /** ExoPlayer 监听：isPlaying / ended / error（对齐 Dart 的 playerStateStream 与 processingStateStream） */
     private inner class AnniePlayerListener : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -736,7 +792,7 @@ class MediaPlayerBackend(
     private companion object {
         const val _tag: String = "AnnieAudio"
         const val _progressIntervalMs: Long = 200L
-        const val _cacheDirName: String = "annie_audio_cache"
+        const val _cacheDirName: String = PLAYBACK_CACHE_DIR_NAME
         const val _cacheMaxBytes: Long = 256L * 1024L * 1024L
 
         /** 进程级唯一的磁盘缓存：`SimpleCache` 对同一目录只允许一个实例，重复创建会抛异常崩溃 */
@@ -792,6 +848,9 @@ internal object AnnieAudioHolder {
     @Volatile
     var onDeactivate: (() -> Unit)? = null
 }
+
+/** 播放缓存目录名（Media3 `SimpleCache`）；`AssetCache` 统计/清理时复用同一常量，避免写错。 */
+const val PLAYBACK_CACHE_DIR_NAME: String = "annie_audio_cache"
 
 /** 媒体音频用途（ExoPlayer 音频焦点 / 直通属性；与 AudioOutputController 的 android.media 属性一致） */
 private val _mediaAudioAttributes: AudioAttributes = AudioAttributes.Builder()

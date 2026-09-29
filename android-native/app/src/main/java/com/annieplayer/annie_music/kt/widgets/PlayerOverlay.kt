@@ -47,6 +47,7 @@ fun PlayerOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
+            // 浮层现在铺满整个窗口（宿主不再统一内缩）→ 按自身高度下滑即可完全移出屏幕。
             .graphicsLayer { translationY = slide * size.height }
             // 视觉覆盖必须同时消费触摸：否则 Compose 会把空白区域的点击穿透到下层首页控件
             // （典型症状：播放页右下角点一下，会误触首页看不见的 ⇄「搜索选择」按钮）。

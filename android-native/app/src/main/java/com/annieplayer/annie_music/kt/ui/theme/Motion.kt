@@ -50,6 +50,11 @@ object AppDuration {
     /** 开屏整体时长（Flutter: splash_screen 1500 后移除覆层） */
     const val splashTotal = 1500
 
+    // ---- Android-only 设计（Flutter 基线无对应实现）----
+
+    /** 常驻底栏中键两态切换（搜索封面盒 ⇄ 本地曲库迷你播放器） */
+    const val bottomBarMorph = 260
+
     // ---- 非 UI / 行为型时长（移植时仅作参考，不属于视觉设计 token）----
 
     /** 网络请求重试间隔（Flutter: kuwo_api / kkbox_api / http_client `Duration(milliseconds: 500)`） */

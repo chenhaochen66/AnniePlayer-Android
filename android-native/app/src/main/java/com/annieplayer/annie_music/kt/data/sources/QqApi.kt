@@ -521,12 +521,21 @@ suspend fun getQQAlbumSongs(albumMid: String): List<AlbumSong> {
             val m = _toMap(item) ?: continue
             val mid = _s(m["songmid"])
             if (mid.isEmpty()) continue
+            // QQ 专辑歌曲自带 `singer:[{id, mid, name}]` —— 直接取**全部**歌手的名字与 mid。
+            // 之前只取第一位歌手的名字、且不带 id，导致「跳歌手」缺 id 退化成联网搜索（有延迟）。
             val singer = m["singer"]
-            var artistName = ""
-            if (singer is List<*> && singer.isNotEmpty()) {
-                val firstSinger = singer[0]
-                if (firstSinger is Map<*, *>) artistName = _s(firstSinger["name"])
+            val singerMaps = if (singer is List<*>) {
+                singer.filterIsInstance<Map<*, *>>()
+            } else {
+                emptyList()
             }
+            val artistNames = singerMaps
+                .map { decodeHtmlEntities(_s(it["name"])) }
+                .filter { it.isNotEmpty() }
+            val artistIds = singerMaps
+                .map { _s(it["mid"]) }
+                .filter { it.isNotEmpty() }
+            val artistName = artistNames.firstOrNull() ?: ""
             val interval = m["interval"]
             val idx = m["index_album"] ?: m["index_cd"]
             out.add(
@@ -536,6 +545,9 @@ suspend fun getQQAlbumSongs(albumMid: String): List<AlbumSong> {
                     artistName = decodeHtmlEntities(artistName),
                     duration = if (interval is Number) interval.toInt() else 0,
                     track = if (idx is Number) idx.toInt() else null,
+                    artistNames = artistNames,
+                    // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
+                    artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),
                 ),
             )
         }

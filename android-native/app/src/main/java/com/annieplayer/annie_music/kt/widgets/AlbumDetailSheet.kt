@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -72,9 +72,9 @@ import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 /**
  * 专辑详情浮层（1:1 移植 Flutter `lib/widgets/album_detail_sheet.dart`，对齐 RN 版
@@ -359,7 +359,7 @@ private fun AlbumDetailContent(
                 .background(AppColors.background)
                 .graphicsLayer { translationY = slide.value * size.height },
         ) {
-            Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+            Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
                 AlbumDetailHeader(
                     selectMode = st.selectMode,
                     selectedAll = st.selectedIds.size == st.songs.size,

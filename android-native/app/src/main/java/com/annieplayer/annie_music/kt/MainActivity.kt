@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.annieplayer.annie_music.kt.core.audio.AnnieAudioHolder
 import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
 import com.annieplayer.annie_music.kt.core.platform.StoragePermissionDialog
 import com.annieplayer.annie_music.kt.core.platform.isManageStorageGranted
@@ -24,7 +25,7 @@ import com.annieplayer.annie_music.kt.data.AssetCache
 import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.network.CacheService
-import com.annieplayer.annie_music.kt.features.search.HomeScreen
+import com.annieplayer.annie_music.kt.features.shell.AppShell
 import com.annieplayer.annie_music.kt.ui.theme.AnnieTheme
 import com.annieplayer.annie_music.kt.widgets.SplashScreen
 
@@ -73,8 +74,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             AnnieTheme {
-                // 开屏覆层：首屏之上叠 SplashScreen，结束后移除（对齐 Flutter `builder` 里的 Stack）
-                var splashDone by remember { mutableStateOf(false) }
+                // 开屏覆层：首屏之上叠 SplashScreen，结束后移除（对齐 Flutter `builder` 里的 Stack）。
+                // 例外：**已有歌曲装载**（典型场景：从媒体通知 / 控制中心切回前台，进程与播放都没断）
+                // → 不再走开屏，直接进主界面，避免「又重开了一遍软件」的观感。
+                val alreadyHasSong = (AnnieAudioHolder.player?.mediaItemCount ?: 0) > 0
+                var splashDone by remember { mutableStateOf(alreadyHasSong) }
                 // 存储权限引导弹窗：未授予「所有文件访问」时主动弹一次（Flutter 版只在抽屉里提示）
                 var showStorageDialog by remember { mutableStateOf(false) }
                 val storageGranted = remember { isManageStorageGranted(this@MainActivity) }
@@ -83,7 +87,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
-                    HomeScreen()
+                    AppShell()
                     if (!splashDone) {
                         SplashScreen(onFinish = { splashDone = true })
                     }

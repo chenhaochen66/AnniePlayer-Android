@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -337,7 +337,7 @@ private fun PlaylistDetailContent(
                 .background(AppColors.background)
                 .graphicsLayer { translationY = slide.value * size.height },
         ) {
-            Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+            Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
                 PlaylistDetailHeader(
                     loading = st.loading,
                     hasPlaylist = st.hasPlaylist,

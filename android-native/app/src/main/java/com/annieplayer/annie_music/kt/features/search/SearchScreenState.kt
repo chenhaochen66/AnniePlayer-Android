@@ -28,6 +28,7 @@ import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.resolveArtist
 import com.annieplayer.annie_music.kt.data.searchAlbumByPlatform
 import com.annieplayer.annie_music.kt.data.searchArtistByPlatform
+import com.annieplayer.annie_music.kt.data.sources.fetchKugouSongAuthors
 import com.annieplayer.annie_music.kt.data.sources.parseKkboxUrl
 import com.annieplayer.annie_music.kt.data.sources.parseQobuzUrl
 import com.annieplayer.annie_music.kt.data.sources.searchKugouMusic
@@ -49,7 +50,7 @@ import kotlinx.coroutines.launch
  * 以 `with(state) { ... }` 直接读写（等价原先的 `by remember { mutableStateOf(...) }`）。
  */
 @Stable
-class HomeScreenState(
+class SearchScreenState(
     private val scope: CoroutineScope,
     private val uiViewModel: UiViewModel,
     private val playerViewModel: PlayerViewModel,
@@ -394,10 +395,18 @@ class HomeScreenState(
     fun openArtistDetail(artist: SongArtistRef) {
         val song = playerViewModel.state.value.currentSong ?: return
         scope.launch {
+            var knownId = if (artist.id.isEmpty()) null else artist.id
+            // 酷狗的专辑/歌单都不带歌手 id：这里按歌曲 hash 逐曲补一次
+            // （接口单曲限，结果落盘缓存 → 二次及以后秒开）
+            if (knownId == null && song.platform == MusicPlatform.kugou) {
+                knownId = fetchKugouSongAuthors(song.id.removePrefix("kugou:"))
+                    .firstOrNull { it.name == artist.name }
+                    ?.id
+            }
             val resolved = resolveArtist(
                 song.platform,
                 artist.name,
-                knownId = if (artist.id.isEmpty()) null else artist.id,
+                knownId = knownId,
             )
             if (resolved == null || resolved.id.isEmpty()) {
                 snackbarHostState.showSnackbar("未找到歌手「${artist.name}」")

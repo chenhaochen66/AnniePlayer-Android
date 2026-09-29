@@ -1,6 +1,7 @@
 package com.annieplayer.annie_music.kt.data
 
 import android.content.Context
+import com.annieplayer.annie_music.kt.core.audio.PLAYBACK_CACHE_DIR_NAME
 import com.annieplayer.annie_music.kt.data.network.cacheService
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
 import kotlinx.coroutines.Dispatchers
@@ -155,6 +156,66 @@ object AssetCache {
     suspend fun getFileCacheSize(): Long =
         _totalDirSize(_baseDir()) + cacheService.getSize().toLong()
 
+    // ── 「清除缓存」弹窗：分类体积 + 选择性清理 ──
+
+    /** 播放缓存目录（Media3 流式缓存 `SimpleCache`） */
+    private fun _playbackDir(): File = File(_baseDir(), PLAYBACK_CACHE_DIR_NAME)
+
+    /** 封面/图片缓存目录：本层 `assets`（封面/试听）+ Coil 的 `image_cache` */
+    private fun _coverDirs(): List<File> =
+        listOf(File(_baseDir(), "assets"), File(_baseDir(), "image_cache"))
+
+    /** 私有下载目录 */
+    private fun _downloadsDir(): File = File(_baseDir(), "downloads")
+
+    /**
+     * 逐项统计可清理的缓存体积（供弹窗展示）。
+     *
+     * 注意「播放缓存」占的是 Media3 流式缓存，**LRU 上限 256MB**，所以边听边涨很凶，
+     * 是「缓存涨得快」的主要原因；封面还会被 Coil 再缓存一份到 `image_cache`。
+     */
+    suspend fun cacheItems(): List<CacheItem> = withContext(Dispatchers.IO) {
+        listOf(
+            CacheItem(CacheCategory.PLAYBACK, _totalDirSize(_playbackDir())),
+            CacheItem(CacheCategory.COVER, _coverDirs().sumOf { _totalDirSize(it) }),
+            CacheItem(CacheCategory.DOWNLOADS, _totalDirSize(_downloadsDir())),
+            CacheItem(CacheCategory.API, cacheService.getSize().toLong()),
+        )
+    }
+
+    /**
+     * 清理指定分类（**不含**播放缓存：那一项由 `PlayerBackend.clearPlaybackCache()` 用
+     * Media3 的 Cache API 安全清理）。返回本次释放的字节数。
+     */
+    suspend fun clearCacheCategories(categories: Set<CacheCategory>): Long =
+        withContext(Dispatchers.IO) {
+            var freed = 0L
+            if (CacheCategory.COVER in categories) {
+                val dirs = _coverDirs()
+                freed += dirs.sumOf { _totalDirSize(it) }
+                dirs.forEach { dir ->
+                    try {
+                        if (dir.exists()) dir.deleteRecursively()
+                    } catch (_: Throwable) {
+                    }
+                }
+                _memory.clear()
+            }
+            if (CacheCategory.DOWNLOADS in categories) {
+                val dir = _downloadsDir()
+                freed += _totalDirSize(dir)
+                try {
+                    if (dir.exists()) dir.deleteRecursively()
+                } catch (_: Throwable) {
+                }
+            }
+            if (CacheCategory.API in categories) {
+                freed += cacheService.getSize().toLong()
+                cacheService.clear()
+            }
+            freed
+        }
+
     /** 清除全部缓存（对齐 Dart `clearAllCache`）。 */
     suspend fun clearAllCache() {
         val base = _baseDir()
@@ -190,3 +251,21 @@ object AssetCache {
         _memory.clear()
     }
 }
+
+/** 「清除缓存」弹窗里的缓存分类。 */
+enum class CacheCategory {
+    /** 播放缓存（Media3 流式缓存，LRU 上限 256MB） */
+    PLAYBACK,
+
+    /** 封面/图片缓存（本层 assets + Coil image_cache） */
+    COVER,
+
+    /** 私有下载目录 */
+    DOWNLOADS,
+
+    /** 接口/歌词等 API 缓存 */
+    API,
+}
+
+/** 分类 + 体积。 */
+data class CacheItem(val category: CacheCategory, val bytes: Long)

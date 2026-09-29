@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -86,6 +87,8 @@ fun SearchSelectionOverlay(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                // 宿主已不再统一内缩 → 面板自己补导航栏 inset，底部 100dp 留白语义不变
+                .navigationBarsPadding()
                 .fillMaxWidth()
                 // Flutter: BoxConstraints(maxHeight: 400)
                 .heightIn(max = 400.dp)

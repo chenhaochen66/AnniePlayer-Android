@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -108,6 +109,8 @@ fun AppSheet(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                // 宿主已不再统一内缩 → 面板自己补导航栏 inset，内容位置与改动前完全一致
+                .navigationBarsPadding()
                 .fillMaxWidth()
                 .graphicsLayer { translationY = slide * size.height }
                 .background(

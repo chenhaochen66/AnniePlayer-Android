@@ -204,6 +204,9 @@ fun SongActionsSheet(
             onClose = { artistPickerVisible = false },
             onSelect = { artist ->
                 artistPickerVisible = false
+                // 与单歌手分支保持一致：跳转前先关掉「歌曲操作」主面板，
+                // 否则多歌手选择后跳到歌手详情，主面板仍留在屏幕上不消失
+                onClose()
                 onOpenArtist(artist)
             },
         )

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -201,8 +202,15 @@ fun QobuzTokenSheet(
                 .fillMaxSize()
                 .graphicsLayer { translationY = slide * size.height }
                 .background(AppColors.background)
+                // 面板必须自己**吃掉点击**：本面板是全屏的，而 Modifier.background 不参与命中测试，
+                // 一旦不吃事件，点面板空白处就会穿透到后面整屏遮罩的 onClose → 表现为「一碰就返回」。
+                // 关页只走系统返回手势（BackHandler）或标题栏关闭按钮。
+                .clickableNoRipple { }
                 .statusBarsPadding()
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                // MainActivity 用 adjustNothing（窗口不随键盘缩放，迷你条才不会被顶起来），
+                // 所以这里面板需自己按 IME 高度上移，保证输入框不被键盘遮住
+                .imePadding(),
         ) {
             QobuzTokenSheetHeader(
                 showAdd = showAdd,

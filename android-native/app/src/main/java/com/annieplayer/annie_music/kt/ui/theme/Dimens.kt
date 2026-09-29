@@ -47,7 +47,24 @@ object AppSpacing {
     /** 列表底部预留（Flutter: `EdgeInsets.only(bottom: 120)`） */
     val listBottomInset = 120.dp
 
-    /** 搜索结果列表底部预留（Flutter: `EdgeInsets.fromLTRB(0, 4, 0, 170)`） */
+    /**
+     * 常驻底栏内容避让（tab 内容底部预留）。
+     *
+     * 推导：底栏总占用 = 内容区 [AppSize.bottomBarHeight] 60 + 封面凸出
+     * [AppSize.bottomBarProtrusion] 0（当前封面与栏体等高）+ 系统导航 inset（内置栏体，手势条典型 24）
+     * ≈ 84dp，再留足视觉呼吸 → 120dp（对三键导航的大 inset 也仍然够用）。
+     */
+    val bottomBarInset = 120.dp
+
+    /**
+     * 搜索结果列表底部预留。
+     *
+     * 旧注释只记录了 Flutter 原值，容易被误读为「为旧迷你条（约 78dp）预留」。按新几何重算：
+     * - 常驻底栏（内容区 60 + 封面凸出 20 = 80dp；系统 inset 内置于栏体）→ 仅需 80 + 呼吸；
+     * - 右下角 ⇄ 源切换按钮顶边 = [sheetBottomInset] 100 + [AppSize.headerActionHeight] 48 = 148dp
+     *   → 需 148 + 呼吸，**这才是主导约束**。
+     * 取较大者再加 22dp 呼吸，结论仍为 170dp：数值不变，仅补全推导（避免下一次改动误删）。
+     */
     val searchListBottomInset = 170.dp
 }
 
@@ -138,6 +155,48 @@ object AppSize {
 
     /** 抽屉宽度占比（Flutter: menu_drawer `drawerWidth = 0.72`，非 dp，为屏宽比例） */
     const val drawerWidthFraction = 0.72f
+
+    // ---- 常驻底栏（Android-only 设计，Flutter 基线无对应实现）----
+
+    /**
+     * 底栏玻璃面板的**内容区**高度（系统导航 inset 之上的部分）。
+     *
+     * 面板实际高度 = bottomBarHeight + 系统导航 inset：inset 内置于栏体内部
+     * （见 `AppBottomBar`），玻璃面板始终向下贴到屏幕底边，内容（tab / 中键）抬到
+     * inset 之上 —— 因此不会出现「整条被抬高、又高又悬」的观感。
+     * 内容区刻意低于封面，让封面「凸出」面板顶边之上。
+     */
+    val bottomBarHeight = 60.dp
+
+    /** 底栏中键封面盒边长：与 [bottomBarHeight] **等高**（不凸出，平齐嵌在栏体中间） */
+    val bottomBarCoverSize = bottomBarHeight
+
+    /**
+     * 封面盒高出面板顶边的距离（当前为 0：封面与栏体等高、不凸出）。
+     *
+     * 栏体总占用高度 = bottomBarHeight + 系统 inset + bottomBarProtrusion（约 60 + inset）。
+     */
+    val bottomBarProtrusion = 0.dp
+
+    /** 底栏宽度占比（刻意非全宽：两侧留白，后续还能继续加按钮） */
+    const val bottomBarWidthFraction = 0.84f
+
+    /** 底栏左右两个 tab 按钮的命中区边长（Material 建议 ≥ 48dp） */
+    val bottomBarTabHitSize = 48.dp
+
+    /** 底栏 tab 选中胶囊的边长（纯视觉，小于命中区） */
+    val bottomBarTabPillSize = 40.dp
+
+    // ---- 底栏「本地曲库」态中键迷你播放器（Android-only 设计，复用旧迷你条组件）----
+
+    /** 中键迷你播放器行封面边长 */
+    val bottomBarMiniCoverSize = 46.dp
+
+    /** 中键迷你播放器行播放/暂停按钮直径 */
+    val bottomBarMiniPlaySize = 40.dp
+
+    /** 中键迷你播放器行进度条高度 */
+    val bottomBarMiniProgressHeight = 3.dp
 }
 
 /**

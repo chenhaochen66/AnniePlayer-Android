@@ -106,8 +106,7 @@ fun MenuDrawer(
         animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
         label = "menuDrawerSlide",
     )
-    val density = LocalDensity.current
-    val statusBarTop = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
+    val statusBarTop = with(LocalDensity.current) { WindowInsets.statusBars.getTop(this).toDp() }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val panelWidth = maxWidth * AppSize.drawerWidthFraction
@@ -129,6 +128,8 @@ fun MenuDrawer(
                 .fillMaxHeight()
                 .offset { IntOffset((-slide.value * panelWidth.toPx()).roundToInt(), 0) }
                 .background(AppColors.drawerPanel)
+                // 抽屉铺满整个窗口（宿主不再统一内缩）：状态栏高度由自己补 → 标题与搜索页
+                // 「安妮音乐盒」落在同一水平线（两边都是「状态栏 + 40dp」起始）。
                 .padding(top = statusBarTop + AppSpacing.sp40)
                 // 吸收列表区空白点击（等价 Flutter ListView 的 opaque 命中行为）
                 .clickableNoRipple { }
@@ -139,21 +140,25 @@ fun MenuDrawer(
                     bottom = AppSpacing.sheetBottomInset,
                 ),
         ) {
-            // 标题行：关闭按钮 + 「菜单」
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
+            // ── 标题行（对齐 Flutter `menu_drawer.dart:89-114`）──
+            // 「×」关闭图标（22dp / white70 / 内边距 4）+ 12dp 间距 + 「菜单」（20sp / w700 / white）。
+            // 行高取 headerActionHeight(48dp)，与搜索页顶栏的「菜单按钮 + 大标题」同高 →
+            // 抽屉标题与「安妮音乐盒」在屏幕上**高度对齐**。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(AppSize.headerActionHeight),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = AppColors.white70,
                     modifier = Modifier
                         .clickableNoRipple(onClose)
-                        .padding(AppSpacing.sp4),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = null,
-                        tint = AppColors.white70,
-                        modifier = Modifier.size(AppIconSize.icon22),
-                    )
-                }
+                        .padding(AppSpacing.sp4)
+                        .size(AppIconSize.icon22),
+                )
                 Spacer(modifier = Modifier.width(AppSpacing.sp12))
                 Text(
                     text = "菜单",
@@ -312,7 +317,7 @@ private fun menuDrawerCacheSubtitle(cacheSize: MenuDrawerCacheSize): String = wh
     is MenuDrawerCacheSize.Ready -> if (cacheSize.bytes <= 0L) {
         "暂无可清理内容"
     } else {
-        "当前 ${menuDrawerFormatSize(cacheSize.bytes)}｜封面·试听缓存 + 私有目录下载 + 搜索/歌词缓存"
+        "当前 ${menuDrawerFormatSize(cacheSize.bytes)}｜播放缓存 + 封面/图片 + 下载文件 + 接口缓存"
     }
 }
 

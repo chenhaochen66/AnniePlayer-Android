@@ -18,6 +18,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
@@ -161,5 +162,27 @@ fun PauseIcon(modifier: Modifier = Modifier, tint: Color = Color.White) {
             size = androidx.compose.ui.geometry.Size(barW, size.height * 0.8f),
             cornerRadius = corner,
         )
+    }
+}
+
+/**
+ * 播放图标：实心**加粗**三角，与 [PauseIcon] 的笔画重量统一。
+ *
+ * 自绘原因与 [PauseIcon] 相同：`Icons.Default.PlayArrow` 属于 `material-icons-extended`，
+ * 且其线框偏细，和暂停条的视觉重量不一致（用户反馈「播放/暂停样式不统一」）。
+ */
+@Composable
+fun PlayIcon(modifier: Modifier = Modifier, tint: Color = Color.White) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        // 三角重心偏左，整体右移一点以获得视觉居中
+        val path = Path().apply {
+            moveTo(w * 0.28f, h * 0.13f)
+            lineTo(w * 0.87f, h * 0.50f)
+            lineTo(w * 0.28f, h * 0.87f)
+            close()
+        }
+        drawPath(path = path, color = tint)
     }
 }

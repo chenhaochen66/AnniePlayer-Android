@@ -284,3 +284,148 @@ fun PlaceholderText(text: String, modifier: Modifier = Modifier) {
         Text(text = text)
     }
 }
+
+/** 自绘图标的统一笔画比例（对齐 Material 图标在 24dp 栅格上约 2dp 的线条，见 [LocalLibraryGlyph] 注释） */
+private const val GlyphStrokeRatio = 0.09f
+
+/**
+ * 黑胶唱片占位（常驻底栏中键「无歌可放」时的封面占位）。
+ *
+ * 画法沿用本文件既有自绘风格（相对尺寸 + 圆头/细描边），零位图资源：
+ * - 黑色盘体 + 一圈弱外沿（让黑盘在深色背景上仍有轮廓，不至于「糊」进背景）；
+ * - 三道细沟槽环（越外越淡），暗示唱片纹理；
+ * - 主色中心标签 + 一圈细描边 + 页面底色轴孔。
+ *
+ * @param labelColor 中心标签色，默认主色（可传动态色板主色）。
+ * @param discColor 盘体色，默认纯黑（深色主题下比 surface 更「唱片」）。
+ */
+@Composable
+fun VinylRecord(
+    modifier: Modifier = Modifier,
+    labelColor: Color = AppColors.primary,
+    discColor: Color = AppColors.black,
+) {
+    Canvas(modifier = modifier) {
+        val d = size.minDimension
+        val r = d / 2f
+        val center = Offset(size.width / 2f, size.height / 2f)
+
+        // 盘体
+        drawCircle(color = discColor, radius = r, center = center)
+        // 外沿：细一圈白 15%，把黑盘从背景里「勾」出来
+        drawCircle(
+            color = AppColors.whiteA15,
+            radius = r - d * 0.005f,
+            center = center,
+            style = Stroke(width = d * 0.01f),
+        )
+        // 沟槽环：由外到内三道，外侧略亮
+        drawCircle(
+            color = AppColors.whiteA06,
+            radius = r * 0.86f,
+            center = center,
+            style = Stroke(width = d * 0.008f),
+        )
+        drawCircle(
+            color = AppColors.whiteA04,
+            radius = r * 0.72f,
+            center = center,
+            style = Stroke(width = d * 0.008f),
+        )
+        drawCircle(
+            color = AppColors.whiteA04,
+            radius = r * 0.58f,
+            center = center,
+            style = Stroke(width = d * 0.008f),
+        )
+        // 中心标签 + 标签描边 + 轴孔
+        drawCircle(color = labelColor, radius = r * 0.32f, center = center)
+        drawCircle(
+            color = AppColors.whiteA06,
+            radius = r * 0.32f,
+            center = center,
+            style = Stroke(width = d * 0.01f),
+        )
+        drawCircle(color = AppColors.background, radius = r * 0.055f, center = center)
+    }
+}
+
+/**
+ * 放大镜（底栏「搜索」tab 图标，自绘）。
+ *
+ * 为什么不直接用 `Icons.Default.Search`：本工程底栏另两个图形（[SearchGlyph] 的同侪
+ * [LocalLibraryGlyph] 与 [VinylRecord]）都是「圆头描边 + [GlyphStrokeRatio] 比例」的自绘风格，
+ * 而 material-icons-core 的 Search 是实心路径且端点为平头，三者并排会出现粗细/端点不一致，
+ * 因此统一自绘。
+ */
+@Composable
+fun SearchGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * GlyphStrokeRatio
+        val lensRadius = w * 0.30f
+        val lensCenter = Offset(w * 0.44f, h * 0.44f)
+
+        drawCircle(
+            color = tint,
+            radius = lensRadius,
+            center = lensCenter,
+            style = Stroke(width = stroke),
+        )
+        // 手柄：自镜头 45° 处起，指向右下角（端点圆头，与其它 glyph 一致）
+        drawLine(
+            color = tint,
+            start = Offset(
+                lensCenter.x + lensRadius * 0.707f,
+                lensCenter.y + lensRadius * 0.707f,
+            ),
+            end = Offset(w * 0.86f, h * 0.86f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+    }
+}
+
+/**
+ * 「本地曲库」glyph（底栏右侧 tab 图标，自绘）。
+ *
+ * 语义拆解：圆角矩形 = 唱片套 / 文库，内嵌八分音符 = 音乐，合起来表达「本地音乐库」；
+ * 与 [SearchGlyph]、[VinylRecord] 共用 [GlyphStrokeRatio] 的圆头笔画，三个图形并排粗细一致。
+ */
+@Composable
+fun LocalLibraryGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * GlyphStrokeRatio
+        val inset = stroke / 2f
+
+        // 外框（唱片套 / 文库）
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(inset, h * 0.10f + inset),
+            size = Size(w - stroke, h * 0.80f - stroke),
+            cornerRadius = CornerRadius(w * 0.20f, w * 0.20f),
+            style = Stroke(width = stroke),
+        )
+        // 内嵌音符：符干 + 符头 + 符尾（笔画略收细，避免与外框糊在一起）
+        val noteStroke = stroke * 0.88f
+        val stemX = w * 0.60f
+        drawLine(
+            color = tint,
+            start = Offset(stemX, h * 0.30f),
+            end = Offset(stemX, h * 0.62f),
+            strokeWidth = noteStroke,
+            cap = StrokeCap.Round,
+        )
+        drawCircle(color = tint, radius = w * 0.085f, center = Offset(w * 0.505f, h * 0.645f))
+        drawLine(
+            color = tint,
+            start = Offset(stemX, h * 0.30f),
+            end = Offset(w * 0.735f, h * 0.365f),
+            strokeWidth = noteStroke,
+            cap = StrokeCap.Round,
+        )
+    }
+}

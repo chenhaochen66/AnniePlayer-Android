@@ -62,6 +62,9 @@ interface PlayerBackend {
 
     suspend fun setVolume(volume: Double)
 
+    /** 清理播放缓存（Media3 流式缓存）；返回释放的字节数（未接线时 0） */
+    suspend fun clearPlaybackCache(): Long
+
     /** 引擎事件流（keyed map，见接口 KDoc） */
     val events: Flow<Map<String, Any?>>
 }
@@ -277,6 +280,9 @@ class PlayerViewModel : ViewModel() {
     }
 
     /** 引擎调用（fire-and-forget，异常静默，对齐 Dart 未 await 的调用点） */
+    /** 清理播放缓存（转发给引擎；未接线时返回 0） */
+    suspend fun clearPlaybackCache(): Long = _backend?.clearPlaybackCache() ?: 0L
+
     private fun _backendCall(block: suspend (PlayerBackend) -> Unit) {
         val b = _backend ?: return
         viewModelScope.launch {

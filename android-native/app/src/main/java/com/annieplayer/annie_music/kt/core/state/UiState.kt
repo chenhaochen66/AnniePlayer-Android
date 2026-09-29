@@ -58,6 +58,9 @@ data class UiState(
     val artistPickerVisible: Boolean = false,
     val pickerSong: Song? = null,
     val contactVisible: Boolean = false,
+
+    /** 「清除缓存」弹窗（列出各类缓存体积，勾选后清理） */
+    val cacheClearVisible: Boolean = false,
     val isDragging: Boolean = false,
     val seekRatio: Double = 0.0,
     val albumDetailVisible: Boolean = false,
@@ -87,6 +90,7 @@ data class UiState(
         artistPickerVisible: Boolean? = null,
         pickerSong: Song? = null,
         contactVisible: Boolean? = null,
+    cacheClearVisible: Boolean? = null,
         isDragging: Boolean? = null,
         seekRatio: Double? = null,
         albumDetailVisible: Boolean? = null,
@@ -109,6 +113,7 @@ data class UiState(
         artistPickerVisible = artistPickerVisible ?: this.artistPickerVisible,
         pickerSong = pickerSong ?: this.pickerSong,
         contactVisible = contactVisible ?: this.contactVisible,
+        cacheClearVisible = cacheClearVisible ?: this.cacheClearVisible,
         isDragging = isDragging ?: this.isDragging,
         seekRatio = seekRatio ?: this.seekRatio,
         albumDetailVisible = albumDetailVisible ?: this.albumDetailVisible,
@@ -162,6 +167,10 @@ class UiViewModel : ViewModel() {
 
     fun setContactVisible(visible: Boolean) {
         _state.value = _state.value.copyWith(contactVisible = visible)
+    }
+
+    fun setCacheClearVisible(visible: Boolean) {
+        _state.value = _state.value.copyWith(cacheClearVisible = visible)
     }
 
     /** 拖动进度条（seekRatio 为 null 时归 0，对齐 Dart） */

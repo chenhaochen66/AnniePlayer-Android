@@ -19,9 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -50,6 +47,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppShadow
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.PauseIcon
+import com.annieplayer.annie_music.kt.widgets.PlayIcon
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import kotlin.math.roundToInt
 
@@ -295,11 +293,9 @@ fun PlayerControlsBar(
                     tint = AppColors.surface,
                 )
             } else {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    tint = AppColors.surface,
+                PlayIcon(
                     modifier = Modifier.size(AppIconSize.icon26),
+                    tint = AppColors.surface,
                 )
             }
         }

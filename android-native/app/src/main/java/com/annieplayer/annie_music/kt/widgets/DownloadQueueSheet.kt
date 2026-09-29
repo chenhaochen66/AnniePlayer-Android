@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -144,7 +144,12 @@ fun DownloadQueueSheet(
                 .fillMaxSize()
                 .graphicsLayer { translationY = slide * size.height }
                 .background(AppColors.background)
-                .statusBarsPadding(),
+                // 面板必须自己**吃掉点击**：本面板是全屏的，而 Modifier.background 不参与命中测试，
+                // 一旦不吃事件，点面板空白处就会穿透到后面整屏遮罩的 onClose → 表现为「一碰就返回」。
+                // 关页只走系统返回手势（BackHandler）或标题栏关闭按钮。
+                .clickableNoRipple { }
+                // 全屏页：顶/底 inset 都自己补（宿主已不再统一内缩）→ 列表底部不会被手势条压住
+                .systemBarsPadding(),
         ) {
             DownloadQueueHeader(onClose = onClose)
             DownloadQueueTabs(current = tab, onTabChange = { tab = it })
