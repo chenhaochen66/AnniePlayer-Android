@@ -496,9 +496,9 @@ object DownloadService {
         releaseDate: String?,
     ) {
         // 交给 ffmpeg 写入（覆盖 mp3/flac/m4a 等全格式，对齐 Flutter 的 ffmpeg 打标）
-        val ok = FfmpegTagger.tagInPlace(
+        fun runTag(cover: String?): Boolean = FfmpegTagger.tagInPlace(
             inputPath = inputPath,
-            coverPath = coverPath,
+            coverPath = cover,
             title = title,
             artist = artist,
             album = album,
@@ -508,6 +508,13 @@ object DownloadService {
             discNumber = discNumber,
             releaseDate = releaseDate,
         )
+
+        var ok = runTag(coverPath)
+        if (!ok && coverPath != null) {
+            // 封面常是打标失败主因：去掉封面重试一次，至少保证文本标签写入（对齐 Flutter）
+            Log.w(TAG, "[tag] ffmpeg 带封面打标失败，去封面重试: $inputPath")
+            ok = runTag(null)
+        }
         if (!ok) {
             Log.w(TAG, "[tag] ffmpeg 打标失败，保留原始文件: $inputPath")
             return

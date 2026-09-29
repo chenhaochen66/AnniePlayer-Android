@@ -70,10 +70,10 @@ dependencies {
 
     // 网络层（对齐 Flutter 端 dio 的角色）
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // ffmpeg（社区维护分叉，同 com.arthenica.ffmpegkit API）：下载 / DRM 解密后写元数据
-    // （封面 attached_pic + 歌词 + 曲目号 + 年份），覆盖 mp3/flac/m4a 等全部封装，
-    // 替代此前手写的 ID3v2.4 / Vorbis 写入器。
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-min:8.1.9")
+    // ffmpeg（社区维护分叉，同 com.arthenica.ffmpegkit API）：写元数据（封面 attached_pic +
+    // 歌词 + 曲目号 + 年份），并支持音频转码（audio 档含 libmp3lame/AAC/opus/vorbis 编码器）。
+    // 覆盖 mp3/flac/m4a 等全部封装；替代此前手写的 ID3v2.4 / Vorbis 写入器。
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.9")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
