@@ -23,3 +23,10 @@ modules/*/android/build/
 release/
 .agents/out*.json
 .omo/
+
+# kotlin-native（android-native/）构建产物与本地配置
+android-native/.gradle/
+android-native/.kotlin/
+android-native/build/
+android-native/app/build/
+android-native/local.properties

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 取自 Flutter 工程，保证自适应图标前景/背景衔接一致 -->
+    <color name="ic_launcher_background">#587FC0</color>
+</resources>

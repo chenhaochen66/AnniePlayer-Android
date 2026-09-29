@@ -1,0 +1,846 @@
+package com.annieplayer.annie_music.kt.features.kkbox
+
+import android.content.Context
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
+import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
+import com.annieplayer.annie_music.kt.core.util.enqueueDownload
+import com.annieplayer.annie_music.kt.data.DownloadDirService
+import com.annieplayer.annie_music.kt.data.DownloadService
+import com.annieplayer.annie_music.kt.data.model.KkboxAccount
+import com.annieplayer.annie_music.kt.data.model.KkboxSession
+import com.annieplayer.annie_music.kt.data.model.KkboxTrack
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
+import com.annieplayer.annie_music.kt.data.model.Quality
+import com.annieplayer.annie_music.kt.data.model.Song
+import com.annieplayer.annie_music.kt.data.sources.formatNameToQuality
+import com.annieplayer.annie_music.kt.data.sources.getDownloadUrl
+import com.annieplayer.annie_music.kt.data.sources.getKkboxAlbum
+import com.annieplayer.annie_music.kt.data.sources.getPlayUrl
+import com.annieplayer.annie_music.kt.data.sources.getSongLyrics
+import com.annieplayer.annie_music.kt.data.sources.getSongs
+import com.annieplayer.annie_music.kt.data.sources.isDrmFormat
+import com.annieplayer.annie_music.kt.data.sources.mapAlbumToKkboxAlbum
+import com.annieplayer.annie_music.kt.data.sources.mapSongToKkboxTrack
+import com.annieplayer.annie_music.kt.data.sources.qualityExtension
+import com.annieplayer.annie_music.kt.data.sources.streamDecryptKkboxAudio
+import com.annieplayer.annie_music.kt.ui.theme.AppBorder
+import com.annieplayer.annie_music.kt.ui.theme.AppColors
+import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
+import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
+import com.annieplayer.annie_music.kt.ui.theme.AppRadius
+import com.annieplayer.annie_music.kt.ui.theme.AppSize
+import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
+import com.annieplayer.annie_music.kt.widgets.CheckSquareIcon
+import com.annieplayer.annie_music.kt.widgets.DetailCheckBoxBlank
+import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
+import com.annieplayer.annie_music.kt.widgets.DetailDownloadSolid
+import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
+import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
+import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
+import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
+import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** 列表行高（对齐 Dart `_rowHeight = 60`） */
+private val KkboxDetailRowHeight = AppSize.detailRowHeight
+
+/** 行 / 头部横向内边距（对齐 Dart `_screenPaddingH = 24`） */
+private val KkboxDetailScreenPaddingH = AppSpacing.sp24
+
+/** KKBOX 详情页可变状态（对齐 Dart `_KkboxDetailScreenState` 的字段） */
+private class KkboxDetailScreenState {
+    var tracks by mutableStateOf<List<KkboxTrack>>(emptyList())
+    var cover by mutableStateOf("")
+    var title by mutableStateOf("")
+    var artist by mutableStateOf("")
+    var year by mutableStateOf<String?>(null)
+    var loading by mutableStateOf(true)
+    var error by mutableStateOf("")
+    var loadedSid by mutableStateOf<String?>(null)
+
+    var downloadingId by mutableStateOf<String?>(null)
+    var selectMode by mutableStateOf(false)
+    val selectedIds = mutableStateListOf<String>()
+    var batchDownloading by mutableStateOf(false)
+    var batchProgress by mutableStateOf("")
+}
+
+/** KKBOX 活跃账号（对齐 Dart `getActiveAccount`：优先 `isActive`，否则首个） */
+private fun kkboxDetailActiveAccount(accounts: List<KkboxAccount>): KkboxAccount? =
+    accounts.firstOrNull { it.isActive } ?: accounts.firstOrNull()
+
+/**
+ * KKBOX 详情整页（1:1 移植 Flutter `lib/features/kkbox/kkbox_detail_screen.dart`）。
+ *
+ * 路由参数 [type]（`song` / `album`）与 [id] 对应 Dart 的 query / extra。
+ * 无活跃账号（或未登录）时展示提示；播放走 `getPlayUrl`（chromecast 免 DRM），
+ * 下载走 `getDownloadUrl` + RC4 流式解密（Kotlin 无 ffmpeg，跳过元数据打标）。
+ *
+ * 行为对齐点：
+ * - 账号 / 会话变化后按 `session.sid` 自动重载（对齐 Dart `ref.listen`）。
+ * - `_load` 的错误分支：含 session / login 的报错转为「会话已过期…」。
+ * - 播放 / 下载过程中会话被续期时，回写 `updateAccountSession`。
+ * - 下载：hires 固定音质；批量逐个下载并汇报进度。
+ * - 返回手势：多选模式优先退出（对齐 Dart `PopScope(canPop: !_selectMode)`）。
+ */
+@Composable
+fun KkboxDetailScreen(
+    kkboxViewModel: KkboxViewModel,
+    playerViewModel: PlayerViewModel,
+    downloadViewModel: DownloadViewModel,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    type: String = "",
+    id: String = "",
+) {
+    val st = remember { KkboxDetailScreenState() }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val accounts by kkboxViewModel.state.collectAsState()
+
+    /** `KkboxTrack` -> `Song`（对齐 Dart 的 `kkbox:${t.id}` 构造） */
+    fun toSong(track: KkboxTrack): Song = Song(
+        id = "kkbox:${track.id}",
+        title = track.title,
+        artist = track.artist,
+        cover = track.cover,
+        album = track.album,
+        duration = track.duration,
+        platform = MusicPlatform.kkbox,
+        albumArtist = track.albumArtist,
+        trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
+        releaseDate = track.releaseDate,
+    )
+
+    suspend fun load() {
+        val account = kkboxViewModel.getActiveAccount()
+        val session = account?.session
+        if (session == null || !session.loggedIn) {
+            st.loading = false
+            st.error = if (type.isEmpty() || id.isEmpty()) "缺少参数" else "请先在设置中配置并登录 KKBOX"
+            return
+        }
+        if (type.isEmpty() || id.isEmpty()) {
+            st.loading = false
+            st.error = "缺少参数"
+            return
+        }
+        st.loading = true
+        st.error = ""
+        try {
+            if (type == "song") {
+                val rawSongs = getSongs(session.sid, listOf(id))
+                if (rawSongs.isEmpty()) throw IllegalStateException("歌曲不存在")
+                val track = mapSongToKkboxTrack(rawSongs.first())
+                st.tracks = listOf(track)
+                st.cover = track.cover
+                st.title = track.title
+                st.artist = track.artist
+                st.year = null
+            } else {
+                val data = getKkboxAlbum(session.sid, id)
+                val album = mapAlbumToKkboxAlbum(data.album, data.songs)
+                st.tracks = album.tracks
+                st.cover = album.cover
+                st.title = album.title
+                st.artist = if (album.artist.isNotEmpty()) {
+                    album.artist
+                } else {
+                    album.tracks.firstOrNull()?.artist ?: ""
+                }
+                st.year = album.year.ifEmpty { null }
+            }
+            st.loadedSid = session.sid
+        } catch (e: Exception) {
+            val message = kkboxDetailErrText(e)
+            st.error = if (message.contains("session") || message.contains("login")) {
+                "会话已过期，请在设置中重新登录"
+            } else {
+                message
+            }
+        }
+        st.loading = false
+    }
+
+    fun play(track: KkboxTrack) {
+        scope.launch {
+            val account = kkboxViewModel.getActiveAccount()
+            val session = account?.session
+            if (account == null || session == null || !session.loggedIn) {
+                st.error = "未登录"
+                return@launch
+            }
+            try {
+                val result = getPlayUrl(session.sid, track.id, session.kkid)
+                if (result.url.isEmpty()) return@launch
+                if (result.sid != session.sid) {
+                    kkboxViewModel.updateAccountSession(
+                        account.id,
+                        KkboxSession(
+                            sid = result.sid,
+                            licContentKey = session.licContentKey,
+                            highQuality = session.highQuality,
+                            kkid = session.kkid,
+                            email = session.email,
+                            loggedIn = true,
+                        ),
+                    )
+                }
+                val allTracks = if (st.tracks.size > 1) st.tracks else listOf(track)
+                val index = allTracks.indexOfFirst { it.id == track.id }
+                val songs = allTracks.map { t ->
+                    Song(
+                        id = "kkbox:${t.id}",
+                        title = t.title,
+                        artist = t.artist,
+                        cover = t.cover,
+                        album = t.album,
+                        duration = t.duration,
+                        platform = MusicPlatform.kkbox,
+                        playUrl = result.url,
+                        albumArtist = t.albumArtist,
+                        trackNumber = if (t.trackNumber > 0) t.trackNumber.toString() else null,
+                        releaseDate = t.releaseDate,
+                    )
+                }
+                playerViewModel.setQueue(songs, if (index < 0) 0 else index)
+            } catch (e: Exception) {
+                st.error = kkboxDetailErrText(e)
+            }
+        }
+    }
+
+    fun downloadTrack(track: KkboxTrack) {
+        val account = kkboxViewModel.getActiveAccount()
+        val session = account?.session
+        if (account == null || session == null || !session.loggedIn) return
+        val songId = "kkbox:${track.id}"
+        val song = toSong(track)
+        st.downloadingId = track.id
+        downloadViewModel.addTask(song, Quality.hires)
+        enqueueDownload(songId) {
+            try {
+                val filePath = kkboxDetailDownloadTrack(
+                    context = context,
+                    track = track,
+                    songId = songId,
+                    kkboxViewModel = kkboxViewModel,
+                    accountId = account.id,
+                    session = session,
+                    updateProgress = { v ->
+                        downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
+                    },
+                )
+                downloadViewModel.completeTask(songId, filePath)
+                playerViewModel.addDownloadedId(songId)
+                playerViewModel.addToQueue(song)
+            } catch (_: Exception) {
+                downloadViewModel.failTask(songId)
+            }
+            withContext(Dispatchers.Main) { st.downloadingId = null }
+        }
+    }
+
+    fun batchDownload() {
+        if (st.batchDownloading) return
+        val account = kkboxViewModel.getActiveAccount()
+        val session = account?.session
+        if (account == null || session == null || !session.loggedIn) return
+        val selected = st.tracks.filter { st.selectedIds.contains(it.id) }
+        if (selected.isEmpty()) return
+        st.batchDownloading = true
+        for (t in selected) downloadViewModel.addTask(toSong(t), Quality.hires)
+        val batchId = "kkbox_batch_${System.currentTimeMillis()}"
+        enqueueDownload(batchId) {
+            var success = 0
+            for (i in selected.indices) {
+                val t = selected[i]
+                val songId = "kkbox:${t.id}"
+                val song = toSong(t)
+                withContext(Dispatchers.Main) { st.batchProgress = "${i + 1}/${selected.size} ${t.title}" }
+                downloadViewModel.updateProgress(songId, 0.0)
+                try {
+                    val filePath = kkboxDetailDownloadTrack(
+                        context = context,
+                        track = t,
+                        songId = songId,
+                        kkboxViewModel = kkboxViewModel,
+                        accountId = account.id,
+                        session = session,
+                        updateProgress = { v ->
+                            downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
+                        },
+                    )
+                    downloadViewModel.completeTask(songId, filePath)
+                    playerViewModel.addDownloadedId(songId)
+                    playerViewModel.addToQueue(song)
+                    success++
+                } catch (_: Exception) {
+                    downloadViewModel.failTask(songId)
+                }
+            }
+            withContext(Dispatchers.Main) {
+                st.batchDownloading = false
+                st.batchProgress = "下载完成 $success/${selected.size}"
+                st.selectMode = false
+                st.selectedIds.clear()
+            }
+        }
+    }
+
+    LaunchedEffect(type, id) { load() }
+
+    // 账号 / 会话变化后自动重载（对齐 Dart `ref.listen(kkboxStoreProvider)`；跳过首帧初值）
+    val sessionSid = kkboxDetailActiveAccount(accounts)?.session?.sid
+    var skipFirstSessionWatch by remember { mutableStateOf(true) }
+    LaunchedEffect(sessionSid) {
+        if (skipFirstSessionWatch) {
+            skipFirstSessionWatch = false
+            return@LaunchedEffect
+        }
+        if (sessionSid != null && sessionSid != st.loadedSid && !st.loading) load()
+    }
+
+    // 返回手势：多选模式优先退出（对齐 Dart `PopScope(canPop: !_selectMode)`）
+    BackHandler {
+        if (st.selectMode) {
+            st.selectMode = false
+        } else {
+            onBack()
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize().background(AppColors.background)) {
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+            KkboxDetailHeader(
+                type = type,
+                trackCount = st.tracks.size,
+                selectMode = st.selectMode,
+                selectedAll = st.selectedIds.size == st.tracks.size,
+                onBack = onBack,
+                onToggleSelectAll = {
+                    if (st.selectedIds.size == st.tracks.size) {
+                        st.selectedIds.clear()
+                    } else {
+                        st.selectedIds.clear()
+                        st.selectedIds.addAll(st.tracks.map { it.id })
+                    }
+                },
+                onToggleSelectMode = {
+                    st.selectMode = !st.selectMode
+                    st.selectedIds.clear()
+                },
+            )
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                KkboxDetailBody(
+                    st = st,
+                    onPlay = { play(it) },
+                    onDownload = { downloadTrack(it) },
+                    onToggleSelect = { tid ->
+                        if (!st.selectedIds.remove(tid)) st.selectedIds.add(tid)
+                    },
+                    onBatch = { batchDownload() },
+                )
+            }
+        }
+    }
+}
+
+/** 返回条：chevron_left + 标题 +（多选时）全选 +（专辑且多曲时）选择 / 取消 */
+@Composable
+private fun KkboxDetailHeader(
+    type: String,
+    trackCount: Int,
+    selectMode: Boolean,
+    selectedAll: Boolean,
+    onBack: () -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onToggleSelectMode: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = AppSpacing.sp12, end = AppSpacing.sp12, top = AppSpacing.sp40, bottom = AppSpacing.sp4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .clickableNoRipple(onBack)
+                .padding(AppSpacing.sp4),
+            contentAlignment = Alignment.Center,
+        ) {
+            DetailChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
+        }
+        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+        Text(
+            text = if (type == "album") "KKBOX专辑详情" else "KKBOX单曲详情",
+            modifier = Modifier.weight(1f),
+            color = AppColors.textPrimary,
+            fontSize = AppFontSize.lg,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (selectMode) {
+            Box(
+                modifier = Modifier
+                    .clickableNoRipple(onToggleSelectAll)
+                    .padding(AppSpacing.sp4),
+            ) {
+                Text(
+                    text = if (selectedAll) "取消全选" else "全选",
+                    color = AppColors.primary,
+                    fontSize = AppFontSize.size13,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+        if (type == "album" && trackCount > 1) {
+            Box(
+                modifier = Modifier
+                    .clickableNoRipple(onToggleSelectMode)
+                    .padding(AppSpacing.sp4),
+            ) {
+                Text(
+                    text = if (selectMode) "取消" else "选择",
+                    color = AppColors.primary,
+                    fontSize = AppFontSize.size13,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+    }
+}
+
+/** 主体：加载中 / 错误态 / 列表（头部 + 曲目行） */
+@Composable
+private fun KkboxDetailBody(
+    st: KkboxDetailScreenState,
+    onPlay: (KkboxTrack) -> Unit,
+    onDownload: (KkboxTrack) -> Unit,
+    onToggleSelect: (String) -> Unit,
+    onBatch: () -> Unit,
+) {
+    when {
+        st.loading -> {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = AppColors.primary)
+            }
+        }
+
+        st.error.isNotEmpty() -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = AppSpacing.sp24),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                DetailErrorOutline(modifier = Modifier.size(AppIconSize.icon36), tint = AppColors.textDisabled)
+                Spacer(modifier = Modifier.height(AppSpacing.sp12))
+                Text(
+                    text = st.error,
+                    color = AppColors.whiteA40,
+                    fontSize = AppFontSize.base,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+
+        else -> {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
+            ) {
+                item {
+                    KkboxDetailListHeader(st = st, onBatch = onBatch)
+                }
+                items(count = st.tracks.size) { index ->
+                    val track = st.tracks[index]
+                    KkboxDetailTrackRow(
+                        track = track,
+                        index = index,
+                        selectMode = st.selectMode,
+                        selected = st.selectedIds.contains(track.id),
+                        downloading = st.downloadingId == track.id,
+                        onPlay = onPlay,
+                        onDownload = onDownload,
+                        onToggle = onToggleSelect,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 列表头：封面 100（圆角 10）+ 标题 17 / 歌手 13 /（年份 · 曲目数）11 + 批量下载按钮 */
+@Composable
+private fun KkboxDetailListHeader(st: KkboxDetailScreenState, onBatch: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = KkboxDetailScreenPaddingH, vertical = AppSpacing.sp16),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(AppSize.coverPlaceholder)
+                .clip(RoundedCornerShape(AppRadius.r10))
+                .background(AppColors.whiteA03),
+            contentAlignment = Alignment.Center,
+        ) {
+            var coverFailed by remember(st.cover) { mutableStateOf(false) }
+            if (st.cover.isEmpty() || coverFailed) {
+                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.white24)
+            } else {
+                AsyncImage(
+                    model = st.cover,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onError = { coverFailed = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(AppSpacing.sp14))
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            Text(
+                text = st.title,
+                color = AppColors.textPrimary,
+                fontSize = AppFontSize.size17,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(AppSpacing.sp4))
+            Text(
+                text = st.artist,
+                color = AppColors.whiteA50,
+                fontSize = AppFontSize.size13,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(AppSpacing.sp2))
+            Row {
+                val year = st.year
+                if (year != null) {
+                    Text(
+                        text = year,
+                        modifier = Modifier.padding(end = AppSpacing.sp8),
+                        color = AppColors.whiteA25,
+                        fontSize = AppFontSize.xs,
+                    )
+                }
+                Text(
+                    text = "${st.tracks.size} 首",
+                    color = AppColors.whiteA25,
+                    fontSize = AppFontSize.xs,
+                )
+            }
+        }
+        if (st.selectMode && st.selectedIds.isNotEmpty()) {
+            Spacer(modifier = Modifier.width(AppSpacing.sp8))
+            KkboxDetailBatchButton(
+                batchDownloading = st.batchDownloading,
+                progress = st.batchProgress,
+                count = st.selectedIds.size,
+                onTap = onBatch,
+            )
+        }
+    }
+}
+
+/** 批量下载按钮（最小宽 80；下载中显示 16dp 环 + 进度文案） */
+@Composable
+private fun KkboxDetailBatchButton(
+    batchDownloading: Boolean,
+    progress: String,
+    count: Int,
+    onTap: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .graphicsLayer { alpha = if (batchDownloading) 0.5f else 1f }
+            .widthIn(min = 80.dp)
+            .clip(RoundedCornerShape(AppRadius.r10))
+            .background(AppColors.primary)
+            .then(if (batchDownloading) Modifier else Modifier.clickableNoRipple(onTap))
+            .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp14),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (batchDownloading) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(AppIconSize.icon16),
+                    color = AppColors.white,
+                    strokeWidth = AppBorder.thick,
+                )
+                Spacer(modifier = Modifier.height(AppSpacing.sp2))
+                Text(
+                    text = progress,
+                    modifier = Modifier.width(76.dp),
+                    color = AppColors.white,
+                    fontSize = AppFontSize.size10,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                DetailDownloadSolid(modifier = Modifier.size(AppIconSize.icon20), tint = AppColors.white)
+                Spacer(modifier = Modifier.height(AppSpacing.sp2))
+                Text(
+                    text = "$count",
+                    color = AppColors.white,
+                    fontSize = AppFontSize.xs,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+/** 曲目行：多选框 + 序号 + 标题 +（下载中环 | 下载按钮）；行底 1dp 分隔线 */
+@Composable
+private fun KkboxDetailTrackRow(
+    track: KkboxTrack,
+    index: Int,
+    selectMode: Boolean,
+    selected: Boolean,
+    downloading: Boolean,
+    onPlay: (KkboxTrack) -> Unit,
+    onDownload: (KkboxTrack) -> Unit,
+    onToggle: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(KkboxDetailRowHeight)
+            .background(if (selected) AppColors.primaryA08 else Color.Transparent)
+            .drawBehind {
+                val stroke = AppBorder.thin.toPx()
+                drawLine(
+                    color = AppColors.whiteA04,
+                    start = Offset(0f, size.height - stroke / 2f),
+                    end = Offset(size.width, size.height - stroke / 2f),
+                    strokeWidth = stroke,
+                )
+            }
+            .clickableNoRipple { if (selectMode) onToggle(track.id) else onPlay(track) }
+            .padding(horizontal = KkboxDetailScreenPaddingH, vertical = AppSpacing.sp10),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (selectMode) {
+            if (selected) {
+                CheckSquareIcon(modifier = Modifier.size(AppSpacing.sp20))
+            } else {
+                DetailCheckBoxBlank(modifier = Modifier.size(AppSpacing.sp20), tint = AppColors.whiteA25)
+            }
+            Spacer(modifier = Modifier.width(AppSpacing.sp10))
+        }
+        Box(modifier = Modifier.width(AppSpacing.sp24), contentAlignment = Alignment.Center) {
+            Text(
+                text = "${index + 1}",
+                color = AppColors.whiteA25,
+                fontSize = AppFontSize.sm,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Spacer(modifier = Modifier.width(AppSpacing.sp10))
+        Text(
+            text = track.title,
+            modifier = Modifier.weight(1f),
+            color = AppColors.textPrimary,
+            fontSize = AppFontSize.base,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (downloading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(AppIconSize.icon20),
+                color = AppColors.primary,
+                strokeWidth = AppBorder.thick,
+            )
+        } else if (!selectMode) {
+            Box(
+                modifier = Modifier
+                    .clickableNoRipple { onDownload(track) }
+                    .padding(AppSpacing.sp4),
+                contentAlignment = Alignment.Center,
+            ) {
+                DownloadIconPlaceholder(
+                    modifier = Modifier.size(AppIconSize.icon16),
+                    tint = AppColors.textDisabled,
+                )
+            }
+        }
+    }
+}
+
+// ================================================================================================
+// 下载助手：DRM 走 RC4 流式解密（Kotlin 无 ffmpeg，跳过元数据打标），非 DRM 走 detailDownloadSong
+// ================================================================================================
+
+/**
+ * 下载单曲（DRM 解密；非 DRM 走 [detailDownloadSong]），返回最终文件路径。
+ *
+ * 对齐 Dart `_downloadKkboxTrack`；差异：解密后不走 ffmpeg 打标（与 `detailDownloadSong`
+ * 的既有移植程度一致），直接落盘到「用户自定义目录或 cacheDir/downloads」。
+ */
+private suspend fun kkboxDetailDownloadTrack(
+    context: Context,
+    track: KkboxTrack,
+    songId: String,
+    kkboxViewModel: KkboxViewModel,
+    accountId: String,
+    session: KkboxSession,
+    updateProgress: (Double) -> Unit,
+): String {
+    val dl = getDownloadUrl(session.sid, track.id, session.kkid, "hires")
+    if (dl.sid != session.sid) {
+        kkboxViewModel.updateAccountSession(
+            accountId,
+            KkboxSession(
+                sid = dl.sid,
+                licContentKey = session.licContentKey,
+                highQuality = session.highQuality,
+                kkid = session.kkid,
+                email = session.email,
+                loggedIn = true,
+            ),
+        )
+    }
+    val qualityKey = formatNameToQuality(dl.formatName)
+    val lyricResult = getSongLyrics(dl.sid, track.id)
+
+    if (isDrmFormat(dl.formatName)) {
+        val safeId = songId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+        val tmpFile = File(context.cacheDir, "kkbox_drm_$safeId${qualityExtension(qualityKey)}")
+        streamDecryptKkboxAudio(dl.url, session.licContentKey, tmpFile.absolutePath) { p ->
+            updateProgress(p * 90.0)
+        }
+        updateProgress(92.0)
+        val safeName = "${track.title} - ${track.artist}${qualityExtension(qualityKey)}"
+            .replace(Regex("""[/\\?%*:|"<>]"""), "_")
+        val customDir = DownloadDirService.getDownloadDirPath()
+        val downloadsDir = if (!customDir.isNullOrEmpty()) {
+            File(customDir)
+        } else {
+            File(context.cacheDir, "downloads")
+        }
+        if (!downloadsDir.exists()) downloadsDir.mkdirs()
+        val finalFile = File(downloadsDir, safeName)
+        if (finalFile.exists()) finalFile.delete()
+        val renamed = tmpFile.renameTo(finalFile)
+        val out = if (renamed) {
+            finalFile
+        } else {
+            tmpFile.copyTo(finalFile, overwrite = true)
+            tmpFile.delete()
+            finalFile
+        }
+        // 元数据打标（对齐 Flutter `_tagDrmAudio`；复用 DownloadService 的纯 Kotlin 写入器）
+        try {
+            DownloadService.tagAudioFile(
+                inputPath = out.absolutePath,
+                title = track.title,
+                artist = track.artist,
+                album = track.album,
+                coverUrl = track.cover,
+                lyric = DownloadService.mergeLyrics(lyricResult.lrc, lyricResult.tlyric),
+                albumArtist = track.albumArtist,
+                trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
+                releaseDate = track.releaseDate,
+                coverCacheKey = songId,
+            )
+        } catch (_: Throwable) {
+            // 打标失败保留原文件（对齐 Dart：失败则直接用原始文件）
+        }
+        updateProgress(100.0)
+        return out.absolutePath
+    }
+
+    return detailDownloadSong(
+        context = context,
+        songId = songId,
+        title = track.title,
+        artist = track.artist,
+        coverUrl = track.cover,
+        album = track.album,
+        downloadUrl = dl.url,
+        quality = kkboxDetailQualityFromKey(qualityKey),
+        onProgress = { p -> updateProgress(p * 100.0) },
+        lyric = lyricResult.lrc,
+        tlyric = lyricResult.tlyric,
+        albumArtist = track.albumArtist,
+        trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
+        releaseDate = track.releaseDate,
+    )
+}
+
+/** KKBOX 平台音质 key -> [Quality]（对齐 Dart `_qualityFromKey`） */
+private fun kkboxDetailQualityFromKey(key: String): Quality = when (key) {
+    "hires" -> Quality.hires
+    "hifi" -> Quality.flac
+    "320k", "192k" -> Quality.k320k
+    else -> Quality.k128k
+}
+
+/** 去掉 `Exception: ` 前缀的错误文案（对齐 Dart `_errText`） */
+private fun kkboxDetailErrText(e: Throwable): String =
+    (e.message ?: "").replaceFirst("Exception: ", "")
+
