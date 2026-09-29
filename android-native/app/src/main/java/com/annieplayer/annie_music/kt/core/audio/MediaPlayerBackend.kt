@@ -36,6 +36,7 @@ import com.annieplayer.annie_music.kt.data.sources.fetchQQMusicUrl
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToLong
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,7 +80,16 @@ class MediaPlayerBackend(
 
     private val _context: Context = appContext.applicationContext
 
-    private val _scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /**
+     * 引擎协程域。
+     *
+     * 必须带 [CoroutineExceptionHandler]：否则 `launch` 里漏网的异常会走默认未捕获处理器
+     * **直接崩掉进程**（`SupervisorJob` 只隔离兄弟任务，并不吞异常）。
+     */
+    private val _scope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            CoroutineExceptionHandler { _, e -> Log.e(_tag, "[audio] uncaught in engine scope", e) },
+    )
 
     private val _events = MutableSharedFlow<Map<String, Any?>>(
         replay = 0,
@@ -116,6 +126,13 @@ class MediaPlayerBackend(
     /** 当前这次 `_playAbsIndex` 是否已做过一次「清缓存 / 强刷解析」重试（对齐 Dart catch 分支） */
     private var _retriedCurrent: Boolean = false
 
+    /**
+     * 本实例是否仍是「当前活跃引擎」。Activity 重建时，新实例会接管进程内既有 ExoPlayer；
+     * 此时旧实例被置为 false，其监听/协程全部短路，避免两个 backend 争抢同一个 player。
+     */
+    @Volatile
+    private var _active: Boolean = true
+
     // ── 生命周期 ──
 
     /**
@@ -130,10 +147,21 @@ class MediaPlayerBackend(
         withContext(Dispatchers.Main.immediate) {
             if (_player != null) return@withContext
 
-            // 1) 磁盘缓存：等价于 Dart `getTemporaryDirectory`/audio_cache，交给 Media3 自管
-            val cacheDir = File(_context.cacheDir, _cacheDirName)
-            if (!cacheDir.exists()) cacheDir.mkdirs()
-            val cache = SimpleCache(cacheDir, LeastRecentlyUsedCacheEvictor(_cacheMaxBytes))
+            // ⓪ 进程级复用：Activity 重建（旋转 / 深色模式 / 分屏 / 从通知栏返回被回收的界面）
+            //    会让本方法在**同一进程**里被再次调用。`SimpleCache` 对同一目录在进程内只允许一个
+            //    实例（第二个实例直接抛 IllegalStateException 崩溃），且旧 ExoPlayer 可能仍在播放。
+            //    因此这里直接接管既有引擎，避免「二次 SimpleCache 崩溃」与「双引擎 / 控制失效」。
+            val existingPlayer = AnnieAudioHolder.player
+            val existingSession = AnnieAudioHolder.session
+            if (existingPlayer != null && existingSession != null) {
+                adoptEngine(existingPlayer, existingSession)
+                return@withContext
+            }
+
+            try {
+
+            // 1) 磁盘缓存：进程级单例（等价 Dart `getTemporaryDirectory`/audio_cache，交给 Media3 自管）
+            val cache = sharedCache(_context)
             _cache = cache
 
             val httpFactory = DefaultHttpDataSource.Factory()
@@ -171,9 +199,14 @@ class MediaPlayerBackend(
             _session = session
             AnnieAudioHolder.player = player
             AnnieAudioHolder.session = session
+            AnnieAudioHolder.cache = cache
+            AnnieAudioHolder.cachedSourceFactory = _cachedSourceFactory
+            AnnieAudioHolder.plainSourceFactory = _plainSourceFactory
             // 服务实例可能被系统回收（例如划掉任务且未在播放时 stopSelf）；一旦销毁需复位
             // _serviceStarted，否则后续播放不会再拉起前台服务/媒体通知。
             AnnieAudioHolder.onServiceStopped = { _serviceStarted = false }
+            // 供后续接管的新实例把本实例「下线」，避免两个 backend 争抢同一个 player
+            AnnieAudioHolder.onDeactivate = { deactivate() }
 
             // 4) bit-perfect groundwork
             _audioOutput = AudioOutputController(_context)
@@ -184,7 +217,57 @@ class MediaPlayerBackend(
 
             // 6) Android 13+ POST_NOTIFICATIONS
             _requestNotificationPermission()
+
+            } catch (t: Throwable) {
+                // 兜底：setup 阶段任何异常都不应让 App 闪退；记日志后由后续操作重试
+                Log.e(_tag, "[audio] setup failed", t)
+            }
         }
+    }
+
+    /**
+     * 接管进程内既有引擎（Activity 重建场景）：复用同一个 ExoPlayer / MediaSession / 磁盘缓存，
+     * 并把上一实例「下线」。这样既不二次创建 `SimpleCache`（会抛异常崩溃），也不产生双引擎。
+     */
+    private fun adoptEngine(player: ExoPlayer, session: MediaSession) {
+        Log.w(_tag, "[audio] adopt existing engine (activity recreated)")
+        // 先让旧实例停止其回调与进度协程
+        AnnieAudioHolder.onDeactivate?.invoke()
+
+        _player = player
+        _session = session
+        _cache = AnnieAudioHolder.cache ?: sharedCache(_context)
+
+        // 复用旧实例的数据源工厂；若缺失（理论上不会）则以共享缓存重建
+        if (AnnieAudioHolder.cachedSourceFactory == null) {
+            val httpFactory = DefaultHttpDataSource.Factory()
+                .setUserAgent(_userAgent)
+                .setAllowCrossProtocolRedirects(true)
+            val upstream: DataSource.Factory = DefaultDataSource.Factory(_context, httpFactory)
+            AnnieAudioHolder.cachedSourceFactory = DefaultMediaSourceFactory(
+                CacheDataSource.Factory()
+                    .setCache(_cache ?: sharedCache(_context))
+                    .setUpstreamDataSourceFactory(upstream)
+                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR),
+            )
+            AnnieAudioHolder.plainSourceFactory = DefaultMediaSourceFactory(upstream)
+        }
+        _cachedSourceFactory = AnnieAudioHolder.cachedSourceFactory
+        _plainSourceFactory = AnnieAudioHolder.plainSourceFactory
+
+        player.addListener(AnniePlayerListener())
+        AnnieAudioHolder.onServiceStopped = { _serviceStarted = false }
+        AnnieAudioHolder.onDeactivate = { deactivate() }
+        _startProgressLoop()
+        _emit(mapOf("isPlaying" to player.isPlaying))
+    }
+
+    /** 把本实例下线：停掉进度协程并短路所有回调（player/session 归新实例所有，不在此释放）。 */
+    private fun deactivate() {
+        _active = false
+        _progressJob?.cancel()
+        _player = null
+        _session = null
     }
 
     /**
@@ -471,6 +554,7 @@ class MediaPlayerBackend(
      * 两条路径都汇入这里，语义与 Dart「失败重试一次」一致。
      */
     private suspend fun _handlePlaybackFailure(index: Int) {
+        if (!_active) return
         if (index != _currentAbsIndex) return
         val item = _queue.getOrNull(index)
         if (item == null) {
@@ -508,6 +592,7 @@ class MediaPlayerBackend(
 
     /** 当前曲目播放失败 -> 自动切下一首；连续失败达上限则暂停（对齐 Dart `_autoAdvanceOnFailure`） */
     private suspend fun _autoAdvanceOnFailure(failedIndex: Int) {
+        if (!_active) return
         _consecutiveFailures++
         if (_consecutiveFailures >= _maxConsecutiveFailures || _queue.size <= 1) {
             _player?.pause()
@@ -520,6 +605,7 @@ class MediaPlayerBackend(
 
     /** 播放自然结束（对齐 Dart `_handleEnded`）；单曲循环由 `REPEAT_MODE_ONE` 处理不会走到这里 */
     private suspend fun _handleEnded() {
+        if (!_active) return
         if (_queue.size <= 1) return
         if (_appLoopMode == LoopMode.single) return
         val cur = _currentAbsIndex
@@ -540,6 +626,7 @@ class MediaPlayerBackend(
      * 真正抓取在 [_scope] 上并发进行（网络调用内部挂起，不阻塞主线程）。
      */
     private fun _startPrefetchUpcoming() {
+        if (!_active) return
         val gen = _generation
         val count = _queue.size
         if (count <= 1) return
@@ -632,12 +719,14 @@ class MediaPlayerBackend(
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (!_active) return
             if (playbackState == Player.STATE_ENDED) {
                 _scope.launch { _handleEnded() }
             }
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            if (!_active) return
             val idx = _currentAbsIndex
             Log.w(_tag, "[audio] onPlayerError: ${error.errorCodeName} ${error.message}")
             _scope.launch { _handlePlaybackFailure(idx) }
@@ -649,6 +738,23 @@ class MediaPlayerBackend(
         const val _progressIntervalMs: Long = 200L
         const val _cacheDirName: String = "annie_audio_cache"
         const val _cacheMaxBytes: Long = 256L * 1024L * 1024L
+
+        /** 进程级唯一的磁盘缓存：`SimpleCache` 对同一目录只允许一个实例，重复创建会抛异常崩溃 */
+        @Volatile
+        private var _sharedCache: Cache? = null
+        private val _sharedCacheLock = Any()
+
+        fun sharedCache(context: Context): Cache {
+            _sharedCache?.let { return it }
+            synchronized(_sharedCacheLock) {
+                _sharedCache?.let { return it }
+                val dir = File(context.cacheDir, _cacheDirName)
+                if (!dir.exists()) dir.mkdirs()
+                val created = SimpleCache(dir, LeastRecentlyUsedCacheEvictor(_cacheMaxBytes))
+                _sharedCache = created
+                return created
+            }
+        }
         const val _userAgent: String = "AnnieMusic/1.0 (Android)"
         const val _prefetchQuality: String = "320k"
         const val _prefetchAhead: Int = 5
@@ -668,9 +774,23 @@ internal object AnnieAudioHolder {
     @Volatile
     var session: MediaSession? = null
 
+    /** 进程级共享磁盘缓存与数据源工厂（供 Activity 重建时新实例接管复用） */
+    @Volatile
+    var cache: Cache? = null
+
+    @Volatile
+    var cachedSourceFactory: DefaultMediaSourceFactory? = null
+
+    @Volatile
+    var plainSourceFactory: DefaultMediaSourceFactory? = null
+
     /** 服务 `onDestroy` 时的回调，用于让 backend 复位 `_serviceStarted`（否则后续播放不再起前台服务） */
     @Volatile
     var onServiceStopped: (() -> Unit)? = null
+
+    /** 新实例接管引擎时调用，把上一实例「下线」（短路其回调/进度协程，避免争抢 player） */
+    @Volatile
+    var onDeactivate: (() -> Unit)? = null
 }
 
 /** 媒体音频用途（ExoPlayer 音频焦点 / 直通属性；与 AudioOutputController 的 android.media 属性一致） */
