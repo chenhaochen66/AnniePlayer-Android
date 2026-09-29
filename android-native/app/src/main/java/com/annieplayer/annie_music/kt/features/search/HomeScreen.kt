@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import com.annieplayer.annie_music.kt.R
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStoreOwner
@@ -117,6 +121,7 @@ import com.annieplayer.annie_music.kt.widgets.SourcePickerSheet
 import com.annieplayer.annie_music.kt.widgets.closeOtherDetailOverlays
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import com.annieplayer.annie_music.kt.features.player.PlayerScreen
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.features.kkbox.KkboxDetailScreen
 import com.annieplayer.annie_music.kt.features.qobuz.QobuzDetailScreen
 import kotlinx.coroutines.CancellationException
@@ -124,28 +129,6 @@ import kotlinx.coroutines.launch
 
 /** 顶栏头像占位尺寸（对齐 Dart `Image.asset(width: 40, height: 40)`） */
 private val HomeHeaderAvatarSize = 40.dp
-
-/** 从 CompositionLocal 的 Context 向上找到 [ViewModelStoreOwner]（Activity）。 */
-private tailrec fun Context?.findViewModelStoreOwner(): ViewModelStoreOwner? = when (this) {
-    null -> null
-    is ViewModelStoreOwner -> this
-    is ContextWrapper -> baseContext.findViewModelStoreOwner()
-    else -> null
-}
-
-/**
- * 以 Activity 为作用域获取 ViewModel（等价 `androidx.lifecycle.viewmodel.compose.viewModel()`）。
- *
- * HomeScreen 是单 Activity 架构的宿主屏：用 Activity 作用域可让状态（播放队列 / UI / 选择等）
- * 在**屏幕旋转 / Activity 重建**后存活；而 `remember { XxxViewModel() }` 会随组合销毁而丢状态。
- * 这里不直接依赖 `lifecycle-viewmodel-compose`（本工程离线构建缓存中无该 artifact）。
- */
-@Composable
-private inline fun <reified VM : ViewModel> activityViewModel(): VM {
-    val owner = LocalContext.current.findViewModelStoreOwner()
-        ?: error("未找到 ViewModelStoreOwner，activityViewModel() 需在 Activity 宿主下使用")
-    return remember(owner) { ViewModelProvider(owner).get(VM::class.java) }
-}
 
 /**
  * 首页（1:1 移植 Flutter `lib/features/search/home_screen.dart`）。
@@ -194,37 +177,18 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
 
-    var mode by remember { mutableStateOf(ModeDropdownMode.song) }
-    var modePickerVisible by remember { mutableStateOf(false) }
-    var queryText by remember { mutableStateOf("") }
-    var songSubmitted by remember { mutableStateOf("") }
-    var albumSubmitted by remember { mutableStateOf("") }
-    var artistSubmitted by remember { mutableStateOf("") }
-
-    /** 单曲双列数据（左、右），随源分组切换整列替换 */
-    var songColumns by remember { mutableStateOf<List<SongSearchColumn>>(emptyList()) }
-    var songGeneration by remember { mutableIntStateOf(0) }
-    var sourceGroupIndex by remember { mutableIntStateOf(0) }
-
-    var albumPlatform by remember { mutableStateOf(MusicPlatform.kuwo) }
-    var albums by remember { mutableStateOf<List<Album>>(emptyList()) }
-    var albumsLoading by remember { mutableStateOf(false) }
-    var albumGeneration by remember { mutableIntStateOf(0) }
-
-    var artistPlatform by remember { mutableStateOf(MusicPlatform.kuwo) }
-    var artists by remember { mutableStateOf<List<Artist>>(emptyList()) }
-    var artistsLoading by remember { mutableStateOf(false) }
-    var artistGeneration by remember { mutableIntStateOf(0) }
-
-    var sourcePickerVisible by remember { mutableStateOf(false) }
-    var batchPickerVisible by remember { mutableStateOf(false) }
-    var batchDownloading by remember { mutableStateOf(false) }
-    var downloadingId by remember { mutableStateOf<String?>(null) }
-    var saveDirPath by remember { mutableStateOf<String?>(DownloadDirService.getDownloadDirPath()) }
-
-    // Qobuz / KKBOX 详情页路由参数（对齐 Flutter `context.push('/xxx-detail?type=&id=')`）
-    var qobuzDetailRoute by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var kkboxDetailRoute by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // 首页状态与业务逻辑（搜索 / 播放 / 下载 / 链接解析 / 详情入口）已抽到 HomeScreenState；
+    // 下面用 `with(st) { ... }` 渲染，字段与 handler 的引用写法保持不变。
+    val st = remember(scope) {
+        HomeScreenState(
+            scope = scope,
+            uiViewModel = uiViewModel,
+            playerViewModel = playerViewModel,
+            downloadViewModel = downloadViewModel,
+            selectionViewModel = selectionViewModel,
+            snackbarHostState = snackbarHostState,
+        )
+    }
 
     // 「所有文件访问」权限状态：抽屉打开时重新检测（对齐 Flutter `_ManageStorageRow._granted`）
     val ctx = LocalContext.current
@@ -250,7 +214,7 @@ fun HomeScreen(
             val path = MediaStoreScan.resolveTreeToPath(uri)
             if (path != null) {
                 DownloadDirService.setDownloadDirPath(path)
-                saveDirPath = path
+                st.saveDirPath = path
             }
         }
     }
@@ -310,354 +274,16 @@ fun HomeScreen(
         uiState.qobuzTokenVisible ||
         uiState.kkboxAccountVisible ||
         uiState.contactVisible ||
-        sourcePickerVisible ||
-        batchPickerVisible
+        st.sourcePickerVisible ||
+        st.batchPickerVisible
     LaunchedEffect(anyOverlayVisible) {
         if (anyOverlayVisible) focusManager.clearFocus()
     }
 
-    // ── 搜索：单源分发（后续补 qobuz / kkbox 单曲搜索只在这里加一行） ──
-    suspend fun searchBySource(source: SearchSource, query: String, page: Int): List<Song> =
-        when (source) {
-            SearchSource.kuwo -> searchMusic(query, page = page)
-            SearchSource.netease -> searchNeteaseMusic(query, page = page, pageSize = kSearchPageSize)
-            SearchSource.qq -> searchQQMusic(query, page = page, pageSize = kSearchPageSize)
-            SearchSource.kugou -> searchKugouMusic(query, page = page, pageSize = kSearchPageSize)
-        }
-
-    /** 按当前源分组发起双列搜索（两列各自独立返回） */
-    fun startSongSearch(query: String) {
-        val group = sourceGroups[sourceGroupIndex]
-        songGeneration += 1
-        val generation = songGeneration
-        songColumns = listOf(
-            SongSearchColumn(source = group.left, songs = emptyList(), isLoading = true),
-            SongSearchColumn(source = group.right, songs = emptyList(), isLoading = true),
-        )
-        scope.launch {
-            val result = try {
-                searchBySource(group.left, query, 1)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                emptyList()
-            }
-            if (generation != songGeneration) return@launch
-            songColumns = songColumns.map {
-                if (it.source == group.left) SongSearchColumn(group.left, result, false) else it
-            }
-        }
-        scope.launch {
-            val result = try {
-                searchBySource(group.right, query, 1)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                emptyList()
-            }
-            if (generation != songGeneration) return@launch
-            songColumns = songColumns.map {
-                if (it.source == group.right) SongSearchColumn(group.right, result, false) else it
-            }
-        }
-    }
-
-    /** 专辑搜索（单源；空关键词不发请求，视图侧等同「无结果」） */
-    fun startAlbumSearch(query: String) {
-        albumGeneration += 1
-        val generation = albumGeneration
-        val platform = albumPlatform
-        if (query.isEmpty()) {
-            albums = emptyList()
-            albumsLoading = false
-            return
-        }
-        albumsLoading = true
-        scope.launch {
-            val result = try {
-                searchAlbumByPlatform(platform, query, page = 1, pageSize = 30)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                emptyList()
-            }
-            if (generation != albumGeneration) return@launch
-            albums = result
-            albumsLoading = false
-        }
-    }
-
-    /** 歌手搜索（单源） */
-    fun startArtistSearch(query: String) {
-        artistGeneration += 1
-        val generation = artistGeneration
-        val platform = artistPlatform
-        if (query.isEmpty()) {
-            artists = emptyList()
-            artistsLoading = false
-            return
-        }
-        artistsLoading = true
-        scope.launch {
-            val result = try {
-                searchArtistByPlatform(platform, query)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                emptyList()
-            }
-            if (generation != artistGeneration) return@launch
-            artists = result
-            artistsLoading = false
-        }
-    }
-
-    fun handleSearch() {
-        val query = queryText.trim()
-        when (mode) {
-            ModeDropdownMode.song -> {
-                songSubmitted = query
-                startSongSearch(query)
-            }
-            ModeDropdownMode.album -> {
-                albumSubmitted = query
-                startAlbumSearch(query)
-            }
-            ModeDropdownMode.singer -> {
-                artistSubmitted = query
-                startArtistSearch(query)
-            }
-            ModeDropdownMode.playlist, ModeDropdownMode.qobuz -> Unit
-        }
-    }
-
-    fun handleModeSelect(target: ModeDropdownMode) {
-        mode = target
-        modePickerVisible = false
-    }
-
-    /** 单平台模式（专辑 / 歌手都是单源） */
-    val singleSourceMode = mode == ModeDropdownMode.album || mode == ModeDropdownMode.singer
-
-    /** 「搜索选择」面板选项（单曲=源分组；专辑/歌手=单平台） */
-    val pickerOptions = if (singleSourceMode) {
-        albumSearchPlatforms.map { it.label }
-    } else {
-        sourceGroups.map { it.label }
-    }
-
-    /** 当前生效的面板下标 */
-    val pickerIndex = when (mode) {
-        ModeDropdownMode.singer -> albumSearchPlatforms.indexOf(artistPlatform)
-        ModeDropdownMode.album -> albumSearchPlatforms.indexOf(albumPlatform)
-        else -> sourceGroupIndex
-    }
-
-    /** 面板选中某项：单曲=切源分组，专辑/歌手=切平台；均保留关键词自动重搜 */
-    fun handleSourceSelect(index: Int) {
-        sourcePickerVisible = false
-        if (singleSourceMode) {
-            if (index < 0 || index >= albumSearchPlatforms.size) return
-            if (mode == ModeDropdownMode.singer) {
-                artistPlatform = albumSearchPlatforms[index]
-                startArtistSearch(artistSubmitted)
-            } else {
-                albumPlatform = albumSearchPlatforms[index]
-                startAlbumSearch(albumSubmitted)
-            }
-        } else {
-            if (index < 0 || index >= sourceGroups.size) return
-            sourceGroupIndex = index
-            startSongSearch(songSubmitted)
-        }
-    }
-
-    fun handlePlaySong(song: Song, songs: List<Song>) {
-        val index = songs.indexOfFirst { it.id == song.id }
-        playerViewModel.setQueue(songs, startIndex = if (index < 0) 0 else index)
-        colorViewModel.setCurrentCoverUrl(song.cover)
-    }
-
-    fun handleDownload(song: Song) {
-        uiViewModel.setPicker(true, song = song)
-    }
-
-    fun handleToggleSelect(song: Song) {
-        selectionViewModel.toggleSong(song)
-    }
-
-    fun handleDownloadWithQuality(quality: Quality) {
-        val song = uiState.pickerSong ?: return
-        uiViewModel.setPicker(false)
-        downloadViewModel.addTask(song, quality)
-        val songId = song.id
-        downloadingId = songId
-        enqueueDownload(songId) {
-            try {
-                val url = fetchDownloadUrlBySong(song, quality)
-                val lyricResult = if (song.lyric != null && song.tlyric != null) {
-                    LyricResult(lrc = song.lyric, tlyric = song.tlyric)
-                } else {
-                    fetchLyric(song)
-                }
-                val extra = enrichSong(song)
-                DownloadService.downloadSong(
-                    songId = songId,
-                    title = song.title,
-                    artist = song.artist,
-                    coverUrl = song.cover,
-                    album = song.album,
-                    downloadUrl = url,
-                    quality = quality,
-                    onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
-                    lyric = lyricResult.lrc,
-                    tlyric = lyricResult.tlyric,
-                    albumArtist = song.albumArtist ?: extra["albumArtist"]?.toString(),
-                    trackNumber = song.trackNumber ?: extra["trackNumber"]?.toString(),
-                    discNumber = song.discNumber,
-                    releaseDate = song.releaseDate ?: extra["releaseDate"]?.toString(),
-                )
-                downloadViewModel.completeTask(songId)
-                playerViewModel.addDownloadedId(songId)
-                playerViewModel.addToQueue(song)
-            } catch (_: Exception) {
-                downloadViewModel.failTask(songId)
-            }
-            downloadingId = null
-        }
-    }
-
-    fun handleBatchDownload(quality: Quality) {
-        batchPickerVisible = false
-        val songs = selection.selectedSongs
-        if (songs.isEmpty()) return
-        batchDownloading = true
-        for (song in songs) {
-            downloadViewModel.addTask(song, quality)
-        }
-        val batchId = "search_batch_" + System.currentTimeMillis()
-        enqueueDownload(batchId) {
-            for (song in songs) {
-                downloadViewModel.updateProgress(song.id, 0.0)
-                try {
-                    val url = fetchDownloadUrlBySong(song, quality)
-                    val lyricResult = fetchLyric(song)
-                    val extra = enrichSong(song)
-                    DownloadService.downloadSong(
-                        songId = song.id,
-                        title = song.title,
-                        artist = song.artist,
-                        coverUrl = song.cover,
-                        album = song.album,
-                        downloadUrl = url,
-                        quality = quality,
-                        onProgress = { p -> downloadViewModel.updateProgress(song.id, p * 100) },
-                        lyric = lyricResult.lrc,
-                        tlyric = lyricResult.tlyric,
-                        albumArtist = song.albumArtist ?: extra["albumArtist"]?.toString(),
-                        trackNumber = song.trackNumber ?: extra["trackNumber"]?.toString(),
-                        discNumber = song.discNumber,
-                        releaseDate = song.releaseDate ?: extra["releaseDate"]?.toString(),
-                    )
-                    downloadViewModel.completeTask(song.id)
-                    playerViewModel.addDownloadedId(song.id)
-                    playerViewModel.addToQueue(song)
-                } catch (_: Exception) {
-                    downloadViewModel.failTask(song.id)
-                }
-            }
-            selectionViewModel.clearAll()
-            batchDownloading = false
-        }
-    }
-
-    fun handleQobuzSubmit(text: String) {
-        val parsed = parseQobuzUrl(text)
-        if (parsed == null) {
-            scope.launch { snackbarHostState.showSnackbar("未识别到有效 Qobuz 链接") }
-            return
-        }
-        // 对齐 Dart `context.push('/qobuz-detail?type=&id=')`：进入全屏详情页
-        qobuzDetailRoute = parsed.type to parsed.id
-    }
-
-    fun handleKkboxSubmit(text: String) {
-        val parsed = parseKkboxUrl(text)
-        if (parsed == null) {
-            scope.launch { snackbarHostState.showSnackbar("未识别到有效 KKBOX 链接") }
-            return
-        }
-        // 对齐 Dart `context.push('/kkbox-detail?type=&id=')`：进入全屏详情页
-        kkboxDetailRoute = parsed.type to parsed.id
-    }
-
-    fun handlePlaylistSubmit(text: String) {
-        val parsed = PlaylistService.parsePlaylistUrl(text)
-        if (parsed == null) {
-            scope.launch { snackbarHostState.showSnackbar("未识别到有效的歌单链接或ID") }
-            return
-        }
-        uiViewModel.setPlaylistDetailVisible(
-            true,
-            PlaylistDetailData(id = parsed.id, platform = parsed.platform.name),
-        )
-    }
-
-    /** ⋮ → 歌手：有 id 直接开；没有则按名字搜索一次（对齐 Dart `openArtistDetail`） */
-    fun openArtistDetail(artist: SongArtistRef) {
-        val song = playerState.currentSong ?: return
-        scope.launch {
-            val resolved = resolveArtist(
-                song.platform,
-                artist.name,
-                knownId = if (artist.id.isEmpty()) null else artist.id,
-            )
-            if (resolved == null || resolved.id.isEmpty()) {
-                snackbarHostState.showSnackbar("未找到歌手「${artist.name}」")
-                return@launch
-            }
-            // 详情浮层在播放页之下：先收起播放页，再关其它详情，最后开歌手详情
-            uiViewModel.setPlayerOverlayVisible(false)
-            closeOtherDetailOverlays(
-                setAlbumDetailVisible = { uiViewModel.setAlbumDetailVisible(it) },
-                setSingerDetailVisible = { uiViewModel.setSingerDetailVisible(it) },
-                setPlaylistDetailVisible = { uiViewModel.setPlaylistDetailVisible(it) },
-            )
-            uiViewModel.setSingerDetailVisible(
-                true,
-                SingerDetailData(
-                    id = resolved.id,
-                    name = resolved.name,
-                    picture = resolved.picture,
-                    platform = song.platform,
-                ),
-            )
-        }
-    }
-
-    /** ⋮ → 专辑：先收起播放页、关其它详情，再置专辑详情数据 */
-    fun openAlbumDetail(song: Song) {
-        uiViewModel.setPlayerOverlayVisible(false)
-        closeOtherDetailOverlays(
-            setAlbumDetailVisible = { uiViewModel.setAlbumDetailVisible(it) },
-            setSingerDetailVisible = { uiViewModel.setSingerDetailVisible(it) },
-            setPlaylistDetailVisible = { uiViewModel.setPlaylistDetailVisible(it) },
-        )
-        uiViewModel.setAlbumDetailVisible(
-            true,
-            AlbumDetailData(
-                id = song.albumId ?: "",
-                cover = song.cover,
-                name = song.album ?: "",
-                artist = song.albumArtist ?: song.artist,
-                platform = song.platform,
-            ),
-        )
-    }
-
     val currentSong = playerState.currentSong
-    val toastId = downloadingId
+    val toastId = st.downloadingId
 
+    with(st) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = AppColors.background,
@@ -690,19 +316,15 @@ fun HomeScreen(
                         fontWeight = AppFontWeight.bold,
                         letterSpacing = AppLetterSpacing.tight,
                     )
-                    // Dart 为 Image.asset('assets/annie.jpg')；该资源尚未入库，暂用音符占位块
-                    Box(
+                    // Dart: Image.asset('assets/annie.jpg')（资源已在 res/drawable-nodpi/annie.jpg）
+                    Image(
+                        painter = painterResource(R.drawable.annie),
+                        contentDescription = null,
                         modifier = Modifier
                             .size(HomeHeaderAvatarSize)
-                            .clip(RoundedCornerShape(AppRadius.r10))
-                            .background(AppColors.whiteA03),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        MusicNoteGlyph(
-                            modifier = Modifier.size(AppIconSize.icon22),
-                            tint = AppColors.white10,
-                        )
-                    }
+                            .clip(RoundedCornerShape(AppRadius.r10)),
+                        contentScale = ContentScale.Crop,
+                    )
                 }
                 // 模式切换
                 Box(
@@ -1081,5 +703,6 @@ fun HomeScreen(
                 }
             }
         }
+    }
     }
 }

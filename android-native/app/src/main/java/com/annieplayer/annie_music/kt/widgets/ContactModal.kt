@@ -2,6 +2,7 @@ package com.annieplayer.annie_music.kt.widgets
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -33,6 +35,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import com.annieplayer.annie_music.kt.R
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
@@ -109,9 +114,9 @@ fun ContactModal(
             ) {
                 Text(text = "联系我们", style = AnnieTypography.sheetTitle)
                 Spacer(modifier = Modifier.height(AppSpacing.sp28))
-                ContactModalQrRow(label = "联系我们①", onOpenPreview = { previewLabel = "联系我们①" })
+                ContactModalQrRow(label = "联系我们①", imageRes = R.drawable.group1, onOpenPreview = { previewLabel = "联系我们①" })
                 Spacer(modifier = Modifier.height(AppSpacing.sp16))
-                ContactModalQrRow(label = "联系我们②", onOpenPreview = { previewLabel = "联系我们②" })
+                ContactModalQrRow(label = "联系我们②", imageRes = R.drawable.group2, onOpenPreview = { previewLabel = "联系我们②" })
                 Spacer(modifier = Modifier.height(AppSpacing.sp28))
                 Box(
                     modifier = Modifier
@@ -159,9 +164,14 @@ fun ContactModal(
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        ContactModalBrokenImageGlyph(
-                            modifier = Modifier.size(AppIconSize.icon48),
-                            tint = AppColors.white38,
+                        // 大图预览：显示实际二维码图片（对齐 Dart Image.asset 大图）
+                        Image(
+                            painter = painterResource(
+                                if (label == "联系我们①") R.drawable.group1 else R.drawable.group2,
+                            ),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = ContentScale.Fit,
                         )
                         Spacer(modifier = Modifier.height(AppSpacing.sp12))
                         Text(text = label, color = AppColors.white38, fontSize = AppFontSize.base)
@@ -190,6 +200,7 @@ fun ContactModal(
 @Composable
 private fun ContactModalQrRow(
     label: String,
+    imageRes: Int,
     onOpenPreview: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -197,12 +208,16 @@ private fun ContactModalQrRow(
             modifier = Modifier
                 .clickableNoRipple(onOpenPreview)
                 .size(AppSize.modalInnerBox)
-                .background(AppColors.whiteA06, RoundedCornerShape(AppRadius.r10)),
+                .clip(RoundedCornerShape(AppRadius.r10))
+                .background(AppColors.whiteA06),
             contentAlignment = Alignment.Center,
         ) {
-            ContactModalBrokenImageGlyph(
-                modifier = Modifier.size(AppIconSize.icon24),
-                tint = AppColors.whiteA20,
+            // Dart: ClipRRect + Image.asset('assets/group1.jpg' / 'group2.jpg')（已入库 drawable-nodpi）
+            Image(
+                painter = painterResource(imageRes),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
             )
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp12))
