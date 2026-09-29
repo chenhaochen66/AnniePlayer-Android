@@ -55,6 +55,13 @@ object AppDuration {
     /** 常驻底栏中键两态切换（搜索封面盒 ⇄ 本地曲库迷你播放器） */
     const val bottomBarMorph = 260
 
+    /**
+     * 正在播放指示器：单条竖条「最短 ⇄ 最长」的单程伸缩时长。
+     *
+     * 三条竖条共用此时长、以相位差错开（而不是各用不同时长），保持等化器的呼吸节奏一致。
+     */
+    const val playingBarPulse = 480
+
     // ---- 非 UI / 行为型时长（移植时仅作参考，不属于视觉设计 token）----
 
     /** 网络请求重试间隔（Flutter: kuwo_api / kkbox_api / http_client `Duration(milliseconds: 500)`） */

@@ -197,6 +197,29 @@ object AppSize {
 
     /** 中键迷你播放器行进度条高度 */
     val bottomBarMiniProgressHeight = 3.dp
+
+    // ---- 详情页共享组件（Android-only 设计，Flutter 基线无对应实现）----
+
+    /** 多选下载条（玻璃 pill）内容区高度；命中区由 `minimumInteractiveComponentSize()` 预留到 48dp */
+    val detailDownloadBarHeight = 44.dp
+
+    /** 详情页多选勾选框视觉边长（未选中描边方 / 选中实心方共用；命中区另由 Material 最小触摸尺寸预留） */
+    val detailCheckBoxSize = 18.dp
+
+    /** 正在播放指示器：单条竖条宽度（圆角条） */
+    val playingBarWidth = 2.5.dp
+
+    /** 正在播放指示器：竖条伸缩下限高度（对应最小 scaleY = min / max） */
+    val playingBarMinHeight = 6.dp
+
+    /** 正在播放指示器：竖条伸缩上限高度（同时是布局高度基准） */
+    val playingBarMaxHeight = 16.dp
+
+    /** 正在播放指示器：竖条间距 */
+    val playingBarGap = 2.dp
+
+    /** 「正在播放」行左侧主色圆角条宽度（`playingRowBackground` 用） */
+    val playingRowBarWidth = 3.dp
 }
 
 /**

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,7 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -46,7 +44,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
+import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
@@ -67,16 +67,22 @@ import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
-import com.annieplayer.annie_music.kt.widgets.CheckSquareIcon
-import com.annieplayer.annie_music.kt.widgets.DetailCheckBoxBlank
+import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
+import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
+import com.annieplayer.annie_music.kt.widgets.DetailCheckBox
 import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
-import com.annieplayer.annie_music.kt.widgets.DetailDownloadSolid
 import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
 import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
+import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
+import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
 import com.annieplayer.annie_music.kt.widgets.QualityPickerSheet
+import com.annieplayer.annie_music.kt.widgets.SnapshotPaletteAndRestore
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
+import com.annieplayer.annie_music.kt.widgets.glassPanel
+import com.annieplayer.annie_music.kt.widgets.playingRowBackground
+import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -118,6 +124,8 @@ private class AlbumDetailScreenState {
  * - 单曲下载：音质选择 flac / 320k / 128k（album 顺序），经 `enqueueDownload` 串行执行。
  * - 批量下载：逐个下载并汇报 `${i+1}/${n} 曲名`，结束显示「下载完成 x/y」。
  * - 返回手势：整页直接回退（对齐 Dart 无 `PopScope` 的页面）。
+ * - 视觉：封面取色氛围背景（`CoverPaletteBackdrop`）+ 毛玻璃列表容器（`glassPanel`）；
+ *   正在播放行以主色氛围底 + 等化器指示呈现。
  */
 @Composable
 fun AlbumDetailScreen(
@@ -130,6 +138,7 @@ fun AlbumDetailScreen(
     name: String = "",
     artist: String = "",
     fallback: AlbumDetailData? = null,
+    colorViewModel: ColorViewModel = activityViewModel(),
 ) {
     val useFallback = albumId.isEmpty() && fallback != null
     val resolvedId = if (useFallback) fallback?.id.orEmpty() else albumId
@@ -141,6 +150,11 @@ fun AlbumDetailScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val tasks by downloadViewModel.state.collectAsState()
+    val playerState by playerViewModel.state.collectAsState()
+
+    // 封面动态取色氛围（与播放页同一套链路）；进入时把该封面色板灌给全局，离开时恢复原色板
+    val palette = rememberCoverPalette(resolvedCover)
+    SnapshotPaletteAndRestore(colorViewModel, palette)
 
     /** `AlbumSong` -> `Song`（对齐 Dart `_toSong`，并携带歌手名单 / 专辑元数据） */
     fun toSong(s: AlbumSong): Song = Song(
@@ -292,7 +306,13 @@ fun AlbumDetailScreen(
 
     BackHandler { onBack() }
 
-    Box(modifier = modifier.fillMaxSize().background(AppColors.background)) {
+    Box(modifier = modifier.fillMaxSize()) {
+        // 背景：封面模糊 + 取色氛围（替代原来的纯色底）
+        CoverPaletteBackdrop(
+            coverUrl = resolvedCover,
+            palette = palette,
+            modifier = Modifier.fillMaxSize(),
+        )
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             AlbumDetailHeader(
                 selectMode = st.selectMode,
@@ -309,6 +329,8 @@ fun AlbumDetailScreen(
                     name = resolvedName,
                     artist = resolvedArtist,
                     tasks = tasks,
+                    palette = palette,
+                    currentSongId = playerState.currentSong?.id,
                     onPlay = { play(it) },
                     onDownload = { target ->
                         st.pickerSong = target
@@ -408,6 +430,8 @@ private fun AlbumDetailBody(
     name: String,
     artist: String,
     tasks: Map<String, DownloadTask>,
+    palette: ColorPalette,
+    currentSongId: String?,
     onPlay: (AlbumSong) -> Unit,
     onDownload: (AlbumSong) -> Unit,
     onToggleSelect: (String) -> Unit,
@@ -440,42 +464,55 @@ private fun AlbumDetailBody(
         }
 
         else -> {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
+            // 毛玻璃列表容器：整块列表（含头部）压在封面取色背景之上
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp8)
+                    .glassPanel(shape = RoundedCornerShape(AppRadius.panel)),
             ) {
-                item {
-                    AlbumDetailListHeader(
-                        songCount = st.songs.size,
-                        cover = cover,
-                        name = name,
-                        artist = artist,
-                        selectMode = st.selectMode,
-                        selectedCount = st.selectedIds.size,
-                        batchDownloading = st.batchDownloading,
-                        batchProgress = st.batchProgress,
-                        onBatch = onBatch,
-                    )
-                }
-                items(count = st.songs.size) { index ->
-                    val song = st.songs[index]
-                    AlbumDetailSongRow(
-                        song = song,
-                        index = index,
-                        selectMode = st.selectMode,
-                        selected = st.selectedIds.contains(song.id),
-                        task = tasks[song.id],
-                        onPlay = onPlay,
-                        onDownload = onDownload,
-                        onToggle = onToggleSelect,
-                    )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
+                ) {
+                    item {
+                        AlbumDetailListHeader(
+                            songCount = st.songs.size,
+                            cover = cover,
+                            name = name,
+                            artist = artist,
+                            selectMode = st.selectMode,
+                            selectedCount = st.selectedIds.size,
+                            batchDownloading = st.batchDownloading,
+                            batchProgress = st.batchProgress,
+                            onBatch = onBatch,
+                        )
+                    }
+                    items(count = st.songs.size) { index ->
+                        val song = st.songs[index]
+                        AlbumDetailSongRow(
+                            song = song,
+                            index = index,
+                            selectMode = st.selectMode,
+                            selected = st.selectedIds.contains(song.id),
+                            isPlaying = song.id == currentSongId,
+                            playingTint = palette.primary,
+                            task = tasks[song.id],
+                            onPlay = onPlay,
+                            onDownload = onDownload,
+                            onToggle = onToggleSelect,
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-/** 列表头：封面 100（圆角 10）+ 名称 17 / 歌手 13 / 曲目数 11 + 批量下载按钮 */
+/**
+ * 列表头：封面 100（圆角 10）+ 名称 17 / 歌手 13 / 曲目数 11；
+ * 多选时在其下追加 [MultiSelectDownloadBar] 作为批量下载入口。
+ */
 @Composable
 private fun AlbumDetailListHeader(
     songCount: Int,
@@ -488,129 +525,85 @@ private fun AlbumDetailListHeader(
     batchProgress: String,
     onBatch: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = AlbumDetailListPaddingH, vertical = AppSpacing.sp16),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(AppSize.coverPlaceholder)
-                .clip(RoundedCornerShape(AppRadius.r10))
-                .background(AppColors.whiteA03),
-            contentAlignment = Alignment.Center,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            var coverFailed by remember(cover) { mutableStateOf(false) }
-            if (cover.isEmpty() || coverFailed) {
-                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.white24)
-            } else {
-                AsyncImage(
-                    model = cover,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    onError = { coverFailed = true },
-                    modifier = Modifier.fillMaxSize(),
-                )
+            Box(
+                modifier = Modifier
+                    .size(AppSize.coverPlaceholder)
+                    .clip(RoundedCornerShape(AppRadius.r10))
+                    .background(AppColors.whiteA03),
+                contentAlignment = Alignment.Center,
+            ) {
+                var coverFailed by remember(cover) { mutableStateOf(false) }
+                if (cover.isEmpty() || coverFailed) {
+                    MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.white24)
+                } else {
+                    AsyncImage(
+                        model = cover,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        onError = { coverFailed = true },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
-        }
-        Spacer(modifier = Modifier.width(AppSpacing.sp14))
-        Column(
-            modifier = Modifier.weight(1f),
-            horizontalAlignment = Alignment.Start,
-        ) {
-            Text(
-                text = name,
-                color = AppColors.textPrimary,
-                fontSize = AppFontSize.size17,
-                fontWeight = FontWeight.Bold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(modifier = Modifier.height(AppSpacing.sp4))
-            Text(
-                text = artist,
-                color = AppColors.whiteA50,
-                fontSize = AppFontSize.size13,
-            )
-            Spacer(modifier = Modifier.height(AppSpacing.sp2))
-            Text(
-                text = "$songCount 首歌曲",
-                color = AppColors.whiteA25,
-                fontSize = AppFontSize.xs,
-            )
-        }
-        if (selectMode && selectedCount > 0) {
-            Spacer(modifier = Modifier.width(AppSpacing.sp8))
-            AlbumDetailBatchButton(
-                batchDownloading = batchDownloading,
-                progress = batchProgress,
-                count = selectedCount,
-                onTap = onBatch,
-            )
-        }
-    }
-}
-
-/** 批量下载按钮（最小宽 80；下载中显示 16dp 环 + 进度文案） */
-@Composable
-private fun AlbumDetailBatchButton(
-    batchDownloading: Boolean,
-    progress: String,
-    count: Int,
-    onTap: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .graphicsLayer { alpha = if (batchDownloading) 0.5f else 1f }
-            .widthIn(min = 80.dp)
-            .clip(RoundedCornerShape(AppRadius.r10))
-            .background(AppColors.primary)
-            .then(if (batchDownloading) Modifier else Modifier.clickableNoRipple(onTap))
-            .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp14),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (batchDownloading) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(AppIconSize.icon16),
-                    color = AppColors.white,
-                    strokeWidth = AppBorder.thick,
-                )
-                Spacer(modifier = Modifier.height(AppSpacing.sp2))
+            Spacer(modifier = Modifier.width(AppSpacing.sp14))
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.Start,
+            ) {
                 Text(
-                    text = progress,
-                    modifier = Modifier.width(76.dp),
-                    color = AppColors.white,
-                    fontSize = AppFontSize.size10,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
+                    text = name,
+                    color = AppColors.textPrimary,
+                    fontSize = AppFontSize.size17,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
                 )
-            }
-        } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                DetailDownloadSolid(modifier = Modifier.size(AppIconSize.icon20), tint = AppColors.white)
+                Spacer(modifier = Modifier.height(AppSpacing.sp4))
+                Text(
+                    text = artist,
+                    color = AppColors.whiteA50,
+                    fontSize = AppFontSize.size13,
+                )
                 Spacer(modifier = Modifier.height(AppSpacing.sp2))
                 Text(
-                    text = "$count",
-                    color = AppColors.white,
+                    text = "$songCount 首歌曲",
+                    color = AppColors.whiteA25,
                     fontSize = AppFontSize.xs,
-                    fontWeight = FontWeight.SemiBold,
                 )
             }
+        }
+        if (selectMode) {
+            Spacer(modifier = Modifier.height(AppSpacing.sp12))
+            MultiSelectDownloadBar(
+                selectedCount = selectedCount,
+                total = songCount,
+                downloading = batchDownloading,
+                progressText = batchProgress,
+                onDownload = onBatch,
+                modifier = Modifier.align(Alignment.End),
+            )
         }
     }
 }
 
-/** 曲目行：多选框 + 序号 + 名称 / 歌手 +（任务徽标 | 下载按钮） */
+/** 曲目行：多选框 + 序号 / 播放指示 + 名称 / 歌手 +（任务徽标 | 下载按钮） */
 @Composable
 private fun AlbumDetailSongRow(
     song: AlbumSong,
     index: Int,
     selectMode: Boolean,
     selected: Boolean,
+    isPlaying: Boolean,
+    playingTint: Color,
     task: DownloadTask?,
     onPlay: (AlbumSong) -> Unit,
     onDownload: (AlbumSong) -> Unit,
@@ -620,26 +613,36 @@ private fun AlbumDetailSongRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(AlbumDetailRowHeight)
-            .background(if (selected) AppColors.primaryA08 else Color.Transparent)
+            // 正在播放 → 主色氛围底 + 左侧主色条；否则选中态浅高亮
+            .then(
+                when {
+                    isPlaying -> Modifier.playingRowBackground(playingTint)
+                    selected -> Modifier.background(AppColors.primaryA08)
+                    else -> Modifier
+                },
+            )
             .clickableNoRipple { if (selectMode) onToggle(song.id) else onPlay(song) }
             .padding(horizontal = AlbumDetailListPaddingH, vertical = AppSpacing.sp10),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selectMode) {
-            if (selected) {
-                CheckSquareIcon(modifier = Modifier.size(AppSpacing.sp20))
-            } else {
-                DetailCheckBoxBlank(modifier = Modifier.size(AppSpacing.sp20), tint = AppColors.whiteA25)
-            }
+            DetailCheckBox(
+                checked = selected,
+                onToggle = { onToggle(song.id) },
+            )
             Spacer(modifier = Modifier.width(AppSpacing.sp10))
         }
         Box(modifier = Modifier.width(AppSpacing.sp24), contentAlignment = Alignment.Center) {
-            Text(
-                text = "${index + 1}",
-                color = AppColors.whiteA25,
-                fontSize = AppFontSize.sm,
-                textAlign = TextAlign.Center,
-            )
+            if (isPlaying) {
+                PlayingIndicator(tint = playingTint)
+            } else {
+                Text(
+                    text = "${index + 1}",
+                    color = AppColors.whiteA25,
+                    fontSize = AppFontSize.sm,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp10))
         Column(
@@ -649,7 +652,7 @@ private fun AlbumDetailSongRow(
         ) {
             Text(
                 text = song.name,
-                color = AppColors.textPrimary,
+                color = if (isPlaying) playingTint else AppColors.textPrimary,
                 fontSize = AppFontSize.base,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,

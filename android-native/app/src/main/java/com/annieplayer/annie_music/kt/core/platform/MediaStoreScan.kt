@@ -21,7 +21,7 @@ import java.io.FileInputStream
  * Android 媒体库扫描（1:1 移植 Flutter `lib/core/platform/media_store_scan.dart`，
  * 对齐 RN 版 `modules/media-scanner`）。
  *
- * Flutter 版是 MethodChannel 薄封装，真正的原生实现在 `flutter_app/android/.../MainActivity.kt`；
+ * Flutter 版是 MethodChannel 薄封装，真正的原生实现在 `android/.../MainActivity.kt`（Flutter 工程已从本分支移除）；
  * 本工程直接内联该原生实现（不再需要方法通道），返回形状与 Dart 暴露的完全一致：
  * - [scanFileToMediaStore] 返回 `content://` URI 或 null；
  * - [isManageStorageGranted] 返回 Boolean；

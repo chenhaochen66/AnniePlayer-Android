@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,14 +36,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
+import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.QobuzViewModel
@@ -65,19 +64,27 @@ import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
-import com.annieplayer.annie_music.kt.widgets.CheckSquareIcon
-import com.annieplayer.annie_music.kt.widgets.DetailCheckBoxBlank
+import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
+import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
+import com.annieplayer.annie_music.kt.widgets.DetailCheckBox
 import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
-import com.annieplayer.annie_music.kt.widgets.DetailDownloadSolid
 import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
 import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
+import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
+import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
+import com.annieplayer.annie_music.kt.widgets.SnapshotPaletteAndRestore
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
+import com.annieplayer.annie_music.kt.widgets.glassPanel
+import com.annieplayer.annie_music.kt.widgets.playingRowBackground
+import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -140,6 +147,14 @@ private fun qobuzDetailToSong(track: QobuzTrack): Song = Song(
  * - 播放前并发预取全部曲目直链（对齐 Dart `Future.wait`，单曲失败回退空串）。
  * - 下载 / 批量下载固定 [Quality.flac]。
  * - 返回手势：多选模式优先退出（对齐 Dart `PopScope(canPop: !_selectMode)`）。
+ *
+ * 视觉分层（行为完全不变）：
+ * - 底层 [CoverPaletteBackdrop]：模糊封面 + 取色染色渐变 + 顶部压暗的氛围背景；
+ * - 列表用 `glassPanel` 承载（圆角 [AppRadius.panel] 液态玻璃），底部仍保留
+ *   [AppSpacing.listBottomInset]（迷你条 + 手势条）预留；
+ * - 正在播放行：`playingRowBackground(palette.primary)` + [PlayingIndicator] + 标题主色；
+ * - 多选：行内 [DetailCheckBox]，底部浮层 [MultiSelectDownloadBar]（替换旧头部批量按钮）；
+ * - 进出页通过 [SnapshotPaletteAndRestore] 灌入 / 恢复全局色板（与播放页同一取色链路）。
  */
 @Composable
 fun QobuzDetailScreen(
@@ -155,6 +170,17 @@ fun QobuzDetailScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val tokens by qobuzViewModel.state.collectAsState()
+
+    // 全局色板（Activity 作用域，与 AppShell / 播放页同一实例）：本页进出时快照 / 恢复
+    val colorViewModel: ColorViewModel = activityViewModel()
+    // 当前播放曲目 id：只对「换歌」敏感（时间 / 缓冲进度 tick 不触发本页重组）
+    val playingSongId by remember(playerViewModel) {
+        playerViewModel.state.map { it.currentSong?.id }.distinctUntilChanged()
+    }.collectAsState(initial = playerViewModel.state.value.currentSong?.id)
+    // 封面动态取色（与播放页同一条链路）：封面未到时回退 ColorPalette.fallback
+    val palette = rememberCoverPalette(st.cover.takeIf { it.isNotEmpty() })
+    // 进入时把详情页色板写入全局（AppShell → AnnieTheme），离开组合时恢复进入前的色板
+    SnapshotPaletteAndRestore(colorViewModel = colorViewModel, palette = palette)
 
     suspend fun load() {
         val token = qobuzViewModel.getActiveToken()
@@ -327,7 +353,13 @@ fun QobuzDetailScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().background(AppColors.background)) {
+    Box(modifier = modifier.fillMaxSize()) {
+        // 底层：封面动态取色氛围背景（模糊封面 + 主色渐变 + 顶部压暗）
+        CoverPaletteBackdrop(
+            coverUrl = st.cover.takeIf { it.isNotEmpty() },
+            palette = palette,
+            modifier = Modifier.fillMaxSize(),
+        )
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             QobuzDetailHeader(
                 type = type,
@@ -351,14 +383,30 @@ fun QobuzDetailScreen(
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 QobuzDetailBody(
                     st = st,
+                    palette = palette,
+                    playingSongId = playingSongId,
                     onPlay = { play(it) },
                     onDownload = { downloadTrack(it) },
                     onToggleSelect = { tid ->
                         if (!st.selectedIds.remove(tid)) st.selectedIds.add(tid)
                     },
-                    onBatch = { batchDownload() },
                 )
             }
+        }
+
+        // 顶层：多选批量下载条（玻璃 pill，仅多选模式出现；计数 / 进度复用既有状态字段）
+        if (st.selectMode) {
+            MultiSelectDownloadBar(
+                selectedCount = st.selectedIds.size,
+                total = st.tracks.size,
+                downloading = st.batchDownloading,
+                progressText = st.batchProgress,
+                onDownload = { batchDownload() },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = AppSpacing.sp20),
+            )
         }
     }
 }
@@ -429,14 +477,15 @@ private fun QobuzDetailHeader(
     }
 }
 
-/** 主体：加载中 / 错误态 / 列表（头部 + 曲目行） */
+/** 主体：加载中 / 错误态 / 列表（玻璃容器 + 头部 + 曲目行） */
 @Composable
 private fun QobuzDetailBody(
     st: QobuzDetailScreenState,
+    palette: ColorPalette,
+    playingSongId: String?,
     onPlay: (QobuzTrack) -> Unit,
     onDownload: (QobuzTrack) -> Unit,
     onToggleSelect: (String) -> Unit,
-    onBatch: () -> Unit,
 ) {
     when {
         st.loading -> {
@@ -465,12 +514,17 @@ private fun QobuzDetailBody(
         }
 
         else -> {
+            // 玻璃承载列表：圆角 panel + 侧边留白，让取色氛围背景从玻璃边缘透出；
+            // 底部内容预留不变（迷你条 + 手势条）
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = AppSpacing.sp12)
+                    .glassPanel(shape = RoundedCornerShape(AppRadius.panel)),
                 contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
             ) {
                 item {
-                    QobuzDetailListHeader(st = st, onBatch = onBatch)
+                    QobuzDetailListHeader(st = st)
                 }
                 items(count = st.tracks.size) { index ->
                     val track = st.tracks[index]
@@ -479,7 +533,9 @@ private fun QobuzDetailBody(
                         index = index,
                         selectMode = st.selectMode,
                         selected = st.selectedIds.contains(track.id),
+                        playing = playingSongId == "qobuz:${track.id}",
                         downloading = st.downloadingId == track.id,
+                        palette = palette,
                         onPlay = onPlay,
                         onDownload = onDownload,
                         onToggle = onToggleSelect,
@@ -490,9 +546,9 @@ private fun QobuzDetailBody(
     }
 }
 
-/** 列表头：封面 100（圆角 10）+ 标题 17 / 歌手 13 /（年份 · 厂牌 · 曲目数）11 + 批量下载按钮 */
+/** 列表头：封面 100（圆角 10）+ 标题 17 / 歌手 13 /（年份 · 厂牌 · 曲目数）11；批量入口已移至底部条 */
 @Composable
-private fun QobuzDetailListHeader(st: QobuzDetailScreenState, onBatch: () -> Unit) {
+private fun QobuzDetailListHeader(st: QobuzDetailScreenState) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -565,87 +621,40 @@ private fun QobuzDetailListHeader(st: QobuzDetailScreenState, onBatch: () -> Uni
                 )
             }
         }
-        if (st.selectMode && st.selectedIds.isNotEmpty()) {
-            Spacer(modifier = Modifier.width(AppSpacing.sp8))
-            QobuzDetailBatchButton(
-                batchDownloading = st.batchDownloading,
-                progress = st.batchProgress,
-                count = st.selectedIds.size,
-                onTap = onBatch,
-            )
-        }
     }
 }
 
-/** 批量下载按钮（最小宽 80；下载中显示 16dp 环 + 进度文案） */
-@Composable
-private fun QobuzDetailBatchButton(
-    batchDownloading: Boolean,
-    progress: String,
-    count: Int,
-    onTap: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .graphicsLayer { alpha = if (batchDownloading) 0.5f else 1f }
-            .widthIn(min = 80.dp)
-            .clip(RoundedCornerShape(AppRadius.r10))
-            .background(AppColors.primary)
-            .then(if (batchDownloading) Modifier else Modifier.clickableNoRipple(onTap))
-            .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp14),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (batchDownloading) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(AppIconSize.icon16),
-                    color = AppColors.white,
-                    strokeWidth = AppBorder.thick,
-                )
-                Spacer(modifier = Modifier.height(AppSpacing.sp2))
-                Text(
-                    text = progress,
-                    modifier = Modifier.width(76.dp),
-                    color = AppColors.white,
-                    fontSize = AppFontSize.size10,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                DetailDownloadSolid(modifier = Modifier.size(AppIconSize.icon20), tint = AppColors.white)
-                Spacer(modifier = Modifier.height(AppSpacing.sp2))
-                Text(
-                    text = "$count",
-                    color = AppColors.white,
-                    fontSize = AppFontSize.xs,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-    }
-}
-
-/** 曲目行：多选框 + 序号 + 标题 +（下载中环 | 下载按钮）；行底 1dp 分隔线 */
+/**
+ * 曲目行：多选框 + 序号 + 标题 +（下载中环 | 下载按钮）；行底 1dp 分隔线。
+ *
+ * 「正在播放」行（[playing]）：主色行底（`playingRowBackground`，左侧 3dp 主色条 + 8% 圆角底）
+ * + 序号列换 [PlayingIndicator] + 标题主色；点击行为与普通行完全一致
+ * （多选模式切换选中，否则播放）。
+ */
 @Composable
 private fun QobuzDetailTrackRow(
     track: QobuzTrack,
     index: Int,
     selectMode: Boolean,
     selected: Boolean,
+    playing: Boolean,
     downloading: Boolean,
+    palette: ColorPalette,
     onPlay: (QobuzTrack) -> Unit,
     onDownload: (QobuzTrack) -> Unit,
     onToggle: (String) -> Unit,
 ) {
+    // 正在播放行优先用主色行底；其余按既有多选态给淡主色底
+    val rowBackground = if (playing) {
+        Modifier.playingRowBackground(palette.primary)
+    } else {
+        Modifier.background(if (selected) AppColors.primaryA08 else Color.Transparent)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(QobuzDetailRowHeight)
-            .background(if (selected) AppColors.primaryA08 else Color.Transparent)
+            .then(rowBackground)
             .drawBehind {
                 val stroke = AppBorder.thin.toPx()
                 drawLine(
@@ -660,26 +669,29 @@ private fun QobuzDetailTrackRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selectMode) {
-            if (selected) {
-                CheckSquareIcon(modifier = Modifier.size(AppSpacing.sp20))
-            } else {
-                DetailCheckBoxBlank(modifier = Modifier.size(AppSpacing.sp20), tint = AppColors.whiteA25)
-            }
+            DetailCheckBox(
+                checked = selected,
+                onToggle = { onToggle(track.id) },
+            )
             Spacer(modifier = Modifier.width(AppSpacing.sp10))
         }
         Box(modifier = Modifier.width(AppSpacing.sp24), contentAlignment = Alignment.Center) {
-            Text(
-                text = "${index + 1}",
-                color = AppColors.whiteA25,
-                fontSize = AppFontSize.sm,
-                textAlign = TextAlign.Center,
-            )
+            if (playing) {
+                PlayingIndicator(tint = palette.primary)
+            } else {
+                Text(
+                    text = "${index + 1}",
+                    color = AppColors.whiteA25,
+                    fontSize = AppFontSize.sm,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp10))
         Text(
             text = track.title,
             modifier = Modifier.weight(1f),
-            color = AppColors.textPrimary,
+            color = if (playing) palette.primary else AppColors.textPrimary,
             fontSize = AppFontSize.base,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
@@ -741,4 +753,3 @@ private suspend fun qobuzDetailDownloadTrack(
 /** 去掉 `Exception: ` 前缀的错误文案（对齐 Dart `_errText`） */
 private fun qobuzDetailErrText(e: Throwable): String =
     (e.message ?: "").replaceFirst("Exception: ", "")
-

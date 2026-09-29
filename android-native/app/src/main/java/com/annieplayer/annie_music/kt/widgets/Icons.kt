@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.LinearEasing
@@ -67,7 +68,12 @@ fun Modifier.combinedClickableNoRipple(onTap: () -> Unit, onLongClick: (() -> Un
 }
 
 /**
- * 勾选框图标：圆角方块 + 勾。
+ * 勾选框图标：圆角方块 + 勾（统一笔重版本，选中 / 未选中并列都清晰可读）。
+ *
+ * 与详情页选择控件（`DetailCheckMark` / `DetailCheckBoxBlank`）使用同一套「18dp 等效栅格」
+ * 几何，保证实心方与描边方并排时笔画粗细一致：
+ * - 圆角 `side * 0.2222f` ≈ 18dp 下 4dp（r4 等效）；
+ * - 对勾笔重 `side * 0.13f` ≈ 2dp 等效、圆头端点 + 圆角连接；勾形与 `DetailCheckMark` 一致。
  * 形状对齐 Flutter `Icons.check_box`（实心主色方块、白色勾）。
  */
 @Composable
@@ -78,21 +84,21 @@ fun CheckSquareIcon(
 ) {
     Canvas(modifier = modifier) {
         val side = size.minDimension
-        val r = side * 0.16f
+        val r = side * 0.2222f
         drawRoundRect(
             color = color,
             cornerRadius = CornerRadius(r, r),
             size = Size(side, side),
         )
         val p = Path().apply {
-            moveTo(side * 0.26f, side * 0.52f)
-            lineTo(side * 0.44f, side * 0.70f)
-            lineTo(side * 0.76f, side * 0.30f)
+            moveTo(side * 0.22f, side * 0.52f)
+            lineTo(side * 0.43f, side * 0.73f)
+            lineTo(side * 0.78f, side * 0.28f)
         }
         drawPath(
             path = p,
             color = checkColor,
-            style = Stroke(width = side * 0.12f, cap = StrokeCap.Round),
+            style = Stroke(width = side * 0.13f, cap = StrokeCap.Round, join = StrokeJoin.Round),
         )
     }
 }

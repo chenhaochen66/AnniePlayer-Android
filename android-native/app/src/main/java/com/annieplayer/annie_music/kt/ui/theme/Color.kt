@@ -6,7 +6,7 @@ import androidx.compose.ui.graphics.Color
 /**
  * 全局静态调色板。
  *
- * 1:1 移植自 Flutter 端 `flutter_app/lib/core/theme/app_theme.dart` 的 `AppColors`
+ * 1:1 移植自 Flutter 端 `lib/core/theme/app_theme.dart`（Flutter 工程已从本分支移除）的 `AppColors`
  * （该文件本身对齐 RN 版 `constants/tokens.ts`）。
  *
  * 所有取值均为 `Color(0xAARRGGBB)`，与 Flutter 的 `Color(0x…)` 逐位一致，不得改动。
@@ -172,6 +172,17 @@ object AppColors {
     /** 歌曲元信息高亮（indigo-300 @0.949，Flutter: song_tile _metaQuality 0xF2A5B4FC） */
     val indigo300A95 = Color(0xF2A5B4FC)
 
+    // ---- 详情页共享组件追加（Android-only 设计，Flutter 基线无对应实现）----
+
+    /**
+     * 玻璃面板投影（black @0.40）。
+     *
+     * 与 [whiteA40] 互为黑白镜像；用于 [com.annieplayer.annie_music.kt.widgets.glassPanel]
+     * 的 `dropShadow`，给液态玻璃一个可感知的悬浮阴影（AppBottomBar 的黑色投影为 0.55，
+     * 详情页容器更轻，取 0.40，避免大面板投影过重）。
+     */
+    val blackA40 = Color(0x66000000)
+
     // ---- 开屏装饰气泡（Flutter: splash_screen.dart 6 个圆点色）----
 
     val splashBubbleRed = Color(0xFFFF6B6B)
@@ -221,7 +232,7 @@ data class ColorPalette(
 /**
  * 封面动态取色契约（**仅移植契约，不含算法实现**）。
  *
- * 对应 Flutter `flutter_app/lib/core/utils/color_extractor.dart` 的
+ * 对应 Flutter `lib/core/utils/color_extractor.dart`（Flutter 工程已从本分支移除）的
  * `extractPaletteFromCover`，也对应 RN 版 `useColorExtractor.ts`。
  *
  * ## 输入

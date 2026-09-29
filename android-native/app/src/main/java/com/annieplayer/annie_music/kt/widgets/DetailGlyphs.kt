@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -187,7 +188,13 @@ internal fun DetailErrorSolid(modifier: Modifier = Modifier, tint: Color = AppCo
     }
 }
 
-/** check：选中态白色对勾 */
+/**
+ * check：选中态对勾（统一笔重语言）。
+ *
+ * 笔重 `w * 0.13f`（18dp 下 ≈ 2.34dp、14dp 下 ≈ 1.82dp，即「2dp 等效」），
+ * 端点为圆头、转折为圆角连接，与 [DetailCheckBoxBlank] / [DetailDownloadSolid]
+ * 及 [CheckSquareIcon] 使用同一套笔画参数；勾形与 [CheckSquareIcon] 完全一致。
+ */
 @Composable
 internal fun DetailCheckMark(modifier: Modifier = Modifier, tint: Color = AppColors.white) {
     Canvas(modifier = modifier) {
@@ -199,7 +206,11 @@ internal fun DetailCheckMark(modifier: Modifier = Modifier, tint: Color = AppCol
             lineTo(w * 0.43f, h * 0.73f)
             lineTo(w * 0.78f, h * 0.28f)
         }
-        drawPath(path = path, color = tint, style = Stroke(width = stroke, cap = StrokeCap.Round))
+        drawPath(
+            path = path,
+            color = tint,
+            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
     }
 }
 
@@ -218,39 +229,48 @@ internal fun DetailAlbumGlyph(modifier: Modifier = Modifier, tint: Color = AppCo
     }
 }
 
-/** download（实心）：批量下载按钮图标 */
+/**
+ * download：批量下载按钮图标（统一笔重语言）。
+ *
+ * 由「箭身 + 箭镞（两笔）+ 托盘」三部分构成，箭身与托盘都改为 `w * 0.10f`
+ * （20dp 下等效 2dp）的圆头线稿，仍是加粗可读的实心观感（不是细线稿）；
+ * 与 [DetailCheckMark] / [DetailCheckBoxBlank] 同属一套点线笔画。
+ */
 @Composable
 internal fun DetailDownloadSolid(modifier: Modifier = Modifier, tint: Color = AppColors.white) {
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
-        val stroke = w * 0.12f
-        val path = Path().apply {
-            moveTo(w * 0.36f, h * 0.10f)
-            lineTo(w * 0.64f, h * 0.10f)
-            lineTo(w * 0.64f, h * 0.44f)
-            lineTo(w * 0.82f, h * 0.44f)
-            lineTo(w * 0.50f, h * 0.80f)
-            lineTo(w * 0.18f, h * 0.44f)
-            lineTo(w * 0.36f, h * 0.44f)
-            close()
-        }
-        drawPath(path = path, color = tint)
-        drawLine(tint, Offset(w * 0.20f, h * 0.92f), Offset(w * 0.80f, h * 0.92f), stroke, StrokeCap.Round)
+        val stroke = w * 0.10f
+        // 箭身
+        drawLine(tint, Offset(w * 0.50f, h * 0.14f), Offset(w * 0.50f, h * 0.58f), stroke, StrokeCap.Round)
+        // 箭镞：两笔圆头，交于箭尖
+        drawLine(tint, Offset(w * 0.27f, h * 0.38f), Offset(w * 0.50f, h * 0.61f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.73f, h * 0.38f), Offset(w * 0.50f, h * 0.61f), stroke, StrokeCap.Round)
+        // 托盘
+        drawLine(tint, Offset(w * 0.22f, h * 0.88f), Offset(w * 0.78f, h * 0.88f), stroke, StrokeCap.Round)
     }
 }
 
-/** check_box_outline_blank：专辑 / 歌单多选未选中态 */
+/**
+ * check_box_outline_blank：专辑 / 歌单多选未选中态（统一笔重语言）。
+ *
+ * - 描边 `min * 0.0833f` ≈ 18dp 栅格下 1.5dp；
+ * - 圆角 `min * 0.2222f` ≈ 18dp 栅格下 4dp（即 [AppRadius.r4] 等效），
+ *   与 [DetailCheckMark] 的实心方选择框保持同一圆角；
+ * - 默认色改为 [AppColors.textTertiary]（与详情页多选交互态一致，旧调用点显式传色不受影响）。
+ */
 @Composable
-internal fun DetailCheckBoxBlank(modifier: Modifier = Modifier, tint: Color = AppColors.whiteA25) {
+internal fun DetailCheckBoxBlank(modifier: Modifier = Modifier, tint: Color = AppColors.textTertiary) {
     Canvas(modifier = modifier) {
         val min = size.minDimension
-        val stroke = min * 0.11f
+        val stroke = min * 0.0833f
+        val corner = min * 0.2222f
         drawRoundRect(
             color = tint,
             topLeft = Offset(stroke / 2f, stroke / 2f),
             size = Size(min - stroke, min - stroke),
-            cornerRadius = CornerRadius(min * 0.16f, min * 0.16f),
+            cornerRadius = CornerRadius(corner, corner),
             style = Stroke(width = stroke),
         )
     }

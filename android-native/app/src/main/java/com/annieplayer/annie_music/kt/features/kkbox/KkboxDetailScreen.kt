@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,15 +35,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
+import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
@@ -74,15 +76,21 @@ import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
-import com.annieplayer.annie_music.kt.widgets.CheckSquareIcon
-import com.annieplayer.annie_music.kt.widgets.DetailCheckBoxBlank
+import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
+import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
+import com.annieplayer.annie_music.kt.widgets.DetailCheckBox
 import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
-import com.annieplayer.annie_music.kt.widgets.DetailDownloadSolid
 import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
 import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
+import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
+import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
+import com.annieplayer.annie_music.kt.widgets.SnapshotPaletteAndRestore
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
+import com.annieplayer.annie_music.kt.widgets.glassPanel
+import com.annieplayer.annie_music.kt.widgets.playingRowBackground
+import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -128,6 +136,9 @@ private fun kkboxDetailActiveAccount(accounts: List<KkboxAccount>): KkboxAccount
  * - `_load` 的错误分支：含 session / login 的报错转为「会话已过期…」。
  * - 播放 / 下载过程中会话被续期时，回写 `updateAccountSession`。
  * - 下载：hires 固定音质；批量逐个下载并汇报进度。
+ * - 视觉：封面动态取色氛围背景（[CoverPaletteBackdrop]）+ 玻璃列表容器（[glassPanel]）；
+ *   进入时把本页色板写入全局、离开时恢复（[SnapshotPaletteAndRestore]）；
+ *   命中当前曲的行显示「正在播放」动效（[PlayingIndicator]）。
  * - 返回手势：多选模式优先退出（对齐 Dart `PopScope(canPop: !_selectMode)`）。
  */
 @Composable
@@ -144,6 +155,15 @@ fun KkboxDetailScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val accounts by kkboxViewModel.state.collectAsState()
+    val playerState by playerViewModel.state.collectAsState()
+
+    // 封面动态取色（与播放页同一套链路）：封面就绪后色板刷新，未就绪回退 fallback
+    val coverUrl = st.cover.takeIf { it.isNotEmpty() }
+    val palette = rememberCoverPalette(coverUrl)
+    // 进入时把本页色板灌入全局（单 Activity 架构：取到与 AppShell 相同的 Activity 作用域实例），
+    // 离开时恢复进入前的色板，避免详情页配色残留到主界面 / 播放页
+    val colorViewModel: ColorViewModel = activityViewModel()
+    SnapshotPaletteAndRestore(colorViewModel = colorViewModel, palette = palette)
 
     /** `KkboxTrack` -> `Song`（对齐 Dart 的 `kkbox:${t.id}` 构造） */
     fun toSong(track: KkboxTrack): Song = Song(
@@ -357,7 +377,13 @@ fun KkboxDetailScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().background(AppColors.background)) {
+    Box(modifier = modifier.fillMaxSize()) {
+        // 液态玻璃底：封面模糊 + 动态取色氛围（无封面时退化为纯色底 + 染色）
+        CoverPaletteBackdrop(
+            coverUrl = coverUrl,
+            palette = palette,
+            modifier = Modifier.fillMaxSize(),
+        )
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             KkboxDetailHeader(
                 type = type,
@@ -381,6 +407,8 @@ fun KkboxDetailScreen(
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 KkboxDetailBody(
                     st = st,
+                    palette = palette,
+                    currentSongId = playerState.currentSong?.id,
                     onPlay = { play(it) },
                     onDownload = { downloadTrack(it) },
                     onToggleSelect = { tid ->
@@ -459,10 +487,12 @@ private fun KkboxDetailHeader(
     }
 }
 
-/** 主体：加载中 / 错误态 / 列表（头部 + 曲目行） */
+/** 主体：加载中 / 错误态 / 玻璃列表（头部 + 曲目行 + 多选下载条） */
 @Composable
 private fun KkboxDetailBody(
     st: KkboxDetailScreenState,
+    palette: ColorPalette,
+    currentSongId: String?,
     onPlay: (KkboxTrack) -> Unit,
     onDownload: (KkboxTrack) -> Unit,
     onToggleSelect: (String) -> Unit,
@@ -495,24 +525,45 @@ private fun KkboxDetailBody(
         }
 
         else -> {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
-            ) {
-                item {
-                    KkboxDetailListHeader(st = st, onBatch = onBatch)
+            Box(modifier = Modifier.fillMaxSize().padding(horizontal = AppSpacing.sp12)) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // 液态玻璃承载列表：半透明底 + 顶部高光 + 高光描边（层叠伪造毛玻璃）
+                        .glassPanel(shape = RoundedCornerShape(AppRadius.panel)),
+                    // 底部为常驻底栏 / 迷你条 + 手势条预留空间（沿用既有 120dp 值）
+                    contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
+                ) {
+                    item {
+                        KkboxDetailListHeader(st = st)
+                    }
+                    items(count = st.tracks.size) { index ->
+                        val track = st.tracks[index]
+                        KkboxDetailTrackRow(
+                            track = track,
+                            index = index,
+                            selectMode = st.selectMode,
+                            selected = st.selectedIds.contains(track.id),
+                            playing = currentSongId == "kkbox:${track.id}",
+                            downloading = st.downloadingId == track.id,
+                            palette = palette,
+                            onPlay = onPlay,
+                            onDownload = onDownload,
+                            onToggle = onToggleSelect,
+                        )
+                    }
                 }
-                items(count = st.tracks.size) { index ->
-                    val track = st.tracks[index]
-                    KkboxDetailTrackRow(
-                        track = track,
-                        index = index,
-                        selectMode = st.selectMode,
-                        selected = st.selectedIds.contains(track.id),
-                        downloading = st.downloadingId == track.id,
-                        onPlay = onPlay,
-                        onDownload = onDownload,
-                        onToggle = onToggleSelect,
+                // 多选批量下载入口：玻璃 pill 浮于列表底部（选择态出现；下载中展示批次进度）
+                if (st.selectMode) {
+                    MultiSelectDownloadBar(
+                        selectedCount = st.selectedIds.size,
+                        total = st.tracks.size,
+                        downloading = st.batchDownloading,
+                        progressText = st.batchProgress,
+                        onDownload = onBatch,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = AppSpacing.sp16),
                     )
                 }
             }
@@ -520,9 +571,9 @@ private fun KkboxDetailBody(
     }
 }
 
-/** 列表头：封面 100（圆角 10）+ 标题 17 / 歌手 13 /（年份 · 曲目数）11 + 批量下载按钮 */
+/** 列表头：封面 100（圆角 10）+ 标题 17 / 歌手 13 /（年份 · 曲目数）11 */
 @Composable
-private fun KkboxDetailListHeader(st: KkboxDetailScreenState, onBatch: () -> Unit) {
+private fun KkboxDetailListHeader(st: KkboxDetailScreenState) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -588,87 +639,42 @@ private fun KkboxDetailListHeader(st: KkboxDetailScreenState, onBatch: () -> Uni
                 )
             }
         }
-        if (st.selectMode && st.selectedIds.isNotEmpty()) {
-            Spacer(modifier = Modifier.width(AppSpacing.sp8))
-            KkboxDetailBatchButton(
-                batchDownloading = st.batchDownloading,
-                progress = st.batchProgress,
-                count = st.selectedIds.size,
-                onTap = onBatch,
-            )
-        }
     }
 }
 
-/** 批量下载按钮（最小宽 80；下载中显示 16dp 环 + 进度文案） */
-@Composable
-private fun KkboxDetailBatchButton(
-    batchDownloading: Boolean,
-    progress: String,
-    count: Int,
-    onTap: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .graphicsLayer { alpha = if (batchDownloading) 0.5f else 1f }
-            .widthIn(min = 80.dp)
-            .clip(RoundedCornerShape(AppRadius.r10))
-            .background(AppColors.primary)
-            .then(if (batchDownloading) Modifier else Modifier.clickableNoRipple(onTap))
-            .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp14),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (batchDownloading) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(AppIconSize.icon16),
-                    color = AppColors.white,
-                    strokeWidth = AppBorder.thick,
-                )
-                Spacer(modifier = Modifier.height(AppSpacing.sp2))
-                Text(
-                    text = progress,
-                    modifier = Modifier.width(76.dp),
-                    color = AppColors.white,
-                    fontSize = AppFontSize.size10,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                DetailDownloadSolid(modifier = Modifier.size(AppIconSize.icon20), tint = AppColors.white)
-                Spacer(modifier = Modifier.height(AppSpacing.sp2))
-                Text(
-                    text = "$count",
-                    color = AppColors.white,
-                    fontSize = AppFontSize.xs,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-    }
-}
-
-/** 曲目行：多选框 + 序号 + 标题 +（下载中环 | 下载按钮）；行底 1dp 分隔线 */
+/**
+ * 曲目行：多选框 + 序号（命中时为等化器指示器）+ 标题 +（下载中环 | 下载按钮）；行底 1dp 分隔线。
+ *
+ * 正在播放（[playing]，按 `kkbox:{id}` 命中当前曲）时：
+ * - 行底换 [playingRowBackground]（主色 8% 圆角底 + 左侧 3dp 主色条，自绘于行节点）；
+ * - 序号列换 [PlayingIndicator] 等化器动效（纯装饰，语义由行承载）；
+ * - 标题转主色 `palette.primary`。
+ *
+ * 点击行为保持原样：多选模式切换选中，否则走 [onPlay]。
+ */
 @Composable
 private fun KkboxDetailTrackRow(
     track: KkboxTrack,
     index: Int,
     selectMode: Boolean,
     selected: Boolean,
+    playing: Boolean,
     downloading: Boolean,
+    palette: ColorPalette,
     onPlay: (KkboxTrack) -> Unit,
     onDownload: (KkboxTrack) -> Unit,
     onToggle: (String) -> Unit,
 ) {
+    val rowBase = Modifier
+        .fillMaxWidth()
+        .height(KkboxDetailRowHeight)
+    val rowBackground = when {
+        playing -> rowBase.playingRowBackground(palette.primary)
+        selected -> rowBase.background(AppColors.primaryA08)
+        else -> rowBase
+    }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(KkboxDetailRowHeight)
-            .background(if (selected) AppColors.primaryA08 else Color.Transparent)
+        modifier = rowBackground
             .drawBehind {
                 val stroke = AppBorder.thin.toPx()
                 drawLine(
@@ -679,30 +685,33 @@ private fun KkboxDetailTrackRow(
                 )
             }
             .clickableNoRipple { if (selectMode) onToggle(track.id) else onPlay(track) }
+            .semantics {
+                contentDescription = if (selectMode) "选择 ${track.title}" else "播放 ${track.title}"
+            }
             .padding(horizontal = KkboxDetailScreenPaddingH, vertical = AppSpacing.sp10),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selectMode) {
-            if (selected) {
-                CheckSquareIcon(modifier = Modifier.size(AppSpacing.sp20))
-            } else {
-                DetailCheckBoxBlank(modifier = Modifier.size(AppSpacing.sp20), tint = AppColors.whiteA25)
-            }
+            DetailCheckBox(checked = selected, onToggle = { onToggle(track.id) })
             Spacer(modifier = Modifier.width(AppSpacing.sp10))
         }
         Box(modifier = Modifier.width(AppSpacing.sp24), contentAlignment = Alignment.Center) {
-            Text(
-                text = "${index + 1}",
-                color = AppColors.whiteA25,
-                fontSize = AppFontSize.sm,
-                textAlign = TextAlign.Center,
-            )
+            if (playing) {
+                PlayingIndicator(tint = palette.primary)
+            } else {
+                Text(
+                    text = "${index + 1}",
+                    color = AppColors.whiteA25,
+                    fontSize = AppFontSize.sm,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp10))
         Text(
             text = track.title,
             modifier = Modifier.weight(1f),
-            color = AppColors.textPrimary,
+            color = if (playing) palette.primary else AppColors.textPrimary,
             fontSize = AppFontSize.base,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
@@ -718,6 +727,10 @@ private fun KkboxDetailTrackRow(
             Box(
                 modifier = Modifier
                     .clickableNoRipple { onDownload(track) }
+                    .semantics {
+                        contentDescription = "下载 ${track.title}"
+                        role = Role.Button
+                    }
                     .padding(AppSpacing.sp4),
                 contentAlignment = Alignment.Center,
             ) {

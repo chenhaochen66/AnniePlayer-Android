@@ -52,7 +52,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 音频引擎（1:1 移植 Flutter `flutter_app/lib/core/audio/audio_backend.dart`，
+ * 音频引擎（1:1 移植 Flutter 版 `lib/core/audio/audio_backend.dart`（该实现已随 flutter_app 从本分支移除），
  * 对齐其 `AudioPlayerBackend`）。
  *
  * 映射总览：
