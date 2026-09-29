@@ -23,7 +23,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -81,6 +83,9 @@ fun SongTile(
     // 封面加载失败的歌曲 id（避免列表复用后误用失败态）
     var failedCoverId by remember { mutableStateOf<String?>(null) }
 
+    // 长按触感（对齐 Flutter `HapticFeedback.mediumImpact()`）
+    val haptic = LocalHapticFeedback.current
+
     val isDownloading = downloadStatus == DownloadStatus.downloading ||
         downloadStatus == DownloadStatus.pending
 
@@ -105,7 +110,15 @@ fun SongTile(
             onCoverError = { failedCoverId = song.id },
             sourceLabel = sourceLabel,
             onTap = { if (selectionMode) onToggleSelect?.invoke(song) else onPlay(song) },
-            onLongPress = if (onToggleSelect == null || selected) null else { { onToggleSelect.invoke(song) } },
+            onLongPress = if (onToggleSelect == null || selected) {
+                null
+            } else {
+                {
+                    // 长按进入多选前先触发触感（对齐 Flutter `HapticFeedback.mediumImpact()`）
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onToggleSelect.invoke(song)
+                }
+            },
         )
 
         // ── 下载按钮 ──

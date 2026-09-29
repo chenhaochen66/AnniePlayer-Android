@@ -49,7 +49,6 @@ import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
-import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.model.KkboxAccount
 import com.annieplayer.annie_music.kt.data.model.KkboxSession
@@ -738,8 +737,8 @@ private fun KkboxDetailTrackRow(
 /**
  * 下载单曲（DRM 解密；非 DRM 走 [detailDownloadSong]），返回最终文件路径。
  *
- * 对齐 Dart `_downloadKkboxTrack`；差异：解密后不走 ffmpeg 打标（与 `detailDownloadSong`
- * 的既有移植程度一致），直接落盘到「用户自定义目录或 cacheDir/downloads」。
+ * 对齐 Dart `_downloadKkboxTrack`；差异：解密后经 [DownloadService.tagAudioFile] 走纯 Kotlin
+ * 打标（MP3/FLAC 可写，其余格式保留原文件），DRM 文件固定落盘到 `cacheDir/downloads`。
  */
 private suspend fun kkboxDetailDownloadTrack(
     context: Context,
@@ -776,12 +775,8 @@ private suspend fun kkboxDetailDownloadTrack(
         updateProgress(92.0)
         val safeName = "${track.title} - ${track.artist}${qualityExtension(qualityKey)}"
             .replace(Regex("""[/\\?%*:|"<>]"""), "_")
-        val customDir = DownloadDirService.getDownloadDirPath()
-        val downloadsDir = if (!customDir.isNullOrEmpty()) {
-            File(customDir)
-        } else {
-            File(context.cacheDir, "downloads")
-        }
+        // 对齐 Flutter：DRM 文件固定写入应用私有 cacheDir/downloads/，忽略自定义下载目录
+        val downloadsDir = File(context.cacheDir, "downloads")
         if (!downloadsDir.exists()) downloadsDir.mkdirs()
         val finalFile = File(downloadsDir, safeName)
         if (finalFile.exists()) finalFile.delete()
@@ -801,7 +796,8 @@ private suspend fun kkboxDetailDownloadTrack(
                 artist = track.artist,
                 album = track.album,
                 coverUrl = track.cover,
-                lyric = DownloadService.mergeLyrics(lyricResult.lrc, lyricResult.tlyric),
+                // 对齐 Flutter：DRM 打标只写原始歌词（不合并翻译）
+                lyric = lyricResult.lrc,
                 albumArtist = track.albumArtist,
                 trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
                 releaseDate = track.releaseDate,

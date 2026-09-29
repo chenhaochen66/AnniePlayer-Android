@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -76,10 +77,10 @@ fun SingerSearchResults(
         return
     }
 
-    // 空结果：搜索词为空 → 不显示；否则提示
+    // 空结果：搜索词为空 → 不显示；否则占满可用高度居中提示（对齐 Flutter `Center`）
     if (artists.isEmpty()) {
         if (query.isEmpty()) return
-        Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(text = "未找到结果", color = AppColors.white30, fontSize = AppFontSize.base)
         }
         return

@@ -67,6 +67,12 @@ class HomeScreenState(
 
     /** 单曲双列数据（左、右），随源分组切换整列替换 */
     var songColumns by mutableStateOf<List<SongSearchColumn>>(emptyList())
+
+    /**
+     * 单曲搜索代次：每次 [startSongSearch]（提交搜索 / 切换源分组）单调自增。
+     * 对外暴露给 UI 作为 SongSearchResults 的 searchToken —— 同词同源重搜时
+     * query 与源分组均不变，靠它触发结果列的分页状态重置。
+     */
     var songGeneration by mutableIntStateOf(0)
     var sourceGroupIndex by mutableIntStateOf(0)
 

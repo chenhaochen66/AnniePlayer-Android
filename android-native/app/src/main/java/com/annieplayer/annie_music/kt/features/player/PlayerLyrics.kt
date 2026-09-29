@@ -11,13 +11,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -86,8 +85,10 @@ private const val PlayerFontSampleStepSp = 14f
  * - 逐行高亮 + 400ms 淡入（拖动中即时切换），当前行带主色辉光与左侧 3dp 高亮竖线。
  * - 翻译行 200ms 淡入淡出，透明度 = 行透明度 × 翻译开关。
  * - 自动滚动：行高按索引实测（未测量按已测平均估算），首次定位直接跳转，
- *   之后 550ms + easeOutCubic 平滑滚动；用户手指拖拽期间暂停自动滚动。
+ *   之后 550ms + easeOutCubic 平滑滚动；用户手指拖拽期间暂停，松手后停留原地，
+ *   直到高亮行真正变化（歌曲推进 / seek）才恢复自动跟随。
  * - 点击任意行 → 跳转到该行时间（onSeek 回调，宿主执行 seek）。
+ * - 高亮行变化 → 通过 [onLineIndexChange] 回写宿主（对齐 Flutter `setCurrentLineIndex`）。
  */
 @Composable
 fun PlayerLyricsView(
@@ -104,6 +105,8 @@ fun PlayerLyricsView(
     viewportHeight: Dp,
     onSeek: (Double) -> Unit,
     onOpenFontScale: () -> Unit,
+    /** 当前高亮行索引回写宿主（对齐 Flutter `setCurrentLineIndex`；宿主应接到 `UiViewModel::setCurrentLineIndex`） */
+    onLineIndexChange: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val lines = remember(lyric, tlyric) { playerParseLyricLines(lyric, tlyric) }
@@ -120,6 +123,12 @@ fun PlayerLyricsView(
     val heights = remember(songId) { mutableMapOf<Int, Float>() }
     var heightsVersion by remember(songId) { mutableIntStateOf(0) }
     var needsInitialJump by remember(songId) { mutableStateOf(true) }
+
+    // 自动跟随抑制标志（对齐 Flutter `_userScrolling`）：手指拖拽时置位；松手后保持，
+    // 直到高亮行真正变化才恢复跟随（用户可停留在他滚动到的位置阅读）
+    var suppressFollow by remember(songId) { mutableStateOf(false) }
+    // 抑制期间锚定的高亮行：与 targetIndex 相同则说明高亮行未变化，继续停留
+    var suppressAnchorIndex by remember(songId) { mutableIntStateOf(0) }
 
     // 仅「手指拖拽」算用户滚动：程序化 animateScrollBy 不会置位（对齐 Flutter dragDetails 判定）
     val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
@@ -159,10 +168,34 @@ fun PlayerLyricsView(
         listState.scrollToItem(0, 0)
     }
 
-    // 高亮行变化 / 行高测量变化 → 定位（拖动中不自动滚动）
-    LaunchedEffect(targetIndex, heightsVersion, isUserDragging, lines) {
-        if (isUserDragging) return@LaunchedEffect
+    // 手指开始拖拽 → 置位抑制并锚定当时的高亮行
+    // （collectIsDraggedAsState 仅在手指拖拽时置位，程序化 animateScrollBy 不会触发）
+    LaunchedEffect(isUserDragging) {
+        if (isUserDragging) {
+            suppressFollow = true
+            suppressAnchorIndex = targetIndex
+        }
+    }
+
+    // 高亮行变化 → 回写宿主的当前行索引（对齐 Flutter `_updateIndex` → `setCurrentLineIndex`）
+    LaunchedEffect(targetIndex) {
+        onLineIndexChange(targetIndex)
+    }
+
+    // 高亮行变化 / 行高测量变化 → 定位（用户拖拽期间及松手后均不自动滚动）
+    LaunchedEffect(targetIndex, heightsVersion, lines) {
         if (lines.isEmpty()) return@LaunchedEffect
+        // 拖拽中：不滚动，并持续锚定最新高亮行（对齐 Flutter 拖拽中仍更新 _currentLineIndex）
+        if (isUserDragging) {
+            suppressFollow = true
+            suppressAnchorIndex = targetIndex
+            return@LaunchedEffect
+        }
+        // 松手后停留原地：仅当高亮行相对锚点真正变化（歌曲推进 / seek）才恢复跟随
+        if (suppressFollow) {
+            if (targetIndex == suppressAnchorIndex) return@LaunchedEffect
+            suppressFollow = false
+        }
         val index = if (targetIndex < 0) 0 else targetIndex
         if (index >= lines.size) return@LaunchedEffect
         val targetPx = topInsetPx + sumBefore(index) - targetInsetPx
@@ -317,13 +350,15 @@ private fun PlayerLyricLine(
         }
 
         // 当前行左侧高亮竖线（Flutter：left 24 / top 12 / bottom 12 / 宽 3）
+        // 注意：LazyColumn item 主轴约束无界，fillMaxHeight 会解析为 minHeight=0 而塌缩为 0 高；
+        // 改用 matchParentSize 按行 Box 的内容高度撑满（等价 Flutter 的 Positioned(top:12,bottom:12)）；
+        // 宽度必须用 requiredWidth：matchParentSize 传入的是固定宽度约束，width 会被强制取父宽
         if (isActive) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.CenterStart)
+                    .matchParentSize()
                     .padding(start = AppSpacing.sp24, top = AppSpacing.sp12, bottom = AppSpacing.sp12)
-                    .width(3.dp)
-                    .fillMaxHeight()
+                    .requiredWidth(3.dp)
                     .background(primary, RoundedCornerShape(AppRadius.r1_5)),
             )
         }

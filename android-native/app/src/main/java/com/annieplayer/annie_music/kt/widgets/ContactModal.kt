@@ -42,6 +42,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
 import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
+import com.annieplayer.annie_music.kt.ui.theme.AppLineHeight
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
@@ -137,6 +138,8 @@ fun ContactModal(
                     textAlign = TextAlign.Center,
                     color = AppColors.white30,
                     fontSize = AppFontSize.xs,
+                    // 行高对齐 Dart `height: 16 / 11`
+                    lineHeight = AppLineHeight.body16,
                 )
                 Spacer(modifier = Modifier.height(AppSpacing.sp6))
                 Text(
@@ -144,6 +147,8 @@ fun ContactModal(
                     textAlign = TextAlign.Center,
                     color = AppColors.white30,
                     fontSize = AppFontSize.xs,
+                    // 行高对齐 Dart `height: 16 / 11`
+                    lineHeight = AppLineHeight.body16,
                 )
             }
         }
@@ -164,7 +169,7 @@ fun ContactModal(
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        // 大图预览：显示实际二维码图片（对齐 Dart Image.asset 大图）
+                        // 大图预览：仅显示实际二维码图片（对齐 Dart Image.asset 大图，无底部文案）
                         Image(
                             painter = painterResource(
                                 if (label == "联系我们①") R.drawable.group1 else R.drawable.group2,
@@ -173,8 +178,6 @@ fun ContactModal(
                             modifier = Modifier.fillMaxWidth(),
                             contentScale = ContentScale.Fit,
                         )
-                        Spacer(modifier = Modifier.height(AppSpacing.sp12))
-                        Text(text = label, color = AppColors.white38, fontSize = AppFontSize.base)
                     }
                 }
                 Box(
@@ -213,11 +216,12 @@ private fun ContactModalQrRow(
             contentAlignment = Alignment.Center,
         ) {
             // Dart: ClipRRect + Image.asset('assets/group1.jpg' / 'group2.jpg')（已入库 drawable-nodpi）
+            // 缩放模式对齐 Dart `BoxFit.contain`
             Image(
                 painter = painterResource(imageRes),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Fit,
             )
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp12))

@@ -29,8 +29,9 @@ private val _queueScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 /** 将下载任务加入串行队列（同一时间只执行一个） */
 fun enqueueDownload(songId: String, task: QueueTask) {
-    _taskMap[songId] = task
     synchronized(_promiseLock) {
+        // 与执行协程的 _taskMap.remove(songId) 同锁，避免「先 remove 后写入」竞态
+        _taskMap[songId] = task
         val prev = _currentPromise
         val next = CompletableDeferred<Unit>()
         _currentPromise = next

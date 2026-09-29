@@ -2,6 +2,8 @@ package com.annieplayer.annie_music.kt.features.player
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -111,21 +113,29 @@ fun PlayerProgressBar(
                         .fillMaxWidth()
                         .height(PlayerProgressTouchHeight)
                         .pointerInput(widthPx) {
-                            var dragRatio = progress.toFloat()
-                            detectHorizontalDragGestures(
-                                onDragStart = { start ->
-                                    val ratio = (start.x / widthPx).coerceIn(0f, 1f)
-                                    dragRatio = ratio
-                                    onDragging(ratio.toDouble())
-                                },
-                                onHorizontalDrag = { change, _ ->
-                                    val ratio = (change.position.x / widthPx).coerceIn(0f, 1f)
-                                    dragRatio = ratio
-                                    onDragging(ratio.toDouble())
-                                },
-                                onDragEnd = { onSeekEnd(dragRatio.toDouble()) },
-                                onDragCancel = { onSeekEnd(dragRatio.toDouble()) },
-                            )
+                            // 同时支持「点击任意位置直接 seek」与「按住拖动实时跟随」。
+                            // 之前用 detectHorizontalDragGestures 只能拖动、点按无反应，
+                            // 且需要先越过 touch slop 才生效；这里自己处理指针事件。
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                var ratio = (down.position.x / widthPx).coerceIn(0f, 1f)
+                                down.consume()
+                                onDragging(ratio.toDouble())
+
+                                while (true) {
+                                    val change = awaitPointerEvent().changes
+                                        .firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) break
+                                    val r = (change.position.x / widthPx).coerceIn(0f, 1f)
+                                    if (r != ratio) {
+                                        ratio = r
+                                        onDragging(ratio.toDouble())
+                                    }
+                                    change.consume()
+                                }
+                                // 抬手 / 取消都提交一次 seek
+                                onSeekEnd(ratio.toDouble())
+                            }
                         },
                     contentAlignment = Alignment.CenterStart,
                 ) {
@@ -134,7 +144,8 @@ fun PlayerProgressBar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(PlayerProgressTrackHeight)
-                            .background(AppColors.white10, RoundedCornerShape(AppRadius.r2)),
+                            // 轨道底色对齐 Flutter `white @0.08`（此前误用 white10=0.10）
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(AppRadius.r2)),
                     )
                     // 已播进度（主色 + 辉光）
                     Box(
@@ -244,7 +255,8 @@ fun PlayerControlsBar(
                 if (loopMode == LoopMode.single) {
                     Text(
                         text = "1",
-                        modifier = Modifier.align(Alignment.TopEnd).offset(x = 1.dp, y = (-1).dp),
+                        // Flutter `Positioned(top:1, right:1)` 是「向内缩 1」，故 x 负、y 正
+                        modifier = Modifier.align(Alignment.TopEnd).offset(x = (-1).dp, y = 1.dp),
                         color = AppColors.white70,
                         fontSize = AppFontSize.size9,
                         fontWeight = AppFontWeight.extraBold,
@@ -360,7 +372,8 @@ fun PlayerVolumeSlider(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(PlayerVolumeTrackHeight)
-                            .background(AppColors.white10, RoundedCornerShape(AppRadius.r2_5)),
+                            // 轨道底色对齐 Flutter `white @0.08`（此前误用 white10=0.10）
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(AppRadius.r2_5)),
                     )
                     Box(
                         modifier = Modifier

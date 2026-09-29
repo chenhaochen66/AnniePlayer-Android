@@ -111,6 +111,7 @@ fun PlayerScreen(
     onPendingView: () -> Unit = {},
     onPendingClear: () -> Unit = {},
     onPendingBatch: () -> Unit = {},
+    onLineIndexChange: (Int) -> Unit = {},
 ) {
     val song: Song? = player.currentSong
     if (song == null) {
@@ -241,6 +242,7 @@ fun PlayerScreen(
                         viewportHeight = screenH,
                         onSeek = onSeek,
                         onOpenFontScale = { fontScaleVisible = true },
+                        onLineIndexChange = onLineIndexChange,
                     )
                 }
             }
@@ -269,9 +271,11 @@ fun PlayerScreen(
                         modifier = Modifier
                             .padding(start = AppSpacing.sp10)
                             .clip(RoundedCornerShape(AppRadius.card))
-                            .background(if (translationOn) AppColors.whiteA20 else AppColors.whiteA06)
+                            // 选中底色对齐 Flutter `white @0.18`（无对应 token，whiteA20=0.20 偏亮）
+                            .background(if (translationOn) Color.White.copy(alpha = 0.18f) else AppColors.whiteA06)
                             .clickableNoRipple { onToggleTranslation() }
-                            .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp6),
+                            // 竖向内边距对齐 Flutter 7（刻度无 sp7，内联）
+                            .padding(horizontal = AppSpacing.sp12, vertical = 7.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -388,7 +392,8 @@ private fun PlayerPageToggle(pageIndex: Int, onPageSelected: (Int) -> Unit) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(AppRadius.panel))
-            .background(AppColors.white10)
+            // 容器底色对齐 Flutter `white @0.08`（无对应 token，white10=0.10 偏亮）
+            .background(Color.White.copy(alpha = 0.08f))
             .padding(horizontal = AppSpacing.sp4, vertical = AppSpacing.sp3),
     ) {
         PlayerToggleSegment(

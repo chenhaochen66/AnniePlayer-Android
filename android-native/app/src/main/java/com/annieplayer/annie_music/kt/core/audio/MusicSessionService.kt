@@ -1,6 +1,7 @@
 package com.annieplayer.annie_music.kt.core.audio
 
 import android.content.Intent
+import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -33,6 +34,35 @@ class MusicSessionService : MediaSessionService() {
             .setChannelName(R.string.app_name)
             .build()
         setMediaNotificationProvider(provider)
+
+        // 【关键】把进程内「外部创建」的 MediaSession 注册进本服务。
+        // Media3 只有在 addSession() 里才会把「通知管理器」绑到会话上（见
+        // DefaultMediaNotificationProvider 与 MediaSessionService.lambda$addSession$0）。
+        // 只覆写 onGetSession() 返回外部会话是**不够**的：那样 Media3 永远不构建媒体通知，
+        // 也就永远不会调用 startForeground()，系统会在 ~5s 后抛出
+        // ForegroundServiceDidNotStartInTimeException 崩掉进程。
+        ensureSessionAdded()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 会话可能在服务创建后才建立（或服务被回收后重建），这里兜底再挂一次
+        ensureSessionAdded()
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    /**
+     * 幂等：确保 [AnnieAudioHolder] 里的会话已被本服务接管。
+     * 会话由 `MediaPlayerBackend.setup()` 创建，服务只是宿主。
+     */
+    private fun ensureSessionAdded() {
+        val session = AnnieAudioHolder.session ?: return
+        if (sessions.contains(session)) return
+        try {
+            addSession(session)
+            Log.i(TAG, "[service] addSession ok -> notification/foreground wired")
+        } catch (t: Throwable) {
+            Log.e(TAG, "[service] addSession failed", t)
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
@@ -50,6 +80,13 @@ class MusicSessionService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        // 先摘除会话，避免 Media3 在 onDestroy 时连带释放由 backend 持有、需要复用的会话。
+        AnnieAudioHolder.session?.let { session ->
+            try {
+                if (sessions.contains(session)) removeSession(session)
+            } catch (_: Throwable) {
+            }
+        }
         // 不释放共享的 player / MediaSession：它们由 MediaPlayerBackend 持有并复用
         // 但需复位 backend 的前台服务启动标志，否则后续播放不会再拉起服务/通知。
         AnnieAudioHolder.onServiceStopped?.invoke()
@@ -57,6 +94,8 @@ class MusicSessionService : MediaSessionService() {
     }
 
     companion object {
+        private const val TAG: String = "AnnieAudioSvc"
+
         /** 与 Dart `AudioServiceConfig.androidNotificationChannelId` 一致 */
         const val CHANNEL_ID: String = "com.annieplayer.annie_music.channel.audio"
     }

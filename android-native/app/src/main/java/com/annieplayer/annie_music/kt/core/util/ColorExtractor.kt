@@ -31,8 +31,14 @@ private const val _coverUa =
 /** secondary 兜底：vibrant/muted/darkVibrant/darkMuted 全落空时取 0xFF8B5CF6 */
 private val _fallbackSecondary: Int = 0xFF8B5CF6.toInt()
 
-/** 取色结果缓存（key = 封面地址/本地路径；null 表示失败，避免重复下载解码） */
-private val _cache = HashMap<String, ColorPalette?>()
+/** 取色结果缓存（key = 封面地址/本地路径；[_cacheMiss] 表示失败，避免重复下载解码） */
+private val _cache = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
+/**
+ * 失败占位哨兵：ConcurrentHashMap 不允许 null 值，
+ * 故以此对象代表「提取失败」的缓存结果（读取时还原为 null）。
+ */
+private val _cacheMiss = Any()
 
 /**
  * 从封面提取动态色板；失败返回 null。
@@ -42,16 +48,16 @@ private val _cache = HashMap<String, ColorPalette?>()
  */
 suspend fun extractPaletteFromCover(coverSource: String): ColorPalette? {
     if (coverSource.isEmpty()) return null
-    if (_cache.containsKey(coverSource)) return _cache[coverSource]
+    if (_cache.containsKey(coverSource)) return _cache[coverSource] as? ColorPalette
     try {
         val bytes = _loadCoverBytes(coverSource)
         if (bytes == null || bytes.isEmpty()) {
-            _cache[coverSource] = null
+            _cache[coverSource] = _cacheMiss
             return null
         }
         val argb = withContext(Dispatchers.Default) { _extractPaletteIsolate(bytes) }
         if (argb == null || argb.size < 2) {
-            _cache[coverSource] = null
+            _cache[coverSource] = _cacheMiss
             return null
         }
         val palette = ColorPalette.fallback.copyWith(
@@ -61,7 +67,7 @@ suspend fun extractPaletteFromCover(coverSource: String): ColorPalette? {
         _cache[coverSource] = palette
         return palette
     } catch (_: Throwable) {
-        _cache[coverSource] = null
+        _cache[coverSource] = _cacheMiss
         return null
     }
 }

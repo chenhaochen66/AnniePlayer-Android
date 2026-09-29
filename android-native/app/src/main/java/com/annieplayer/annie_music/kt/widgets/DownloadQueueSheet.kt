@@ -74,7 +74,7 @@ private enum class DownloadQueueTab {
  *
  * - 全屏面板：Header（返回 + 「下载任务」）+ 两段 Tab + 任务列表；底部留白 100（避开迷你条）。
  * - 任务行：封面 44 / 标题 / 歌手 / 音质 / 进度条 / 状态与操作按钮；行高最小 74、底部分隔线。
- * - 动画 150ms + 线性；遮罩 50% 黑（[AppColors.scrim50]，对齐 Dart `Color(0x80000000)`）。
+ * - 动画 150ms + easeInOutQuad；遮罩 50% 黑（[AppColors.scrim50]，对齐 Dart `Color(0x80000000)`）。
  * - 常驻组件树：隐藏时不移除，面板整体位移出屏 + 遮罩停用点击（等价 Flutter 的
  *   `IgnorePointer(ignoring: !visible)`；Compose 侧沿用 `AppSheet` 已验证的做法）。
  * - 返回手势：`BackHandler(enabled = visible)`。
@@ -100,12 +100,12 @@ fun DownloadQueueSheet(
 
     val scrimAlpha by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
         label = "downloadQueueScrim",
     )
     val slide by animateFloatAsState(
         targetValue = if (visible) 0f else 1f,
-        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
         label = "downloadQueueSlide",
     )
 

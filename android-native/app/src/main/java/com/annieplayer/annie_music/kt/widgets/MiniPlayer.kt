@@ -28,15 +28,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
+import com.annieplayer.annie_music.kt.ui.theme.AppShadow
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 
 /**
@@ -87,6 +92,15 @@ fun MiniPlayerBar(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // 顶部投影：对齐 Flutter `BoxShadow(color: Colors.black, offset: Offset(0, -4), blurRadius: 16)`
+                    .dropShadow(
+                        shape = RectangleShape,
+                        shadow = Shadow(
+                            radius = AppShadow.blur2xl,
+                            color = AppColors.black,
+                            offset = DpOffset(x = 0.dp, y = AppShadow.miniPlayerOffsetY),
+                        ),
+                    )
                     .background(AppColors.surfaceLight.copy(alpha = 0.94f))
                     .clickable(
                         interactionSource = openInteraction,
@@ -117,7 +131,7 @@ fun MiniPlayerBar(
                         Spacer(modifier = Modifier.height(3.dp))
                         Text(
                             text = artist,
-                            color = Color.White.copy(alpha = 0.24f),
+                            color = AppColors.white38,
                             fontSize = AppFontSize.base,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

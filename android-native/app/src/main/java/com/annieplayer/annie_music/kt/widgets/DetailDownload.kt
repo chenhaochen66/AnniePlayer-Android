@@ -67,7 +67,7 @@ import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
-import com.annieplayer.annie_music.kt.data.DownloadDirService
+import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.LyricResult
 import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchArtistAlbumsByPlatform
@@ -81,7 +81,6 @@ import com.annieplayer.annie_music.kt.data.model.DownloadStatus
 import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
-import com.annieplayer.annie_music.kt.data.network.globalOkHttp
 import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
@@ -91,28 +90,25 @@ import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.Request
-import java.io.File
-import java.io.IOException
 
 // ================================================================================================
-// 共用组件：下载助手（等价 Flutter `lib/data/download_service.dart` 的 downloadSong，
-// Kotlin 端暂未做 ffmpeg 元数据写入，下载原始音频文件并返回保存路径）
+// 共用组件：下载助手（薄委托层，等价 Flutter `lib/data/download_service.dart` 的 downloadSong）
 // ================================================================================================
-
-/** 下载请求 UA（对齐 Flutter `_chromeUa`） */
-private const val DetailChromeUa =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
 /**
- * 下载一首歌到「用户自定义目录」或应用缓存 downloads/，返回最终文件路径。
+ * 下载一首歌并返回最终文件路径（对齐 Flutter `downloadSong` 的调用点语义）。
  *
- * 行为对齐 Dart `downloadSong` 的下载段：进度回调、临时文件、最终重命名；
- * 差异：无 ffmpeg 打标 / 无 MediaStore 扫描（Kotlin 侧尚未移植这两个依赖）。
+ * 本函数仅为保持既有调用方签名不变的薄委托层：实际下载复用
+ * [DownloadService.downloadSong]（元数据打标 / MediaStore 入库 / 暂停取消注册全部由其完成）。
+ * 参数映射：
+ * - `songId/title/artist/coverUrl/downloadUrl/quality/onProgress/lyric/tlyric/albumArtist/
+ *   trackNumber/discNumber/releaseDate` 原样转发（下载段进度语义与 Flutter 一致：
+ *   下载中 `received/total`，随后依次 0.5 / 0.65 / 0.8 / 1.0）。
+ * - `context`：委托路径不需要（DownloadService 通过 [DownloadService.init] 由 Application
+ *   解析 cacheDir），仅为兼容既有调用点保留。
  */
+@Suppress("UNUSED_PARAMETER")
 internal suspend fun detailDownloadSong(
     context: Context,
     songId: String,
@@ -129,55 +125,19 @@ internal suspend fun detailDownloadSong(
     trackNumber: String? = null,
     discNumber: String? = null,
     releaseDate: String? = null,
-): String = withContext(Dispatchers.IO) {
-    val ext = if (quality == Quality.flac || quality == Quality.hires) ".flac" else ".mp3"
-    val safeName = "$title - $artist$ext".replace(Regex("""[/\\?%*:|"<>]"""), "_")
-    val customDir = DownloadDirService.getDownloadDirPath()
-    val dir = if (!customDir.isNullOrEmpty()) File(customDir) else File(context.cacheDir, "downloads")
-    if (!dir.exists()) dir.mkdirs()
-    val safeSongId = songId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
-    val temp = File(dir, "tmp_$safeSongId$ext")
-    if (temp.exists()) temp.delete()
-
-    val request = Request.Builder()
-        .url(downloadUrl)
-        .header("User-Agent", DetailChromeUa)
-        .build()
-    globalOkHttp.newCall(request).execute().use { resp ->
-        if (!resp.isSuccessful) throw IOException("Download failed: ${resp.code}")
-        val body = resp.body ?: throw IOException("Download failed")
-        val total = body.contentLength()
-        body.byteStream().use { input ->
-            temp.outputStream().use { output ->
-                val buffer = ByteArray(8192)
-                var received = 0L
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    output.write(buffer, 0, read)
-                    received += read
-                    if (total > 0) onProgress(received.toDouble() / total)
-                }
-            }
-        }
-    }
-    if (!temp.exists()) throw IOException("Download failed")
-    onProgress(0.5)
-
-    // 封面 / 歌词 / 元数据：Kotlin 侧暂无 ffmpeg，跳过打标（保留原始音频文件）。
-    // 下方 onProgress(0.8) 与 Dart 的进度节点对齐。
-    onProgress(0.8)
-
-    val finalFile = File(dir, safeName)
-    if (finalFile.exists()) finalFile.delete()
-    val renamed = temp.renameTo(finalFile)
-    val out = if (renamed) {
-        finalFile
-    } else {
-        temp.copyTo(finalFile, overwrite = true)
-        temp.delete()
-        finalFile
-    }
-    onProgress(1.0)
-    out.absolutePath
-}
+): String = DownloadService.downloadSong(
+    songId = songId,
+    title = title,
+    artist = artist,
+    coverUrl = coverUrl,
+    downloadUrl = downloadUrl,
+    quality = quality,
+    onProgress = onProgress,
+    lyric = lyric,
+    album = album,
+    tlyric = tlyric,
+    albumArtist = albumArtist,
+    trackNumber = trackNumber,
+    discNumber = discNumber,
+    releaseDate = releaseDate,
+)

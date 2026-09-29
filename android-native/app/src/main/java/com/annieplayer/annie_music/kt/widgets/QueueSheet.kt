@@ -55,7 +55,7 @@ private val QueueSheetCurrentBg = Color(0x146366F1)
  * - 底部面板：拖拽条 / 标题「播放队列 (N)」/ 关闭按钮 / 队列列表；最大高度 = 屏高 60%。
  * - 当前曲高亮（主色 + 前缀「正在播放」），点击行 [onPlayIndex] 跳播（宿主负责关闭）。
  * - 队列长度 > 1 时每行提供移除按钮。
- * - 动画：150ms + 线性（[AppDuration.sheet] + [AppEasing.linear]），遮罩 60% 黑。
+ * - 动画：150ms + easeOutCubic（[AppDuration.sheet] + [AppEasing.easeOutCubic]），遮罩 60% 黑。
  *
  * 常驻组件树：隐藏时不销毁，仅把面板整体位移出屏 + 遮罩停止吃触摸（对齐 Flutter
  * `IgnorePointer(ignoring: !visible)` 的效果；Compose 侧沿用 `AppSheet` 已验证的做法：
@@ -76,12 +76,12 @@ fun QueueSheet(
 
     val scrimAlpha by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeOutCubic),
         label = "queueSheetScrim",
     )
     val slide by animateFloatAsState(
         targetValue = if (visible) 0f else 1f,
-        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeOutCubic),
         label = "queueSheetSlide",
     )
 

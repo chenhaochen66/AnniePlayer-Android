@@ -99,6 +99,7 @@ data class SongSearchColumn(
  *
  * @param columns 两列数据（最多取前两个；更少 / 为 null 时该半区保持空白，与 Dart 一致）
  * @param query 已提交的搜索词（为空且无结果时不显示「未找到结果」）
+ * @param searchToken 搜索代次（调用方每次提交搜索自增；同词同源重搜时靠它触发分页重置）
  * @param onPlay 点击播放（携带所在列当前已加载的完整队列）
  * @param onDownload 下载
  * @param onToggleSelect 切换选中（选择模式 / 长按）
@@ -112,6 +113,7 @@ data class SongSearchColumn(
 fun SongSearchResults(
     columns: List<SongSearchColumn>,
     query: String,
+    searchToken: Int = 0,
     onPlay: (Song, List<Song>) -> Unit,
     onDownload: (Song) -> Unit,
     onToggleSelect: (Song) -> Unit,
@@ -140,8 +142,9 @@ fun SongSearchResults(
 
     val sourceKey = columns.joinToString(separator = "-") { it.source.name }
 
-    // 关键词或源分组变化 -> 整列重置（对齐 Dart didUpdateWidget + _loadFirstPages）
-    LaunchedEffect(query, sourceKey) {
+    // 关键词、源分组或搜索代次变化 -> 整列重置（对齐 Dart didUpdateWidget + _loadFirstPages）；
+    // 同词同源重搜时前两者不变，靠调用方自增的 searchToken 兜底触发，避免旧分页数据串入新结果
+    LaunchedEffect(searchToken, query, sourceKey) {
         generation++
         extrasBySource.clear()
         pageBySource.clear()
@@ -175,7 +178,9 @@ fun SongSearchResults(
                 return@launch
             }
             pageBySource[source] = nextPage
-            extrasBySource[source] = extrasBySource[source].orEmpty() + list
+            // 按歌曲 id 去重（保留首次出现）：源站翻页常返回与前面页重复的歌曲，
+            // 重复 id 传给 items(key=...) 会抛「Key was already used」导致整屏崩溃
+            extrasBySource[source] = (extrasBySource[source].orEmpty() + list).distinctBy { it.id }
             hasMoreBySource[source] = list.size >= pageSize
         }
     }
@@ -273,14 +278,15 @@ fun SongSearchResults(
     }
 }
 
-/** 该列当前应展示的完整列表 = 首页（来自调用方）+ 本地累积的后续页 */
+/** 该列当前应展示的完整列表 = 首页（来自调用方）+ 本地累积的后续页（按 id 去重，保留首次出现） */
 private fun songSearchColumnContent(
     column: SongSearchColumn?,
     extras: Map<SearchSource, List<Song>>,
 ): List<Song> {
     if (column == null) return emptyList()
-    val extra = extras[column.source] ?: return column.songs
-    return column.songs + extra
+    // 双保险：追加处已去重，这里对「首页 + 累积页」整体再按 id 去重，
+    // 确保任何合并路径都不会把重复 id 交给 LazyColumn 的 key
+    return (column.songs + extras[column.source].orEmpty()).distinctBy { it.id }
 }
 
 /**

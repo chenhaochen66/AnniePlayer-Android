@@ -366,6 +366,8 @@ fun HomeScreen(
                         ModeDropdownMode.song -> SongSearchResults(
                             columns = songColumns,
                             query = songSubmitted,
+                            // 每次提交搜索 / 换源分组自增：同词同源重搜也能重置分页状态（修复旧分页串页）
+                            searchToken = songGeneration,
                             onPlay = { song, songs -> handlePlaySong(song, songs) },
                             onDownload = { handleDownload(it) },
                             onToggleSelect = { handleToggleSelect(it) },
@@ -583,6 +585,8 @@ fun HomeScreen(
                     onToggleTranslation = {
                         uiViewModel.setShowLyricsTranslation(!uiState.showLyricsTranslation)
                     },
+                    // 歌词高亮行索引回写 UiState（对齐 Flutter `setCurrentLineIndex`）
+                    onLineIndexChange = { uiViewModel.setCurrentLineIndex(it) },
                     onCoverChanged = { url ->
                         colorViewModel.setCurrentCoverUrl(url)
                         scope.launch {
