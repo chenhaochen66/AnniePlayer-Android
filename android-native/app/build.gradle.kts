@@ -23,7 +23,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 正式版开启代码/资源裁剪（R8）；debug 保持关闭便于调试。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             signingConfig = signingConfigs.getByName("debug")
         }
     }
