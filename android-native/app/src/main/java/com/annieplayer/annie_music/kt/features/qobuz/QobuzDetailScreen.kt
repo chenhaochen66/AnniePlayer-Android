@@ -73,8 +73,7 @@ import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
 import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
-import com.annieplayer.annie_music.kt.widgets.SnapshotPaletteAndRestore
-import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
+import com.annieplayer.annie_music.kt.widgets.clickableRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
 import com.annieplayer.annie_music.kt.widgets.glassPanel
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
@@ -180,7 +179,8 @@ fun QobuzDetailScreen(
     // 封面动态取色（与播放页同一条链路）：封面未到时回退 ColorPalette.fallback
     val palette = rememberCoverPalette(st.cover.takeIf { it.isNotEmpty() })
     // 进入时把详情页色板写入全局（AppShell → AnnieTheme），离开组合时恢复进入前的色板
-    SnapshotPaletteAndRestore(colorViewModel = colorViewModel, palette = palette)
+    // 不再写入全局色板（原 SnapshotPaletteAndRestore）：详情页只用本地 palette 渲染，
+// 全局色板由 AppShell 按「当前播放歌曲」驱动；详情页写入会在退出时覆盖成陈旧值。
 
     suspend fun load() {
         val token = qobuzViewModel.getActiveToken()
@@ -430,7 +430,7 @@ private fun QobuzDetailHeader(
     ) {
         Box(
             modifier = Modifier
-                .clickableNoRipple(onBack)
+                .clickableRipple(onBack)
                 .padding(AppSpacing.sp4),
             contentAlignment = Alignment.Center,
         ) {
@@ -449,7 +449,7 @@ private fun QobuzDetailHeader(
         if (selectMode) {
             Box(
                 modifier = Modifier
-                    .clickableNoRipple(onToggleSelectAll)
+                    .clickableRipple(onToggleSelectAll)
                     .padding(AppSpacing.sp4),
             ) {
                 Text(
@@ -463,7 +463,7 @@ private fun QobuzDetailHeader(
         if (type == "album" && trackCount > 1) {
             Box(
                 modifier = Modifier
-                    .clickableNoRipple(onToggleSelectMode)
+                    .clickableRipple(onToggleSelectMode)
                     .padding(AppSpacing.sp4),
             ) {
                 Text(
@@ -559,7 +559,7 @@ private fun QobuzDetailListHeader(st: QobuzDetailScreenState) {
             modifier = Modifier
                 .size(AppSize.coverPlaceholder)
                 .clip(RoundedCornerShape(AppRadius.r10))
-                .background(AppColors.whiteA03),
+                    .background(Color.Transparent),
             contentAlignment = Alignment.Center,
         ) {
             var coverFailed by remember(st.cover) { mutableStateOf(false) }
@@ -646,7 +646,7 @@ private fun QobuzDetailTrackRow(
 ) {
     // 正在播放行优先用主色行底；其余按既有多选态给淡主色底
     val rowBackground = if (playing) {
-        Modifier.playingRowBackground(palette.primary)
+        Modifier.playingRowBackground(palette.readablePrimary())
     } else {
         Modifier.background(if (selected) AppColors.primaryA08 else Color.Transparent)
     }
@@ -664,7 +664,7 @@ private fun QobuzDetailTrackRow(
                     strokeWidth = stroke,
                 )
             }
-            .clickableNoRipple { if (selectMode) onToggle(track.id) else onPlay(track) }
+            .clickableRipple { if (selectMode) onToggle(track.id) else onPlay(track) }
             .padding(horizontal = QobuzDetailScreenPaddingH, vertical = AppSpacing.sp10),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -677,7 +677,7 @@ private fun QobuzDetailTrackRow(
         }
         Box(modifier = Modifier.width(AppSpacing.sp24), contentAlignment = Alignment.Center) {
             if (playing) {
-                PlayingIndicator(tint = palette.primary)
+                PlayingIndicator(tint = palette.readablePrimary())
             } else {
                 Text(
                     text = "${index + 1}",
@@ -691,7 +691,7 @@ private fun QobuzDetailTrackRow(
         Text(
             text = track.title,
             modifier = Modifier.weight(1f),
-            color = if (playing) palette.primary else AppColors.textPrimary,
+            color = if (playing) palette.readablePrimary() else AppColors.textPrimary,
             fontSize = AppFontSize.base,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
@@ -706,7 +706,7 @@ private fun QobuzDetailTrackRow(
         } else if (!selectMode) {
             Box(
                 modifier = Modifier
-                    .clickableNoRipple { onDownload(track) }
+                    .clickableRipple { onDownload(track) }
                     .padding(AppSpacing.sp4),
                 contentAlignment = Alignment.Center,
             ) {

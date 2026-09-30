@@ -1,7 +1,6 @@
 package com.annieplayer.annie_music.kt.widgets
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,7 +14,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
-import com.annieplayer.annie_music.kt.ui.theme.AppBorder
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppShadow
@@ -28,9 +26,9 @@ import com.annieplayer.annie_music.kt.ui.theme.AppShadow
  * 糊掉（且 API < 31 是 no-op），无法像 CSS `backdrop-filter` 一样对下层做背景模糊。
  * 因此这里用**层叠伪造**毛玻璃（与 `AppBottomBar` / 迷你播放器同一套路，见 skill
  * `android-compose-ui` §5）：
- * 1. `clip(shape)` + 半透明底色 [AppColors.surface95]（下层的封面 / 背景透过玻璃可见 = 「透」）；
+ * 1. `clip(shape)` + 半透明底色 [AppColors.glassPanel]（下层封面取色透过玻璃可见 = 「透」）；
  * 2. 顶部白色高光垂直渐变 [AppColors.glass] → 透明（模拟玻璃受光面 = 「毛」）；
- * 3. 1dp 高光描边 [AppColors.glassBorder]（玻璃边缘）；
+ * 3. （已按用户要求移除）原 1dp 高光描边 —— 在真机上仍会被看成一圈「框」；
  * 4. [elevated] 时补一层带偏移的 `dropShadow`（悬浮感）。
  *
  * 文字 / 图标始终清晰，不依赖 RenderEffect，API < 31 不退化。
@@ -42,12 +40,12 @@ import com.annieplayer.annie_music.kt.ui.theme.AppShadow
  * 这与本工程 `AppBottomBar` / `BottomBarCover` 的既有写法一致。
  *
  * @param shape 玻璃形状（默认卡片圆角；pill 传 `RoundedCornerShape(AppRadius.pill)`）。
- * @param tint 半透明底色（默认 [AppColors.surface95] = surface @95%）。
+ * @param tint 半透明底色（默认 [AppColors.glassPanel] = 白 5%，保证下层取色透得出来）。
  * @param elevated 是否带悬浮投影（列表内嵌的小容器可传 false，避免层层投影糊成一片）。
  */
 fun Modifier.glassPanel(
     shape: Shape,
-    tint: Color = AppColors.surface95,
+    tint: Color = AppColors.glassPanel,
     elevated: Boolean = true,
 ): Modifier {
     var chain = this
@@ -56,7 +54,8 @@ fun Modifier.glassPanel(
             shape = shape,
             shadow = Shadow(
                 radius = AppShadow.blur2xl,
-                color = AppColors.blackA40,
+                // 投影也压淡（10%）：原来 40% 黑会在面板外圈形成一圈明显的暗 halo，看着就像「框」
+                color = AppColors.blackA40.copy(alpha = 0.10f),
                 offset = DpOffset(x = 0.dp, y = AppShadow.miniPlayerOffsetY),
             ),
         )
@@ -65,10 +64,17 @@ fun Modifier.glassPanel(
         .clip(shape)
         // 半透明底：下层内容透过玻璃可见（毛玻璃的「透」）
         .background(tint)
-        // 顶部白色高光渐变：模拟玻璃受光面（毛玻璃的「毛」）
-        .background(Brush.verticalGradient(listOf(AppColors.glass, Color.Transparent)))
-        // 极细高光描边：玻璃边缘
-        .border(AppBorder.thin, AppColors.glassBorder, shape)
+        // 玻璃「受光边」：只占顶部约 12% 高。
+        // 原实现是「13% 白 → 透明」铺满整个高度，面板一高就变成一整块发亮的板（真机反馈），
+        // 现在收到顶部一小段，只留一道受光边。
+        .background(
+            Brush.verticalGradient(
+                0f to AppColors.glass,
+                0.12f to Color.Transparent,
+            ),
+        )
+        // 边框已按用户要求移除：详情页的玻璃只靠「极淡底色 + 顶部受光边 + 模糊取色背景」表达，
+        // 不再有描边（原 1px 白描边在真机上仍能被看成一圈「框」）。
 }
 
 /**
@@ -83,7 +89,7 @@ fun Modifier.glassPanel(
  *
  * @param modifier 外部修饰符（尺寸 / 对齐由调用方决定）。
  * @param shape 玻璃形状，默认 [AppRadius.card] 卡片圆角。
- * @param tint 半透明底色，默认 [AppColors.surface95]。
+ * @param tint 半透明底色，默认 [AppColors.glassPanel]。
  * @param elevated 是否带悬浮投影，默认 true。
  * @param content 面板内容（[BoxScope]，可用 `align` 摆放子元素）。
  */
@@ -91,7 +97,7 @@ fun Modifier.glassPanel(
 fun GlassSurface(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(AppRadius.card),
-    tint: Color = AppColors.surface95,
+    tint: Color = AppColors.glassPanel,
     elevated: Boolean = true,
     content: @Composable BoxScope.() -> Unit,
 ) {

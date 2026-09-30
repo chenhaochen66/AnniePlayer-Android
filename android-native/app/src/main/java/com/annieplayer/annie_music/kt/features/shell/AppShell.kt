@@ -137,7 +137,11 @@ fun AppShell(
     val downloadTasks by downloadViewModel.state.collectAsState()
     val selection by selectionViewModel.state.collectAsState()
     val colorState by colorViewModel.state.collectAsState()
-    val palette = Annie.palette
+    // 动态色板取「取色结果本身」（ColorViewModel 的 state），**不是** `Annie.palette`：
+    // MainActivity 目前是 `AnnieTheme { }`（用默认 palette = fallback），CompositionLocal 里那个
+    // `Annie.palette` 永远是 fallback 靛蓝；取色结果一路写进了 colorState，但此前没人消费它，
+    // 导致播放页歌词指示条 / 播放页取色永远不变。这里改用 colorState.colors 打通链路。
+    val palette = colorState.colors
     // 当前 tab（搜索 / 本地曲库）：Activity 作用域 VM，切 tab 不重建任何 ViewModel
     val selectedTab by appShellViewModel.selectedTab.collectAsState()
 

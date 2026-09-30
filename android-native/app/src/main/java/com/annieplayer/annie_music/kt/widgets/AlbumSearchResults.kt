@@ -176,7 +176,7 @@ private fun AlbumSearchCard(
             .aspectRatio(cardRatio)
             .clip(RoundedCornerShape(AppRadius.card))
             .background(AppColors.whiteA03)
-            .clickableNoRipple { onPress(album) },
+            .clickableRipple { onPress(album) },
     ) {
         // ── 封面：1:1、圆角 8、占位底色 ──
         Box(

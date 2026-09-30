@@ -164,7 +164,8 @@ private fun AlbumDetailContent(
     val palette = rememberCoverPalette(data.cover)
 
     // 进入浮层把全局色板临时切为该专辑色板，退出恢复进入前的色板（与整页版同一套取色链路）
-    SnapshotPaletteAndRestore(colorViewModel = colorViewModel, palette = palette)
+    // 不再写入全局色板（原 SnapshotPaletteAndRestore）：详情页只用本地 palette 渲染，
+// 全局色板由 AppShell 按「当前播放歌曲」驱动；详情页写入会在退出时覆盖成陈旧值。
 
     /** `AlbumSong` -> `Song`（对齐 Dart `_toSong`，必须携带歌手 ids / 名单） */
     fun toSong(s: AlbumSong): Song = Song(
@@ -475,7 +476,7 @@ private fun AlbumDetailHeader(
     ) {
         Box(
             modifier = Modifier
-                .clickableNoRipple(onClose)
+                .clickableRipple(onClose)
                 .padding(AppSpacing.sp4),
             contentAlignment = Alignment.Center,
         ) {
@@ -494,7 +495,7 @@ private fun AlbumDetailHeader(
         if (selectMode) {
             Box(
                 modifier = Modifier
-                    .clickableNoRipple(onToggleSelectAll)
+                    .clickableRipple(onToggleSelectAll)
                     .padding(AppSpacing.sp4),
             ) {
                 Text(
@@ -507,7 +508,7 @@ private fun AlbumDetailHeader(
         }
         Box(
             modifier = Modifier
-                .clickableNoRipple(onToggleSelectMode)
+                .clickableRipple(onToggleSelectMode)
                 .padding(AppSpacing.sp4),
         ) {
             Text(
@@ -586,7 +587,7 @@ private fun AlbumDetailBody(
                             selectMode = st.selectMode,
                             selected = st.selectedIds.contains(song.id),
                             isPlaying = song.id == currentSongId,
-                            playingTint = palette.primary,
+                            playingTint = palette.readablePrimary(),
                             task = tasks[song.id],
                             onPlay = onPlay,
                             onDownload = onDownload,
@@ -622,7 +623,7 @@ private fun AlbumDetailListHeader(
                 modifier = Modifier
                     .size(AppSize.coverPlaceholder)
                     .clip(RoundedCornerShape(AppRadius.r10))
-                    .background(AppColors.whiteA03),
+                    .background(Color.Transparent),
                 contentAlignment = Alignment.Center,
             ) {
                 var coverFailed by remember(data.id) { mutableStateOf(false) }

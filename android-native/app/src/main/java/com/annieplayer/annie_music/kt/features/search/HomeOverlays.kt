@@ -51,7 +51,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppShadow
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
-import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
+import com.annieplayer.annie_music.kt.widgets.clickableRipple
 
 /**
  * 首页的零散构件（1:1 移植 Flutter `lib/features/search/home_screen.dart` 内的私有 Widget）：
@@ -131,7 +131,7 @@ internal fun HomePendingDownloadBar(
     ) {
         // 左侧：计数 + 文案（点整块查看多选浮层）
         Row(
-            modifier = Modifier.weight(1f).clickableNoRipple(onView),
+            modifier = Modifier.weight(1f).clickableRipple(onView),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -156,13 +156,13 @@ internal fun HomePendingDownloadBar(
             )
         }
         // 清空
-        Box(modifier = Modifier.clickableNoRipple(onClear).padding(AppSpacing.sp4)) {
+        Box(modifier = Modifier.clickableRipple(onClear).padding(AppSpacing.sp4)) {
             Text(text = "清空", color = AppColors.white38, fontSize = AppFontSize.sm)
         }
         // 下载全部（Dart: onTap 在下载中为 null → 这里在 lambda 内门控）
         Box(
             modifier = Modifier
-                .clickableNoRipple { if (!batchDownloading) onBatch() }
+                .clickableRipple { if (!batchDownloading) onBatch() }
                 .background(AppColors.primary, RoundedCornerShape(AppRadius.r10))
                 .padding(horizontal = AppSpacing.sp16, vertical = AppSpacing.sp8),
             contentAlignment = Alignment.Center,
@@ -200,7 +200,7 @@ internal fun BoxScope.HomeSourceSwitchButton(onTap: () -> Unit) {
                 spotColor = shadowColor,
             )
             .background(AppColors.primary, shape)
-            .clickableNoRipple(onTap),
+            .clickableRipple(onTap),
         contentAlignment = Alignment.Center,
     ) {
         HomeSourceSwitchGlyph(modifier = Modifier.size(AppIconSize.icon24), tint = AppColors.white)
@@ -306,7 +306,7 @@ private fun HomeForeignModeButton(label: String, active: Boolean, onTap: () -> U
     Box(
         modifier = Modifier
             .background(background, RoundedCornerShape(AppRadius.r10))
-            .clickableNoRipple(onTap)
+            .clickableRipple(onTap)
             .padding(horizontal = AppSpacing.sp22, vertical = HomeForeignTabPadV),
         contentAlignment = Alignment.Center,
     ) {

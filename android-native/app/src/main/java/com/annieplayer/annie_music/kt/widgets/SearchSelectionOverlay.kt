@@ -19,9 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,7 +78,7 @@ fun SearchSelectionOverlay(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppColors.black54)
-                .clickableNoRipple(onClose),
+                .clickableRipple(onClose),
         )
 
         // ── 底部面板 ──
@@ -123,15 +121,14 @@ fun SearchSelectionOverlay(
                 )
                 Box(
                     modifier = Modifier
-                        .clickableNoRipple(onClose)
+                        .clickableRipple(onClose)
                         .padding(AppSpacing.sp4),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = null,
-                        tint = AppColors.white70,
+                    // 关闭改为自绘线条家族（笔重 2dp 等效、圆头端点），替换 Material Close
+                    SearchSelectionCloseGlyph(
                         modifier = Modifier.size(AppIconSize.icon22),
+                        tint = AppColors.white70,
                     )
                 }
             }
@@ -224,7 +221,7 @@ private fun SearchSelectionSongRow(song: Song, onRemove: (String) -> Unit) {
         }
         Box(
             modifier = Modifier
-                .clickableNoRipple { onRemove(song.id) }
+                .clickableRipple { onRemove(song.id) }
                 .padding(AppSpacing.sp4),
             contentAlignment = Alignment.Center,
         ) {
@@ -260,6 +257,37 @@ private fun SearchSelectionCancelIcon(modifier: Modifier = Modifier, color: Colo
             end = Offset(center.x - r + inset, center.y + r - inset),
             strokeWidth = strokeW,
             blendMode = androidx.compose.ui.graphics.BlendMode.Clear,
+        )
+    }
+}
+
+/**
+ * 关闭「×」（自绘线条家族，仅搜索多选浮层头部）。
+ *
+ * 笔重 `w * 0.09f` 在 22dp 栅格上 ≈ 2dp（2dp 等效）、圆头端点、比例坐标；
+ * 替换原 `Icons.Default.Close`（Material 矢量平头笔画，与自绘家族笔重不一致）。
+ */
+@Composable
+private fun SearchSelectionCloseGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.white70) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.09f
+        val insetX = w * 0.27f
+        val insetY = h * 0.27f
+        drawLine(
+            color = tint,
+            start = Offset(insetX, insetY),
+            end = Offset(w - insetX, h - insetY),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = tint,
+            start = Offset(w - insetX, insetY),
+            end = Offset(insetX, h - insetY),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
         )
     }
 }

@@ -1,5 +1,6 @@
 package com.annieplayer.annie_music.kt.widgets
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -12,17 +13,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.Popup
@@ -110,7 +112,7 @@ private fun ModeDropdownTrigger(label: String, onToggle: () -> Unit) {
         modifier = Modifier
             .height(AppSize.searchBarHeight)
             .background(AppColors.primary, RoundedCornerShape(AppRadius.r10))
-            .clickableNoRipple(onToggle)
+            .clickableRipple(onToggle)
             .padding(horizontal = AppSpacing.sp12),
         verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -121,12 +123,30 @@ private fun ModeDropdownTrigger(label: String, onToggle: () -> Unit) {
             fontWeight = AppFontWeight.semiBold,
         )
         Spacer(modifier = Modifier.width(AppSpacing.sp6))
-        Icon(
-            imageVector = Icons.Default.KeyboardArrowDown,
-            contentDescription = null,
-            tint = AppColors.textSecondary,
+        // 下拉箭头改为自绘线条家族（笔重 2dp 等效、圆头端点），替换 Material 实心 KeyboardArrowDown
+        ModeDropdownChevronDown(
             modifier = Modifier.size(AppIconSize.icon13),
+            tint = AppColors.textSecondary,
         )
+    }
+}
+
+/**
+ * 下拉箭头（chevron_down，自绘线条家族，仅搜索模式下拉）。
+ *
+ * 笔重 `w * 0.15f` 在 13dp 栅格上 ≈ 2dp（2dp 等效），端点圆头；替换原
+ * `Icons.Default.KeyboardArrowDown`（Material 实心、平头，笔重与同屏自绘图标不一致）。
+ */
+@Composable
+private fun ModeDropdownChevronDown(modifier: Modifier = Modifier, tint: Color = AppColors.textSecondary) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.15f
+        val topY = h * 0.36f
+        val bottomY = h * 0.62f
+        drawLine(tint, Offset(w * 0.25f, topY), Offset(w * 0.50f, bottomY), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.75f, topY), Offset(w * 0.50f, bottomY), stroke, StrokeCap.Round)
     }
 }
 
@@ -174,7 +194,7 @@ private fun ModeDropdownPanelItem(
             .fillMaxWidth()
             .clip(RoundedCornerShape(AppRadius.r8))
             .background(if (active) AppColors.primaryA12 else Color.Transparent)
-            .clickableNoRipple(onTap)
+            .clickableRipple(onTap)
             .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -187,12 +207,37 @@ private fun ModeDropdownPanelItem(
         )
         if (active) {
             Spacer(modifier = Modifier.width(AppSpacing.sp8))
-            Icon(
-                imageVector = Icons.Default.Check,
-                contentDescription = null,
-                tint = AppColors.primary,
+            // 勾选改为自绘线条家族（与 DetailCheckMark / CheckSquareIcon 同一勾形与笔重）
+            ModeDropdownCheckMark(
                 modifier = Modifier.size(AppIconSize.icon16),
+                tint = AppColors.primary,
             )
         }
+    }
+}
+
+/**
+ * 勾选对勾（自绘线条家族，仅搜索模式下拉激活项）。
+ *
+ * 勾形与 [DetailCheckMark] / [CheckSquareIcon] 完全一致（0.22,0.52 → 0.43,0.73 → 0.78,0.28），
+ * 笔重 `w * 0.13f` 在 16dp 栅格上 ≈ 2dp（2dp 等效），圆头端点 + 圆角连接；
+ * 替换原 `Icons.Default.Check`（Material 实心勾，笔重与自绘家族不一致）。
+ */
+@Composable
+private fun ModeDropdownCheckMark(modifier: Modifier = Modifier, tint: Color = AppColors.primary) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.13f
+        val path = Path().apply {
+            moveTo(w * 0.22f, h * 0.52f)
+            lineTo(w * 0.43f, h * 0.73f)
+            lineTo(w * 0.78f, h * 0.28f)
+        }
+        drawPath(
+            path = path,
+            color = tint,
+            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
     }
 }

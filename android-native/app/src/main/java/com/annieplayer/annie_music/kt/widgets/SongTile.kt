@@ -1,6 +1,9 @@
 package com.annieplayer.annie_music.kt.widgets
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -124,7 +128,7 @@ fun SongTile(
         // ── 下载按钮 ──
         Box(
             modifier = Modifier
-                .clickableNoRipple { onDownload(song) }
+                .clickableRipple { onDownload(song) }
                 .padding(6.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -155,7 +159,7 @@ private fun SongTileCard(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(cardColor)
-            .combinedClickableNoRipple(onTap = onTap, onLongClick = onLongPress)
+            .searchTileCombinedClickableRipple(onTap = onTap, onLongClick = onLongPress)
             .padding(vertical = 4.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -284,4 +288,24 @@ private fun topQualityLabel(qualities: List<Quality>): String? {
         }
     }
     return null
+}
+
+/**
+ * 卡片主体点击：与 `clickableRipple` 同一套反馈（白 24% 涟漪，经外层 `clip` 贴合圆角），
+ * 但保留「点击 + 长按」双语义（长按进入多选是搜索页不能退化的交互，故不能直接用单击版）。
+ * 替换原 `combinedClickableNoRipple`：原先点击无任何反馈，与页面其它点击不一致。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.searchTileCombinedClickableRipple(
+    onTap: () -> Unit,
+    onLongClick: (() -> Unit)?,
+): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    return this.combinedClickable(
+        interactionSource = interaction,
+        indication = ripple(color = AppColors.white24),
+        onClick = onTap,
+        onLongClick = onLongClick,
+    )
 }

@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,7 +20,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.util.extractPaletteFromCover
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
@@ -35,13 +33,21 @@ import kotlinx.coroutines.CancellationException
 private val BackdropBlurRadius = 60.dp
 
 /** 模糊封面图不透明度（压暗到 ~55%，保证上层正文对比度）。 */
-private const val BackdropImageAlpha = 0.55f
+private const val BackdropImageAlpha = 0.72f
 
 /** 取色染色渐变：顶部主色不透明度。 */
-private const val BackdropTintTopAlpha = 0.30f
+private const val BackdropTintTopAlpha = 0.40f
 
 /** 取色染色渐变：底部页面底色不透明度（近乎不透明，让列表区域始终可读）。 */
-private const val BackdropTintBottomAlpha = 0.92f
+/**
+ * 取色渐变**底部**的兜底权重。
+ *
+ * 关键教训：这个值曾经是 0.92 / 0.70，且底部用的是 `palette.background` —— 而取色器只改
+ * primary / secondary，**background 永远是 fallback 的 `#0A0A1A`**，于是页面下半部分被刷成
+ * 一块平的死深蓝，「背景色」整体看不到（真机反馈）。现在压到 0.30：取色（封面颜色）主导，
+ * 底部只做轻微压暗，保证正文对比度。
+ */
+private const val BackdropTintBottomAlpha = 0.30f
 
 /**
  * 可读性压暗：顶部黑 42% → 透明。
@@ -49,7 +55,15 @@ private const val BackdropTintBottomAlpha = 0.92f
  * 模糊封面最亮的是顶部（`ContentScale.Crop` 放大后顶部占比最大），仅靠染色渐变在浅色封面上
  * 无法保证白字对比度（实测最坏可到 ~2:1），故额外叠一层顶部向下的暗化膜。
  */
-private const val BackdropScrimTopAlpha = 0.42f
+private const val BackdropScrimTopAlpha = 0.30f
+
+/**
+ * 全局可读性暗纱。
+ *
+ * 玻璃面板已降到 5% 白（≈全透明），正文等于直接压在「模糊封面 + 取色渐变」上，因此需要一层
+ * 均匀暗纱把整体压暗，保证白字 / 弱化文字仍有对比度；同时它不会把取色「洗掉」（色彩仍然透出来）。
+ */
+private const val BackdropVeilAlpha = 0.26f
 
 /** 顶部轻高光高度占比（玻璃受光面，避免大色块渐变显得死板）。 */
 private const val BackdropTopHighlightFraction = 0.32f
@@ -126,6 +140,7 @@ fun rememberCoverPalette(coverUrl: String?): ColorPalette {
  */
 @Composable
 fun CoverPaletteBackdrop(
+    sheen: Boolean = true,
     coverUrl: String?,
     palette: ColorPalette,
     modifier: Modifier = Modifier,
@@ -175,33 +190,22 @@ fun CoverPaletteBackdrop(
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .fillMaxHeight(BackdropTopHighlightFraction)
+                // ④ 可读性暗纱：面板已近乎全透明，这层负责把正文的对比度垫回来（取色仍是主角）
+                .background(Color.Black.copy(alpha = BackdropVeilAlpha))
+                // ⑤ 背景层的高光（可选）：详情页要液态玻璃质感 → sheen = true；
+                //    搜索页 / 歌手详情只要「正在播放封面」的纯色氛围 → sheen = false（两道白光全透明）。
                 .background(
-                    Brush.verticalGradient(listOf(AppColors.glass, Color.Transparent)),
+                    Brush.verticalGradient(
+                        0f to AppColors.glassBorder.copy(alpha = if (sheen) 0.13f else 0f),
+                        0.5f to Color.Transparent,
+                        1f to AppColors.glass.copy(alpha = if (sheen) 0.08f else 0f),
+                    ),
                 ),
         )
     }
 }
 
-/**
- * 把详情页色板临时写入全局 [ColorViewModel]，离开组合时**恢复进入前的色板**。
- *
- * ## 为什么必须恢复
- * 全局色板经 `ColorViewModel.setColors` → `AppShell` → `AnnieTheme(palette = …)` 下发给
- * 整个 App（页面用 `Annie.palette` 读取）。如果详情页只「写入」而不管「退出」，那么从
- * 专辑 A 的详情页退出后，主界面 / 播放页会一直停留在**旧专辑**的配色上——这是用户能直接
- * 看到的脏状态。因此进入时快照当时的色板（通常是「正在播放」歌曲的色板），退出时原样
- * 写回。
- *
- * @param colorViewModel 全局颜色状态（Activity 作用域）。
- * @param palette 详情页自己的色板（随封面变化重写；`DisposableEffect` 以它为 key，
- *                取色完成后会重新写入，退出时仍恢复最初的快照）。
- */
-@Composable
-fun SnapshotPaletteAndRestore(colorViewModel: ColorViewModel, palette: ColorPalette) {
-    // 进入组合时快照一次；后续 palette 变化不重拍快照（否则会把上一版详情页色板当成「原值」）
-    val before = remember { colorViewModel.state.value.colors }
-    DisposableEffect(palette) {
-        colorViewModel.setColors(palette)
-        onDispose { colorViewModel.setColors(before) }
-    }
-}
+// 注：本文件曾提供 `SnapshotPaletteAndRestore`（详情页把色板临时写入全局 `ColorViewModel`）。
+// 已移除，原因：详情页只用**本地** palette 渲染（0 处读 `Annie.palette`），全局色板应由
+// `AppShell` 按「当前播放歌曲」驱动；旧实现把进页时的色板快照在退出时写回，会在用户于详情页
+// 里播放新歌之后把**陈旧色板**覆盖上去，导致播放页的取色（背景 / 歌词指示条）失效。

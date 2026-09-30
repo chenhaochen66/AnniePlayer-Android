@@ -2,6 +2,7 @@ package com.annieplayer.annie_music.kt.widgets
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,9 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,7 +29,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -136,7 +138,7 @@ private fun ArtistRow(artist: Artist, onPress: (Artist) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickableNoRipple { onPress(artist) }
+            .clickableRipple { onPress(artist) }
             .padding(vertical = 10.dp, horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -149,11 +151,10 @@ private fun ArtistRow(artist: Artist, onPress: (Artist) -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             if (avatarFailed || artist.picture.isEmpty()) {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    tint = AppColors.white10,
+                // 人像占位改为自绘线条家族（笔重 2dp 等效、圆头端点），替换 Material 实心 Person
+                SingerAvatarPlaceholderGlyph(
                     modifier = Modifier.size(28.dp),
+                    tint = AppColors.white10,
                 )
             } else {
                 AsyncImage(
@@ -190,5 +191,38 @@ private fun ArtistRow(artist: Artist, onPress: (Artist) -> Unit) {
                 fontSize = AppFontSize.sm,
             )
         }
+    }
+}
+
+/**
+ * 人像占位（头像兜底，自绘线条家族，仅歌手搜索结果）。
+ *
+ * 几何沿用详情页 [DetailPersonOutline]（头圆 + 肩弧，比例坐标），笔重 `w * 0.072f`
+ * 在 28dp 栅格上 ≈ 2dp（2dp 等效）、圆头端点；替换原 `Icons.Default.Person`
+ * （Material 实心人像，笔重与自绘家族不一致）。
+ */
+@Composable
+private fun SingerAvatarPlaceholderGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.white10) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.072f
+        // 头
+        drawCircle(
+            color = tint,
+            radius = w * 0.17f,
+            center = Offset(w * 0.5f, h * 0.31f),
+            style = Stroke(width = stroke),
+        )
+        // 肩
+        drawArc(
+            color = tint,
+            startAngle = 180f,
+            sweepAngle = 180f,
+            useCenter = false,
+            topLeft = Offset(w * 0.16f, h * 0.50f),
+            size = Size(w * 0.68f, h * 0.62f),
+            style = Stroke(width = stroke, cap = StrokeCap.Round),
+        )
     }
 }

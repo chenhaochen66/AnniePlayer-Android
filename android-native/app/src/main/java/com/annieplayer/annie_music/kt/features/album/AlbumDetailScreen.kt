@@ -77,8 +77,7 @@ import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
 import com.annieplayer.annie_music.kt.widgets.QualityPickerSheet
-import com.annieplayer.annie_music.kt.widgets.SnapshotPaletteAndRestore
-import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
+import com.annieplayer.annie_music.kt.widgets.clickableRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
 import com.annieplayer.annie_music.kt.widgets.glassPanel
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
@@ -154,7 +153,8 @@ fun AlbumDetailScreen(
 
     // 封面动态取色氛围（与播放页同一套链路）；进入时把该封面色板灌给全局，离开时恢复原色板
     val palette = rememberCoverPalette(resolvedCover)
-    SnapshotPaletteAndRestore(colorViewModel, palette)
+    // 不再写入全局色板（原 SnapshotPaletteAndRestore）：详情页只用本地 palette 渲染，
+// 全局色板由 AppShell 按「当前播放歌曲」驱动；详情页写入会在退出时覆盖成陈旧值。
 
     /** `AlbumSong` -> `Song`（对齐 Dart `_toSong`，并携带歌手名单 / 专辑元数据） */
     fun toSong(s: AlbumSong): Song = Song(
@@ -391,7 +391,7 @@ private fun AlbumDetailHeader(
     ) {
         Box(
             modifier = Modifier
-                .clickableNoRipple(onBack)
+                .clickableRipple(onBack)
                 .padding(AppSpacing.sp4),
             contentAlignment = Alignment.Center,
         ) {
@@ -409,7 +409,7 @@ private fun AlbumDetailHeader(
         )
         Box(
             modifier = Modifier
-                .clickableNoRipple(onToggleSelectMode)
+                .clickableRipple(onToggleSelectMode)
                 .padding(AppSpacing.sp4),
         ) {
             Text(
@@ -496,7 +496,7 @@ private fun AlbumDetailBody(
                             selectMode = st.selectMode,
                             selected = st.selectedIds.contains(song.id),
                             isPlaying = song.id == currentSongId,
-                            playingTint = palette.primary,
+                            playingTint = palette.readablePrimary(),
                             task = tasks[song.id],
                             onPlay = onPlay,
                             onDownload = onDownload,
@@ -538,7 +538,7 @@ private fun AlbumDetailListHeader(
                 modifier = Modifier
                     .size(AppSize.coverPlaceholder)
                     .clip(RoundedCornerShape(AppRadius.r10))
-                    .background(AppColors.whiteA03),
+                    .background(Color.Transparent),
                 contentAlignment = Alignment.Center,
             ) {
                 var coverFailed by remember(cover) { mutableStateOf(false) }
@@ -621,7 +621,7 @@ private fun AlbumDetailSongRow(
                     else -> Modifier
                 },
             )
-            .clickableNoRipple { if (selectMode) onToggle(song.id) else onPlay(song) }
+            .clickableRipple { if (selectMode) onToggle(song.id) else onPlay(song) }
             .padding(horizontal = AlbumDetailListPaddingH, vertical = AppSpacing.sp10),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -672,7 +672,7 @@ private fun AlbumDetailSongRow(
         } else if (!selectMode) {
             Box(
                 modifier = Modifier
-                    .clickableNoRipple { onDownload(song) }
+                    .clickableRipple { onDownload(song) }
                     .padding(AppSpacing.sp4),
                 contentAlignment = Alignment.Center,
             ) {

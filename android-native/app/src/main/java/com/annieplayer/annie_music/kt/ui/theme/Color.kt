@@ -2,6 +2,7 @@ package com.annieplayer.annie_music.kt.ui.theme
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import kotlin.math.pow
 
 /**
  * 全局静态调色板。
@@ -38,6 +39,18 @@ object AppColors {
 
     /** 玻璃拟态边框 */
     val glassBorder = Color(0x22FFFFFF)
+
+    /**
+     * 液态玻璃面板底色：**白色 @ 5%（≈95% 透明）**。
+     *
+     * 用户明确要求「框框要基本透明」：玻璃观感不能靠面板自己刷底色，而是靠
+     * ① 下层的模糊封面 + 封面取色氛围（见 `CoverPaletteBackdrop`）、
+     * ② 面板顶部的白色高光渐变、③ 1px 发丝描边、④ 悬浮投影 —— 这四样叠出来的「透 + 毛 + 边」。
+     *
+     * 原实现用 [surface95]（95% 不透明）当玻璃底 = 一块实心卡片，玻璃看不出来、背景色也吃不到
+     * （真机反馈已确认两次）。透明度再往下已经没有意义（5% 白 ≈ 纯高光层）。
+     */
+    val glassPanel = Color(0x0DFFFFFF)
 
     // ---- 文字层级（rgba 白，Flutter: AppColors.textXxx）----
 
@@ -214,7 +227,61 @@ data class ColorPalette(
         surface: Color = this.surface,
     ): ColorPalette = ColorPalette(primary, secondary, background, surface)
 
+    // ---- 暗底前景可读性 ----------------------------------------------------------------------
+
+    /**
+     * **前景版**强调色：保证它压在 [surface] 上的 WCAG 对比度 ≥ [minContrast]。
+     *
+     * 取色结果是任意颜色（深红封面 → 深红、近黑封面 → 近黑），直接拿它当歌曲名 / 图标 /
+     * 「正在播放」动效的颜色用，在暗底上会不可读（真机已复现）。实现：按 WCAG 2.x 相对亮度
+     * 公式计算对比度，已达标则原样返回；否则每次往白色混 8%、最多 12 步直到达标；仍不达标
+     * 则回退 [AppColors.textPrimary]。
+     *
+     * **背景 / 边条 / 渐变**类用途不要用它，直接用 [primary] 配 `.copy(alpha = …)`。
+     */
+    fun readablePrimary(surface: Color = AppColors.surface, minContrast: Float = 4.5f): Color =
+        _readableOnDark(primary, surface, minContrast)
+
     companion object {
+
+        /** sRGB 分量 → 线性值（WCAG 2.x 定义）。 */
+        private fun _linear(v: Float): Float =
+            if (v <= 0.03928f) v / 12.92f else ((v + 0.055f) / 1.055f).pow(2.4f)
+
+        /** WCAG 2.x 相对亮度：线性分量按 0.2126 / 0.7152 / 0.0722 加权。 */
+        private fun _luminance(c: Color): Float =
+            0.2126f * _linear(c.red) + 0.7152f * _linear(c.green) + 0.0722f * _linear(c.blue)
+
+        /** WCAG 对比度 (L_亮 + 0.05) / (L_暗 + 0.05)。 */
+        private fun _contrast(a: Color, b: Color): Float {
+            val la = _luminance(a)
+            val lb = _luminance(b)
+            return (maxOf(la, lb) + 0.05f) / (minOf(la, lb) + 0.05f)
+        }
+
+        /** 见 [ColorPalette.readablePrimary]。返回可安全用作暗底前景的颜色。 */
+        private fun _readableOnDark(color: Color, surface: Color, minContrast: Float): Color {
+            if (_contrast(color, surface) >= minContrast) return color
+            var c = color
+            repeat(12) {
+                c = _mixWithWhite(c, 0.08f)
+                if (_contrast(c, surface) >= minContrast) return c
+            }
+            return if (_contrast(AppColors.textPrimary, surface) >= minContrast) {
+                AppColors.textPrimary
+            } else {
+                c
+            }
+        }
+
+        /** 把 [color] 往白色混 [t]（0..1），保持 alpha 不变。 */
+        private fun _mixWithWhite(color: Color, t: Float): Color = Color(
+            red = color.red + (1f - color.red) * t,
+            green = color.green + (1f - color.green) * t,
+            blue = color.blue + (1f - color.blue) * t,
+            alpha = color.alpha,
+        )
+
         /**
          * 取色失败回退色板（Flutter: `ColorPalette.fallback` / RN useColorExtractor 默认值）。
          *

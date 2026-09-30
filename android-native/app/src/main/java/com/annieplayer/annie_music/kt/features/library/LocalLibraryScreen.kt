@@ -24,8 +24,14 @@ import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
+import com.annieplayer.annie_music.kt.core.state.ColorViewModel
+import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
+import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
 import com.annieplayer.annie_music.kt.widgets.AppTopBar
 import com.annieplayer.annie_music.kt.widgets.VinylRecord
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 
 /** 空态「唱盘」底板直径（圆形白 3.1% 底，托住黑胶） */
 private val LibraryEmptyDiscSize = 112.dp
@@ -51,14 +57,28 @@ private val LibraryEmptyVinylSize = 76.dp
 fun LocalLibraryScreen(
     onOpenMenu: () -> Unit,
     modifier: Modifier = Modifier,
+    playerViewModel: PlayerViewModel = activityViewModel(),
+    colorViewModel: ColorViewModel = activityViewModel(),
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            // inset 由本页自己补（宿主已不再统一内缩）；随后再留底栏高度，空态位置与改动前一致
-            .systemBarsPadding()
-            .padding(bottom = AppSpacing.bottomBarInset),
-    ) {
+    val playback by playerViewModel.state.collectAsState()
+    val colorState by colorViewModel.state.collectAsState()
+
+    // 背景：正在播放歌曲的封面取色氛围（与详情页同一套液态玻璃质感：sheen = true）。
+    // 本页**不加**任何玻璃面板 / 卡片 —— 空态的唱盘 + 文案直接压在背景上。
+    Box(modifier = modifier.fillMaxSize()) {
+        CoverPaletteBackdrop(
+            sheen = true,
+            coverUrl = playback.currentSong?.cover,
+            palette = colorState.colors,
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(bottom = AppSpacing.bottomBarInset),
+        ) {
         // 顶栏：菜单按钮 + 「本地曲库」标题（+「建设中」角标），与搜索页同一组件、同一套标题 token
         AppTopBar(
             title = "本地曲库",
@@ -111,5 +131,6 @@ fun LocalLibraryScreen(
                 )
             }
         }
+    }
     }
 }

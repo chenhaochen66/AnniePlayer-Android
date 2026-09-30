@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
@@ -167,7 +168,8 @@ private fun PlaylistDetailContent(
     val palette = rememberCoverPalette(coverUrl.ifEmpty { null })
 
     // 进入详情把全局色板临时切为该歌单色板，退出恢复进入前的色板（与播放页同一套取色链路）
-    SnapshotPaletteAndRestore(colorViewModel = colorViewModel, palette = palette)
+    // 不再写入全局色板（原 SnapshotPaletteAndRestore）：详情页只用本地 palette 渲染，
+// 全局色板由 AppShell 按「当前播放歌曲」驱动；详情页写入会在退出时覆盖成陈旧值。
 
     /** PlaylistDetailData.platform 为字符串（'kuwo' 或 'kuwo:'），解析为枚举 */
     val platform = remember(data.platform) {
@@ -459,7 +461,7 @@ private fun PlaylistDetailHeader(
     ) {
         Box(
             modifier = Modifier
-                .clickableNoRipple(onClose)
+                .clickableRipple(onClose)
                 .padding(AppSpacing.sp4),
             contentAlignment = Alignment.Center,
         ) {
@@ -485,7 +487,7 @@ private fun PlaylistDetailHeader(
             if (selectMode) {
                 Box(
                     modifier = Modifier
-                        .clickableNoRipple(onToggleSelectAll)
+                        .clickableRipple(onToggleSelectAll)
                         .padding(AppSpacing.sp4),
                 ) {
                     Text(
@@ -498,7 +500,7 @@ private fun PlaylistDetailHeader(
             }
             Box(
                 modifier = Modifier
-                    .clickableNoRipple(onToggleSelectMode)
+                    .clickableRipple(onToggleSelectMode)
                     .padding(AppSpacing.sp4),
             ) {
                 Text(
@@ -596,7 +598,7 @@ private fun PlaylistDetailListHeader(st: PlaylistDetailState) {
             modifier = Modifier
                 .size(AppSize.coverPlaceholder)
                 .clip(RoundedCornerShape(AppRadius.r10))
-                .background(AppColors.whiteA03),
+                    .background(Color.Transparent),
             contentAlignment = Alignment.Center,
         ) {
             var coverFailed by remember(st.cover) { mutableStateOf(false) }
@@ -675,7 +677,7 @@ private fun PlaylistDetailSongRow(
             .then(
                 when {
                     // 命中当前歌：主色 8% 圆角底 + 左侧 3dp 圆头主色条（与队列 / 其它详情页同款）
-                    playing -> Modifier.playingRowBackground(palette.primary)
+                    playing -> Modifier.playingRowBackground(palette.readablePrimary())
                     selected -> Modifier.background(AppColors.primaryA08)
                     else -> Modifier
                 },
@@ -693,7 +695,7 @@ private fun PlaylistDetailSongRow(
             contentAlignment = Alignment.Center,
         ) {
             if (playing) {
-                PlayingIndicator(tint = palette.primary)
+                PlayingIndicator(tint = palette.readablePrimary())
             } else {
                 Text(
                     text = "${index + 1}",
@@ -711,7 +713,7 @@ private fun PlaylistDetailSongRow(
         ) {
             Text(
                 text = song.title,
-                color = if (playing) palette.primary else AppColors.textPrimary,
+                color = if (playing) palette.readablePrimary() else AppColors.textPrimary,
                 fontSize = AppFontSize.base,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,

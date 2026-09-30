@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -85,8 +86,7 @@ import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
 import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
-import com.annieplayer.annie_music.kt.widgets.SnapshotPaletteAndRestore
-import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
+import com.annieplayer.annie_music.kt.widgets.clickableRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
 import com.annieplayer.annie_music.kt.widgets.glassPanel
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
@@ -163,7 +163,8 @@ fun KkboxDetailScreen(
     // 进入时把本页色板灌入全局（单 Activity 架构：取到与 AppShell 相同的 Activity 作用域实例），
     // 离开时恢复进入前的色板，避免详情页配色残留到主界面 / 播放页
     val colorViewModel: ColorViewModel = activityViewModel()
-    SnapshotPaletteAndRestore(colorViewModel = colorViewModel, palette = palette)
+    // 不再写入全局色板（原 SnapshotPaletteAndRestore）：详情页只用本地 palette 渲染，
+// 全局色板由 AppShell 按「当前播放歌曲」驱动；详情页写入会在退出时覆盖成陈旧值。
 
     /** `KkboxTrack` -> `Song`（对齐 Dart 的 `kkbox:${t.id}` 构造） */
     fun toSong(track: KkboxTrack): Song = Song(
@@ -440,7 +441,7 @@ private fun KkboxDetailHeader(
     ) {
         Box(
             modifier = Modifier
-                .clickableNoRipple(onBack)
+                .clickableRipple(onBack)
                 .padding(AppSpacing.sp4),
             contentAlignment = Alignment.Center,
         ) {
@@ -459,7 +460,7 @@ private fun KkboxDetailHeader(
         if (selectMode) {
             Box(
                 modifier = Modifier
-                    .clickableNoRipple(onToggleSelectAll)
+                    .clickableRipple(onToggleSelectAll)
                     .padding(AppSpacing.sp4),
             ) {
                 Text(
@@ -473,7 +474,7 @@ private fun KkboxDetailHeader(
         if (type == "album" && trackCount > 1) {
             Box(
                 modifier = Modifier
-                    .clickableNoRipple(onToggleSelectMode)
+                    .clickableRipple(onToggleSelectMode)
                     .padding(AppSpacing.sp4),
             ) {
                 Text(
@@ -584,7 +585,7 @@ private fun KkboxDetailListHeader(st: KkboxDetailScreenState) {
             modifier = Modifier
                 .size(AppSize.coverPlaceholder)
                 .clip(RoundedCornerShape(AppRadius.r10))
-                .background(AppColors.whiteA03),
+                    .background(Color.Transparent),
             contentAlignment = Alignment.Center,
         ) {
             var coverFailed by remember(st.cover) { mutableStateOf(false) }
@@ -669,7 +670,7 @@ private fun KkboxDetailTrackRow(
         .fillMaxWidth()
         .height(KkboxDetailRowHeight)
     val rowBackground = when {
-        playing -> rowBase.playingRowBackground(palette.primary)
+        playing -> rowBase.playingRowBackground(palette.readablePrimary())
         selected -> rowBase.background(AppColors.primaryA08)
         else -> rowBase
     }
@@ -684,7 +685,7 @@ private fun KkboxDetailTrackRow(
                     strokeWidth = stroke,
                 )
             }
-            .clickableNoRipple { if (selectMode) onToggle(track.id) else onPlay(track) }
+            .clickableRipple { if (selectMode) onToggle(track.id) else onPlay(track) }
             .semantics {
                 contentDescription = if (selectMode) "选择 ${track.title}" else "播放 ${track.title}"
             }
@@ -697,7 +698,7 @@ private fun KkboxDetailTrackRow(
         }
         Box(modifier = Modifier.width(AppSpacing.sp24), contentAlignment = Alignment.Center) {
             if (playing) {
-                PlayingIndicator(tint = palette.primary)
+                PlayingIndicator(tint = palette.readablePrimary())
             } else {
                 Text(
                     text = "${index + 1}",
@@ -711,7 +712,7 @@ private fun KkboxDetailTrackRow(
         Text(
             text = track.title,
             modifier = Modifier.weight(1f),
-            color = if (playing) palette.primary else AppColors.textPrimary,
+            color = if (playing) palette.readablePrimary() else AppColors.textPrimary,
             fontSize = AppFontSize.base,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
@@ -726,7 +727,7 @@ private fun KkboxDetailTrackRow(
         } else if (!selectMode) {
             Box(
                 modifier = Modifier
-                    .clickableNoRipple { onDownload(track) }
+                    .clickableRipple { onDownload(track) }
                     .semantics {
                         contentDescription = "下载 ${track.title}"
                         role = Role.Button
