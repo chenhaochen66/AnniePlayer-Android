@@ -34,6 +34,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.AlbumSearchResults
 import com.annieplayer.annie_music.kt.widgets.AppTopBar
+import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
 import com.annieplayer.annie_music.kt.widgets.ModeDropdown
 import com.annieplayer.annie_music.kt.widgets.ModeDropdownMode
@@ -82,15 +83,14 @@ fun SearchScreen(
         // inset 由内容层自己补（宿主已不再统一内缩）：新增的背景层全窗铺满（含系统栏区域），
         // 内容层保持原 systemBarsPadding，内容几何 / inset 与加入背景前逐像素一致。
         Box(modifier = modifier) {
-            // ── 背景层（最底层）：正在播放歌曲的封面取色氛围 ──
-            // sheen = true：与详情页同一套液态玻璃质感（背景上下两道极淡白光）；依旧无玻璃面板 / 卡片。
-            // 全窗铺满 → 原 Scaffold 的纯色底在搜索页被这层取代（不改 Scaffold 本身）。
-            CoverPaletteBackdrop(
-                sheen = true,
-                coverUrl = playback.currentSong?.cover,
-                palette = colorState.colors,
-                modifier = Modifier.fillMaxSize(),
-            )
+                // ── 背景层（最底层）：液态玻璃质感**保留**，但底色**不跟随当前播放封面**
+                //（用户要求）—— 用固定品牌色板 `ColorPalette.fallback` + sheen 高光。
+                CoverPaletteBackdrop(
+                    sheen = true,
+                    coverUrl = null,
+                    palette = ColorPalette.fallback,
+                    modifier = Modifier.fillMaxSize(),
+                )
             // ── 内容层：inset 与加入背景前一致（原根 Box 的 systemBarsPadding 原样下移） ──
             Box(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
                 // ── 基础内容列（Overlay.COLUMN） ──

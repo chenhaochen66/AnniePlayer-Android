@@ -99,7 +99,7 @@ private val PlayingDotRing = 2.dp
  * 并作为「触摸屏蔽层」消费空白点击）；② 内容层（含封面、迷你元素、两个 tab）。
  *
  * 毛玻璃说明：Compose 无法对节点「背后的内容」做真实模糊，`Modifier.blur` 只会糊掉自身内容，
- * 因此走 **alpha 合成**：半透明底（surfaceLight @0.82）+ 顶部白色高光渐变 + 1dp 高光描边 +
+ * 因此走 **alpha 合成**：半透明底（surfaceLight @0.55 ≈45% 透明）+ 顶部白色高光渐变 + 1dp 高光描边 +
  * 柔和外投影。不依赖 RenderEffect，**API < 31 不退化**，栏内文字 / 图标始终清晰。
  *
  * @param selectedTab 当前 tab（决定左右按钮选中态）。
@@ -168,8 +168,8 @@ fun AppBottomBar(
                     ),
                 )
                 .clip(barShape)
-                // 半透明底：下层内容透过玻璃可见（毛玻璃的「透」）
-                .background(AppColors.surfaceLight.copy(alpha = 0.82f))
+                // 毛玻璃底：surfaceLight @0.55（≈45% 透明）——下层封面取色氛围可透过玻璃
+                .background(AppColors.surfaceLight.copy(alpha = 0.55f))
                 // 顶部白色高光渐变：模拟玻璃受光面（毛玻璃的「毛」）
                 .background(Brush.verticalGradient(listOf(AppColors.glass, Color.Transparent)))
                 // 极细高光描边：玻璃边缘

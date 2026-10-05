@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.annieplayer.annie_music.kt.ui.theme.AnnieTypography
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
+import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
@@ -63,16 +64,14 @@ fun LocalLibraryScreen(
     val playback by playerViewModel.state.collectAsState()
     val colorState by colorViewModel.state.collectAsState()
 
-    // 背景：正在播放歌曲的封面取色氛围（与详情页同一套液态玻璃质感：sheen = true）。
-    // 本页**不加**任何玻璃面板 / 卡片 —— 空态的唱盘 + 文案直接压在背景上。
+    // 背景：液态玻璃质感保留，底色**不跟随当前播放封面**（用户要求）→ 固定品牌色板。
     Box(modifier = modifier.fillMaxSize()) {
         CoverPaletteBackdrop(
             sheen = true,
-            coverUrl = playback.currentSong?.cover,
-            palette = colorState.colors,
+            coverUrl = null,
+            palette = ColorPalette.fallback,
             modifier = Modifier.fillMaxSize(),
         )
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
