@@ -156,6 +156,15 @@ enum class LoopMode {
     }
 }
 
+/** 歌手单曲每页条数：各源按它请求、详情页按它算页码，两侧必须一致 */
+const val ArtistSongsPageSize = 20
+
+/** 歌手单曲的一页（[total] 是接口返回的真实曲目总数，非本页条数） */
+data class ArtistSongsPage(
+    val songs: List<Song>,
+    val total: Int,
+)
+
 /** 下载任务状态 */
 @Serializable
 enum class DownloadStatus {

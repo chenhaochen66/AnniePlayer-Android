@@ -3,6 +3,8 @@ package com.annieplayer.annie_music.kt.data.sources
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.Artist
+import com.annieplayer.annie_music.kt.data.model.ArtistSongsPage
+import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Playlist
 import com.annieplayer.annie_music.kt.data.model.Quality
@@ -219,10 +221,15 @@ private fun _encodeQueryComponent(s: String): String {
 /** 依据搜索/详情返回的歌曲 json 推断可用音质（对齐 RN parseNeteaseQualities） */
 fun parseNeteaseQualities(song: Map<String, Any?>): List<Quality> {
     val result = ArrayList<Quality>()
-    if (_truthy(song["hr"])) result.add(Quality.hires)
-    if (_truthy(song["sq"])) result.add(Quality.flac)
-    if (_truthy(song["h"])) result.add(Quality.k320k)
-    if (_truthy(song["l"]) || _truthy(song["m"])) result.add(Quality.k128k)
+    // 搜索结果用扁平字段 h/m/l/sq/hr；歌手单曲等旧接口用 *Music 对象，两种都要认
+    if (_truthy(song["hr"]) || _truthy(song["hrMusic"])) result.add(Quality.hires)
+    if (_truthy(song["sq"]) || _truthy(song["sqMusic"])) result.add(Quality.flac)
+    if (_truthy(song["h"]) || _truthy(song["hMusic"])) result.add(Quality.k320k)
+    if (_truthy(song["l"]) || _truthy(song["m"]) ||
+        _truthy(song["lMusic"]) || _truthy(song["mMusic"])
+    ) {
+        result.add(Quality.k128k)
+    }
     result.sortBy { _qualityOrder.indexOf(it) }
     return result
 }
@@ -281,6 +288,7 @@ private fun _mapSearchSong(item: Map<String, Any?>): Song? {
     val artistIds = arList
         .map { (it["id"] ?: "").toString() }
         .filter { it.isNotEmpty() }
+        .takeIf { it.size == artistNames.size } ?: emptyList()
     val artist = artistNames.joinToString(" / ")
 
     val al = _asMap(item["al"]) ?: emptyMap()
@@ -487,22 +495,25 @@ suspend fun fetchNeteaseArtistAvatar(artistId: String): String {
 }
 
 /**
- * 获取网易云歌手单曲（`/api/v1/artist/{id}` 的 `hotSongs`）。
+ * 获取网易云歌手单曲（`/api/v1/artist/songs`，按 `limit`/`offset` 真分页）。
  *
- * 注意：必须用 **v1** 接口 —— 老的 `/api/artist/{id}` 返回体里没有 `hotSongs`
- * （实测 200KB 响应但无该字段），会导致「歌手详情没有曲目」。
+ * 旧实现走 `/api/v1/artist/{id}` 的 `hotSongs`：只有热门约 50 首、且不带总数，
+ * 导致详情页「歌曲 N」和翻页全错。该接口同时返回真实总数 `total`。
  */
-suspend fun getNeteaseArtistSongs(artistId: String): List<Song> {
+suspend fun getNeteaseArtistSongs(artistId: String, page: Int = 1): ArtistSongsPage {
     return try {
+        val offset = (page - 1) * ArtistSongsPageSize
         val data = httpGetJson(
-            "https://music.163.com/api/v1/artist/$artistId",
+            "https://music.163.com/api/v1/artist/songs?id=$artistId" +
+                "&limit=$ArtistSongsPageSize&offset=$offset",
             neteaseApiHeaders,
         )
-        val songsRaw = data["hotSongs"]
+        val songsRaw = data["songs"]
         val list = if (songsRaw is List<*>) songsRaw else emptyList<Any?>()
-        _listOfMaps(list).map { _mapNeteaseArtistSong(it) }
+        val total = (data["total"] as? Number)?.toInt() ?: 0
+        ArtistSongsPage(_listOfMaps(list).map { _mapNeteaseArtistSong(it) }, total)
     } catch (_: Throwable) {
-        emptyList()
+        ArtistSongsPage(emptyList(), 0)
     }
 }
 
@@ -516,6 +527,7 @@ private fun _mapNeteaseArtistSong(m: Map<String, Any?>): Song {
     val artistIds = arList
         .map { (it["id"] ?: "").toString() }
         .filter { it.isNotEmpty() }
+        .takeIf { it.size == artistNames.size } ?: emptyList()
     val artistName = if (artistNames.isEmpty()) "" else artistNames.joinToString(" / ")
     val alMap = _asMap(m["al"] ?: m["album"]) ?: emptyMap()
     val dt = m["dt"] ?: m["duration"]

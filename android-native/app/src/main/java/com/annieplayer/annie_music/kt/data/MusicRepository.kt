@@ -88,6 +88,8 @@ data class RepoAlbumSongs(
 data class RepoArtistSongs(
     val songs: List<Song>,
     val total: Int,
+    /** 该平台能否翻页；为 false 时详情页只显示已取回的一页，不渲染页码控件 */
+    val pageable: Boolean = true,
 )
 
 /** 播放 URL（netease 走 c.wwwweb.top，qq/kugou 走长青解析，其余走 kuwo） */
@@ -258,20 +260,20 @@ suspend fun fetchArtistSongsByPlatform(
     page: Int,
 ): RepoArtistSongs = when (platform) {
     MusicPlatform.netease -> {
-        val songs = getNeteaseArtistSongs(artistId)
-        RepoArtistSongs(songs, songs.size)
+        val p = getNeteaseArtistSongs(artistId, page)
+        RepoArtistSongs(p.songs, p.total)
     }
     MusicPlatform.qq -> {
-        val songs = getQQArtistSongs(artistId)
-        RepoArtistSongs(songs, songs.size)
+        val p = getQQArtistSongs(artistId, page)
+        RepoArtistSongs(p.songs, p.total)
     }
     MusicPlatform.kugou -> {
-        val songs = getKugouArtistSongs(artistId)
-        RepoArtistSongs(songs, songs.size)
+        val p = getKugouArtistSongs(artistId, page)
+        RepoArtistSongs(p.songs, p.total)
     }
     MusicPlatform.qobuz -> {
         val p = getQobuzArtistPage(artistId)
-        RepoArtistSongs(p.songs, p.songs.size)
+        RepoArtistSongs(p.songs, p.songs.size, pageable = false)
     }
     MusicPlatform.kuwo, MusicPlatform.kkbox -> {
         val r = getArtistSongs(artistId, page)

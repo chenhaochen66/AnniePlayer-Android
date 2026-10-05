@@ -417,6 +417,7 @@ private fun _mapSearchSongs(raw: Any?): List<Song> {
             .split("&")
             .map { it.trim() }
             .filter { it.isNotEmpty() && it != "0" }
+            .takeIf { it.size == artistNames.size } ?: emptyList()
         Song(
             id = rid,
             title = decodeHtmlEntities(

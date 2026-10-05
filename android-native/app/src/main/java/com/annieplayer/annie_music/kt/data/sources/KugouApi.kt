@@ -4,6 +4,8 @@ import android.util.Base64
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.Artist
+import com.annieplayer.annie_music.kt.data.model.ArtistSongsPage
+import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Playlist
 import com.annieplayer.annie_music.kt.data.model.Quality
@@ -1106,7 +1108,7 @@ private fun _mapKugouSearchSongs(raw: Any?): List<Song> {
             idsRaw.map { it.toString() }.filter { it.isNotEmpty() }
         } else {
             emptyList<String>()
-        }
+        }.takeIf { it.size == artistNames.size } ?: emptyList()
 
         out.add(
             Song(
@@ -1422,18 +1424,19 @@ suspend fun fetchKugouArtistInfo(singerId: String): KugouArtistInfo {
 }
 
 /** 酷狗歌手单曲（singer/song） */
-suspend fun getKugouArtistSongs(singerId: String): List<Song> {
+suspend fun getKugouArtistSongs(singerId: String, page: Int = 1): ArtistSongsPage {
     try {
         val url =
             "http://mobilecdn.kugou.com/api/v3/singer/song" +
-                "?singerid=$singerId&page=1&pagesize=100&version=9108&plat=0"
+                "?singerid=$singerId&page=$page&pagesize=$ArtistSongsPageSize&version=9108&plat=0"
         val data = httpGetJson(url, headers = mapOf("User-Agent" to _kugouWebUa))
         val d = data["data"]
         val listRaw = if (d is Map<*, *>) d["info"] else null
         val list = if (listRaw is List<*>) listRaw else emptyList<Any?>()
-        return _mapKugouArtistSongs(list)
+        val total = if (d is Map<*, *>) (d["total"] as? Number)?.toInt() ?: 0 else 0
+        return ArtistSongsPage(_mapKugouArtistSongs(list), total)
     } catch (_: Throwable) {
-        return emptyList()
+        return ArtistSongsPage(emptyList(), 0)
     }
 }
 

@@ -91,6 +91,7 @@ import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
 import com.annieplayer.annie_music.kt.data.model.Album
+import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
 import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Quality
@@ -170,6 +171,7 @@ private class SingerDetailState {
 
     var songs by mutableStateOf<List<Song>>(emptyList())
     var songTotal by mutableStateOf(0)
+    var songPageable by mutableStateOf(true)
     var songPage by mutableStateOf(1)
     var songLoading by mutableStateOf(false)
     var songError by mutableStateOf("")
@@ -222,6 +224,7 @@ private fun SingerDetailContent(
             val result = fetchArtistSongsByPlatform(data.platform, data.id, page)
             st.songs = result.songs
             st.songTotal = result.total
+            st.songPageable = result.pageable
         } catch (e: Exception) {
             st.songError = e.message ?: "加载失败"
         } finally {
@@ -393,7 +396,7 @@ private fun SingerDetailContent(
 
     val totalPages = (st.songTotal + PageSize - 1) / PageSize
     val pageRange = singerDetailPageRange(st.songPage, totalPages)
-    val showPagination = totalPages > 1
+    val showPagination = st.songPageable && totalPages > 1
 
     Box(modifier = modifier.fillMaxSize()) {
         // ── 遮罩（Flutter: Color(0x80000000)，点击不关闭） ──
@@ -570,7 +573,7 @@ private fun SingerDetailContent(
 }
 
 /** 分页大小（对齐 Dart `_pageSize = 20`） */
-private const val PageSize = 20
+private const val PageSize = ArtistSongsPageSize
 
 /** 当前页歌曲是否全部已选（头部三态全选用；空列表视为未全选）。 */
 private fun singerDetailAllSelected(pageSongs: List<Song>, selected: List<Song>): Boolean =

@@ -386,7 +386,12 @@ class SearchScreenState(
 
     /** ⋮ → 歌手：有 id 直接开；没有则按名字搜索一次（对齐 Dart `openArtistDetail`） */
     fun openArtistDetail(artist: SongArtistRef) {
-        val song = playerViewModel.state.value.currentSong ?: return
+        // 必须用「被点 ⋮ 的那首歌」：平台要从它取，酷狗还要按它的 hash 补作者 id。
+        // 之前用 currentSong（正在播放的歌），两者不同源时会拿错平台的 id 去查，
+        // 表现为「跳过去的歌手名字对、曲目却是别人的」。
+        val song = uiViewModel.state.value.songActionsSong
+            ?: playerViewModel.state.value.currentSong
+            ?: return
         scope.launch {
             var knownId = if (artist.id.isEmpty()) null else artist.id
             // 酷狗的专辑/歌单都不带歌手 id：这里按歌曲 hash 逐曲补一次

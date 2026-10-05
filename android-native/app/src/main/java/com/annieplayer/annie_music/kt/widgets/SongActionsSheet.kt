@@ -66,10 +66,12 @@ private val SongArtistSeparators by lazy { Regex("\\s*[/、,&]\\s*") }
 fun songArtistsOf(song: Song?): List<SongArtistRef> {
     if (song == null) return emptyList()
     val names = song.artistNames
-    val ids = song.artistIds
+    // 仅当数量一致时按下标配对：否则整组不给 id（退回按名字搜索），
+    // 也不要把 A 的名字配上 B 的 id（各源对 name/id 分别 filter 时会串位）
+    val ids = song.artistIds.takeIf { it.size == names.size } ?: emptyList()
     if (names.isNotEmpty()) {
         return names.mapIndexed { i, name ->
-            SongArtistRef(name = name, id = if (i < ids.size) ids[i] else "")
+            SongArtistRef(name = name, id = ids.getOrElse(i) { "" })
         }
     }
     return song.artist

@@ -4,6 +4,8 @@ import android.util.Base64
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.Artist
+import com.annieplayer.annie_music.kt.data.model.ArtistSongsPage
+import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Playlist
 import com.annieplayer.annie_music.kt.data.model.Quality
@@ -192,6 +194,7 @@ fun mapQQSong(s: Map<String, Any?>): Song {
     val artistIds = singerList
         .map { _s(it["mid"]) }
         .filter { it.isNotEmpty() }
+        .takeIf { it.size == artistNames.size } ?: emptyList()
     val singer = artistNames.joinToString(" / ")
 
     // 新旧字段并存：旧接口平铺，musicu 收进 file.*
@@ -659,14 +662,25 @@ private fun _mapQQArtists(raw: Any?): List<Artist> {
  * 注意：musicu 的 `get_singer_detail_info` 已不可用（500001）；
  * 单曲搜索走 `DoSearchForQQMusicMobile`（见 [_fetchQQSearchRawPage]）。
  */
-suspend fun getQQArtistSongs(singerMid: String, limit: Int = 100): List<Song> {
+/**
+ * 获取 QQ 歌手单曲（`musichall.song_list_server` / `GetSingerSongList`，按 `begin`/`num` 真分页）。
+ *
+ * 模块名取自官网歌手页实际所用；老的 `music.web_singer_info_svr` 虽能返回 60 首，
+ * 但 `begin` 被服务端忽略、无法翻页。每条结果为 `{ songInfo: {...} }`，歌曲对象在 `songInfo` 里。
+ */
+suspend fun getQQArtistSongs(singerMid: String, page: Int = 1): ArtistSongsPage {
     try {
         val payload: Map<String, Any?> = mapOf(
             "comm" to mapOf("ct" to 24, "cv" to 0),
-            "singer" to mapOf(
-                "module" to "music.web_singer_info_svr",
-                "method" to "get_singer_detail_info",
-                "param" to mapOf("sort" to 5, "singermid" to singerMid, "begin" to 0, "num" to limit),
+            "songList" to mapOf(
+                "module" to "musichall.song_list_server",
+                "method" to "GetSingerSongList",
+                "param" to mapOf(
+                    "singerMid" to singerMid,
+                    "order" to 1,
+                    "begin" to (page - 1) * ArtistSongsPageSize,
+                    "num" to ArtistSongsPageSize,
+                ),
             ),
         )
         val data = httpPostJson(
@@ -678,15 +692,18 @@ suspend fun getQQArtistSongs(singerMid: String, limit: Int = 100): List<Song> {
                 "Referer" to "https://y.qq.com/",
             ),
         )
-        val singer = data["singer"]
-        val d = if (singer is Map<*, *>) singer["data"] else null
-        val listRaw = if (d is Map<*, *>) d["songlist"] else null
+        val node = data["songList"]
+        val d = if (node is Map<*, *>) node["data"] else null
+        val listRaw = if (d is Map<*, *>) d["songList"] else null
         val list = if (listRaw is List<*>) listRaw else emptyList<Any?>()
-        return list
-            .filterIsInstance<Map<*, *>>()
-            .map { _mapQQArtistSong(_normMap(it)) }
+        val total = if (d is Map<*, *>) (d["totalNum"] as? Number)?.toInt() ?: 0 else 0
+        val songs = list.mapNotNull { item ->
+            val info = if (item is Map<*, *>) item["songInfo"] else null
+            if (info is Map<*, *>) _mapQQArtistSong(_normMap(info)) else null
+        }
+        return ArtistSongsPage(songs, total)
     } catch (_: Throwable) {
-        return emptyList()
+        return ArtistSongsPage(emptyList(), 0)
     }
 }
 
@@ -705,6 +722,7 @@ private fun _mapQQArtistSong(m: Map<String, Any?>): Song {
     val artistIds = singerList
         .map { _s(it["mid"]) }
         .filter { it.isNotEmpty() }
+        .takeIf { it.size == artistNames.size } ?: emptyList()
     val artist = artistNames.joinToString(" / ")
     val albumRaw = m["album"]
     val album = _toMap(albumRaw) ?: emptyMap()
