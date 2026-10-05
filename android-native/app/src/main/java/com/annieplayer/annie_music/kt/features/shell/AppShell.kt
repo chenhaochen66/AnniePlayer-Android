@@ -53,6 +53,11 @@ import com.annieplayer.annie_music.kt.data.model.LoopMode
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.features.kkbox.KkboxDetailScreen
 import com.annieplayer.annie_music.kt.features.library.LocalLibraryScreen
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
+import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
+import com.annieplayer.annie_music.kt.features.playlist.PlaylistParseScreen
+import com.annieplayer.annie_music.kt.features.playlist.PlaylistParseScreenState
 import com.annieplayer.annie_music.kt.features.player.PlayerScreen
 import com.annieplayer.annie_music.kt.features.qobuz.QobuzDetailScreen
 import com.annieplayer.annie_music.kt.features.search.HomeDownloadingToast
@@ -165,6 +170,16 @@ fun AppShell(
         )
     }
 
+    // 歌单解析页状态（从 SearchScreenState 拆出；该功能已迁为底栏 tab，不再是搜索模式）。
+    // 复用宿主同一个 SnackbarHostState，失败提示与其它页面同一出口。
+    val playlistParseSt = remember(scope) {
+        PlaylistParseScreenState(
+            scope = scope,
+            uiViewModel = uiViewModel,
+            snackbarHostState = snackbarHostState,
+        )
+    }
+
     // 「所有文件访问」权限状态：抽屉打开时重新检测（对齐 Flutter `_ManageStorageRow._granted`）
     val ctx = LocalContext.current
     var storageGranted by remember { mutableStateOf<Boolean?>(null) }
@@ -218,6 +233,7 @@ fun AppShell(
         playerViewModel.setBackend(backend)
         // KKBOX 歌词/播放票据需要活跃账号的会话 sid（对齐 Flutter 从 kkbox store 读取）
         playerViewModel.kkboxSidProvider = { kkboxViewModel.getActiveAccount()?.session?.sid }
+        qobuzTokenProvider = { qobuzViewModel.getActiveToken()?.token }
     }
 
     // 封面本地缓存 + 动态取色（对齐 Flutter：详情页/播放页切歌时 fetchAndCacheCover，并把本地
@@ -313,6 +329,13 @@ fun AppShell(
                     selection = selection,
                     downloadTasks = downloadTasks,
                     currentSong = currentSong,
+                )
+
+                AppTab.PlaylistParse -> PlaylistParseScreen(
+                    // 顶栏左侧菜单按钮：与搜索 / 曲库页同一个动作（打开菜单抽屉）
+                    onOpenMenu = { uiViewModel.setDrawerVisible(true) },
+                    onSubmit = { playlistParseSt.handleSubmit(it) },
+                    modifier = Modifier.fillMaxSize(),
                 )
 
                 AppTab.Library -> LocalLibraryScreen(
@@ -518,7 +541,7 @@ fun AppShell(
             // ── 歌曲操作面板（⋮，内部含多歌手选择） ──
             SongActionsSheet(
                 visible = uiState.songActionsVisible,
-                song = currentSong,
+                song = uiState.songActionsSong ?: currentSong,
                 onClose = { uiViewModel.setSongActionsVisible(false) },
                 onDownload = { song -> uiViewModel.setPicker(true, song = song) },
                 onOpenArtist = { artist -> openArtistDetail(artist) },
@@ -528,7 +551,14 @@ fun AppShell(
             // ── 下载音质选择（单曲） ──
             QualityPickerSheet(
                 visible = uiState.pickerVisible,
-                qualities = uiState.pickerSong?.qualities ?: listOf(Quality.k128k),
+                        qualities = uiState.pickerSong?.qualities ?: listOf(Quality.k128k),
+                        labelOf = { q ->
+                            if (uiState.pickerSong?.platform == MusicPlatform.qobuz) {
+                                qobuzQualityLabel(q)
+                            } else {
+                                q.label
+                            }
+                        },
                 onSelect = { quality -> handleDownloadWithQuality(quality) },
                 onCancel = { uiViewModel.setPicker(false) },
             )
@@ -536,7 +566,22 @@ fun AppShell(
             // ── 下载音质选择（批量） ──
             QualityPickerSheet(
                 visible = batchPickerVisible,
-                qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                        qualities = if (selection.selectedSongs.isNotEmpty() &&
+                            selection.selectedSongs.all { it.platform == MusicPlatform.qobuz }
+                        ) {
+                            listOf(Quality.hires, Quality.flac, Quality.k320k)
+                        } else {
+                            listOf(Quality.flac, Quality.k320k, Quality.k128k)
+                        },
+                        labelOf = { q ->
+                            if (selection.selectedSongs.isNotEmpty() &&
+                                selection.selectedSongs.all { it.platform == MusicPlatform.qobuz }
+                            ) {
+                                qobuzQualityLabel(q)
+                            } else {
+                                q.label
+                            }
+                        },
                 onSelect = { quality -> handleBatchDownload(quality) },
                 onCancel = { batchPickerVisible = false },
             )

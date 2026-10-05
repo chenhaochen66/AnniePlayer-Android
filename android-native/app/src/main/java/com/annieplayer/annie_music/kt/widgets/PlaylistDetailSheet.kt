@@ -66,6 +66,7 @@ import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
@@ -182,18 +183,12 @@ private fun PlaylistDetailContent(
     suspend fun play(song: Song) {
         val idx = st.songs.indexOfFirst { it.id == song.id }
         if (idx < 0) return
-        var queue = st.songs
-        if (song.platform == MusicPlatform.qq || song.platform == MusicPlatform.kugou) {
-            try {
-                val url = fetchPlayUrlBySong(song)
-                queue = st.songs.map { if (it.id == song.id) it.copyWith(playUrl = url) else it }
-            } catch (_: Exception) {
-                // 对齐 Dart：解析失败保留原队列
-            }
-        }
-        playerViewModel.setQueue(queue, idx)
+        // 先入队立刻开播（与专辑详情一致），音源地址随后异步补
+        playerViewModel.setQueue(st.songs, idx)
         try {
+            val url = fetchPlayUrlBySong(song)
             val lyric = fetchLyric(song)
+            playerViewModel.updateSongPlayUrl(song.id, url)
             playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric)
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
@@ -392,29 +387,8 @@ private fun PlaylistDetailContent(
                         palette = palette,
                         playingId = playerState.currentSong?.id,
                         onPlay = { scope.launch { play(it) } },
-                        onDownload = { openPicker(it) },
+                        onDownload = { uiViewModel.setSongActionsVisible(true, it) },
                         onToggle = { toggleSelect(it) },
-                    )
-                }
-            }
-            // ── 多选下载条：玻璃 pill 常驻底部（未选中 = 禁用观感；下载中显示进度文案） ──
-            if (st.selectMode) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(
-                            start = AppSpacing.sp20,
-                            end = AppSpacing.sp20,
-                            bottom = AppSpacing.sheetBottomInset,
-                        ),
-                    contentAlignment = Alignment.BottomCenter,
-                ) {
-                    MultiSelectDownloadBar(
-                        selectedCount = st.selectedIds.size,
-                        total = st.songs.size,
-                        downloading = st.batchDownloading,
-                        progressText = st.batchProgress,
-                        onDownload = { st.batchPickerVisible = true },
                     )
                 }
             }
@@ -430,6 +404,13 @@ private fun PlaylistDetailContent(
             QualityPickerSheet(
                 visible = st.pickerVisible,
                 qualities = st.pickerSong?.qualities ?: emptyList(),
+                labelOf = { q ->
+                    if (st.pickerSong?.platform == MusicPlatform.qobuz) {
+                        qobuzQualityLabel(q)
+                    } else {
+                        q.label
+                    }
+                },
                 onSelect = { q -> scope.launch { downloadWithQuality(q) } },
                 onCancel = {
                     st.pickerVisible = false
@@ -603,61 +584,81 @@ private fun PlaylistDetailBody(
     }
 }
 
-/** 列表头：封面 100（圆角 10）+ 名称 17 w700 + 创建者 13 + 曲目数 11 */
+/**
+ * 列表头：封面 100（圆角 10）+ 名称 17 w700 + 创建者 13 + 曲目数 11；
+ * 多选时在其下追加 [MultiSelectDownloadBar] 作为批量下载入口
+ * （位置与对齐方式对齐专辑详情：列表头内、右端 `Alignment.End`，随列表滚动）。
+ */
 @Composable
 private fun PlaylistDetailListHeader(st: PlaylistDetailState) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(AppSpacing.sp16),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(AppSize.coverPlaceholder)
-                .clip(RoundedCornerShape(AppRadius.r10))
-                    .background(Color.Transparent),
-            contentAlignment = Alignment.Center,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            var coverFailed by remember(st.cover) { mutableStateOf(false) }
-            if (st.cover.isEmpty() || coverFailed) {
-                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.textDisabled)
-            } else {
-                AsyncImage(
-                    model = st.cover,
-                    contentDescription = "歌单封面",
-                    contentScale = ContentScale.Crop,
-                    onError = { coverFailed = true },
-                    modifier = Modifier.fillMaxSize(),
+            Box(
+                modifier = Modifier
+                    .size(AppSize.coverPlaceholder)
+                    .clip(RoundedCornerShape(AppRadius.r10))
+                    .background(Color.Transparent),
+                contentAlignment = Alignment.Center,
+            ) {
+                var coverFailed by remember(st.cover) { mutableStateOf(false) }
+                if (st.cover.isEmpty() || coverFailed) {
+                    MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.textDisabled)
+                } else {
+                    AsyncImage(
+                        model = st.cover,
+                        contentDescription = "歌单封面",
+                        contentScale = ContentScale.Crop,
+                        onError = { coverFailed = true },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(AppSpacing.sp14))
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.Start,
+            ) {
+                Text(
+                    text = st.name,
+                    color = AppColors.textPrimary,
+                    fontSize = AppFontSize.size17,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(AppSpacing.sp4))
+                Text(
+                    text = st.creator,
+                    color = AppColors.whiteA50,
+                    fontSize = AppFontSize.size13,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(AppSpacing.sp2))
+                Text(
+                    text = "${st.songs.size} 首歌曲",
+                    color = AppColors.whiteA25,
+                    fontSize = AppFontSize.xs,
                 )
             }
         }
-        Spacer(modifier = Modifier.width(AppSpacing.sp14))
-        Column(
-            modifier = Modifier.weight(1f),
-            horizontalAlignment = Alignment.Start,
-        ) {
-            Text(
-                text = st.name,
-                color = AppColors.textPrimary,
-                fontSize = AppFontSize.size17,
-                fontWeight = FontWeight.Bold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(modifier = Modifier.height(AppSpacing.sp4))
-            Text(
-                text = st.creator,
-                color = AppColors.whiteA50,
-                fontSize = AppFontSize.size13,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(modifier = Modifier.height(AppSpacing.sp2))
-            Text(
-                text = "${st.songs.size} 首歌曲",
-                color = AppColors.whiteA25,
-                fontSize = AppFontSize.xs,
+        if (st.selectMode) {
+            Spacer(modifier = Modifier.height(AppSpacing.sp12))
+            // 批量下载入口：未选中 = 禁用观感；下载中显示进度文案（下载逻辑与既有完全一致）
+            MultiSelectDownloadBar(
+                selectedCount = st.selectedIds.size,
+                total = st.songs.size,
+                downloading = st.batchDownloading,
+                progressText = st.batchProgress,
+                onDownload = { st.batchPickerVisible = true },
+                modifier = Modifier.align(Alignment.End),
             )
         }
     }
@@ -756,7 +757,7 @@ private fun PlaylistDetailSongRow(
                     .padding(AppSpacing.sp4),
                 contentAlignment = Alignment.Center,
             ) {
-                DownloadIconPlaceholder(
+                SongMoreGlyph(
                     modifier = Modifier.size(AppIconSize.icon16),
                     tint = AppColors.textDisabled,
                 )

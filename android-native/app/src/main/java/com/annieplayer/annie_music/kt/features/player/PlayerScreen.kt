@@ -475,7 +475,7 @@ private fun PlayerCoverImage(
 
 /** 「⋮」：MoreVert 的可用性在核心图标集中不确定，自绘三个圆点（对齐 26dp white60） */
 @Composable
-private fun PlayerDotsGlyph(modifier: Modifier = Modifier, tint: Color) {
+internal fun PlayerDotsGlyph(modifier: Modifier = Modifier, tint: Color) {
     Canvas(modifier = modifier) {
         val r = size.width * 0.085f
         val cx = size.width / 2f

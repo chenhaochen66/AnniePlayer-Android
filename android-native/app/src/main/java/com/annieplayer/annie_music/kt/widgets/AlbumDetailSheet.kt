@@ -66,9 +66,11 @@ import com.annieplayer.annie_music.kt.data.fetchAlbumSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
 import com.annieplayer.annie_music.kt.data.model.DownloadTask
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
@@ -175,6 +177,7 @@ private class AlbumDetailState {
     var loading by mutableStateOf(true)
     var error by mutableStateOf("")
     var songs by mutableStateOf<List<AlbumSong>>(emptyList())
+    var qualitySpec by mutableStateOf("")
     var releaseDate by mutableStateOf("")
 
     var selectMode by mutableStateOf(false)
@@ -221,11 +224,16 @@ private fun AlbumDetailContent(
         albumId = data.id,
         duration = s.duration,
         platform = data.platform,
-        qualities = listOf(Quality.k128k, Quality.k320k, Quality.flac),
+                qualities = if (data.platform == MusicPlatform.qobuz) {
+                    listOf(Quality.hires, Quality.flac, Quality.k320k)
+                } else {
+                    listOf(Quality.k128k, Quality.k320k, Quality.flac)
+                },
         albumArtist = data.artist,
         artistNames = if (s.artistNames.isNotEmpty()) s.artistNames else listOf(s.artistName),
         artistIds = s.artistIds,
         trackNumber = s.track?.toString(),
+        discNumber = s.discNumber?.toString(),
         releaseDate = st.releaseDate.ifEmpty { null },
     )
 
@@ -374,6 +382,7 @@ private fun AlbumDetailContent(
         delay(150)
         try {
             val result = fetchAlbumSongsByPlatform(data.platform, data.id)
+            st.qualitySpec = result.qualitySpec
             st.songs = result.songs
             st.releaseDate = result.pub
         } catch (e: Exception) {
@@ -445,7 +454,7 @@ private fun AlbumDetailContent(
                         palette = palette,
                         currentSongId = playerState.currentSong?.id,
                         onPlay = { scope.launch { play(it) } },
-                        onDownload = { openPicker(it) },
+                        onDownload = { uiViewModel.setSongActionsVisible(true, toSong(it)) },
                         onToggle = { toggleSelect(it) },
                         onBatch = { st.pickerVisible = true },
                     )
@@ -464,6 +473,13 @@ private fun AlbumDetailContent(
                 // 与曲目实际可用音质一致（toSong 固定三档）；批量下载（pickerSong 为空）同样三档。
                 // 原先传空列表导致组件回退成仅 128k（真机缺陷）。
                 qualities = st.pickerSong?.qualities ?: listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                labelOf = { q ->
+                    if (st.pickerSong?.platform == MusicPlatform.qobuz) {
+                        qobuzQualityLabel(q)
+                    } else {
+                        q.label
+                    }
+                },
                 onSelect = { q ->
                     scope.launch {
                         if (st.pickerSong != null) downloadWithQuality(q) else batchDownload(q)
@@ -722,11 +738,21 @@ private fun AlbumDetailListHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(modifier = Modifier.height(AppSpacing.sp2))
-                Text(
-                    text = "${st.songs.size} 首歌曲",
-                    color = AppColors.whiteA25,
-                    fontSize = AppFontSize.xs,
-                )
+                Row {
+                    if (st.qualitySpec.isNotEmpty()) {
+                        Text(
+                            text = st.qualitySpec,
+                            modifier = Modifier.padding(end = AppSpacing.sp8),
+                            color = AppColors.whiteA50,
+                            fontSize = AppFontSize.xs,
+                        )
+                    }
+                    Text(
+                        text = "${st.songs.size} 首歌曲",
+                        color = AppColors.whiteA25,
+                        fontSize = AppFontSize.xs,
+                    )
+                }
             }
         }
         if (st.selectMode) {
@@ -823,19 +849,8 @@ private fun AlbumDetailSongRow(
         if (task != null && task.status != DownloadStatus.completed) {
             AlbumDetailTaskBadge(task = task)
         } else if (!selectMode) {
-            Box(
-                modifier = Modifier
-                    // 命中区 ≥48dp：本修饰符只预留布局空间（行高 60dp 内不撑高）
-                    .minimumInteractiveComponentSize()
-                    .clickableNoRipple { onDownload(song) }
-                    .semantics { contentDescription = "下载 ${song.name}" }
-                    .padding(AppSpacing.sp4),
-                contentAlignment = Alignment.Center,
-            ) {
-                DownloadIconPlaceholder(
-                    modifier = Modifier.size(AppIconSize.icon16),
-                    tint = AppColors.textDisabled,
-                )
+            Box(modifier = Modifier.semantics { contentDescription = "更多操作 ${song.name}" }) {
+                SongMoreButton(onClick = { onDownload(song) })
             }
         }
     }

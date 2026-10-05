@@ -54,6 +54,7 @@ data class UiState(
     val pickerVisible: Boolean = false,
     /** ⋮ 歌曲操作面板是否可见 */
     val songActionsVisible: Boolean = false,
+    val songActionsSong: Song? = null,
     /** 多歌手选择面板是否可见 */
     val artistPickerVisible: Boolean = false,
     val pickerSong: Song? = null,
@@ -87,6 +88,7 @@ data class UiState(
         drawerVisible: Boolean? = null,
         pickerVisible: Boolean? = null,
         songActionsVisible: Boolean? = null,
+    songActionsSong: Song? = null,
         artistPickerVisible: Boolean? = null,
         pickerSong: Song? = null,
         contactVisible: Boolean? = null,
@@ -110,6 +112,7 @@ data class UiState(
         drawerVisible = drawerVisible ?: this.drawerVisible,
         pickerVisible = pickerVisible ?: this.pickerVisible,
         songActionsVisible = songActionsVisible ?: this.songActionsVisible,
+        songActionsSong = songActionsSong ?: this.songActionsSong,
         artistPickerVisible = artistPickerVisible ?: this.artistPickerVisible,
         pickerSong = pickerSong ?: this.pickerSong,
         contactVisible = contactVisible ?: this.contactVisible,
@@ -155,9 +158,9 @@ class UiViewModel : ViewModel() {
         _state.value = _state.value.copyWith(pickerVisible = visible, pickerSong = song)
     }
 
-    /** ⋮ 歌曲操作面板 */
-    fun setSongActionsVisible(visible: Boolean) {
-        _state.value = _state.value.copyWith(songActionsVisible = visible)
+    /** ⋮ 歌曲操作面板（[song] 为本次要操作的歌；任意页面行尾都能呼出） */
+    fun setSongActionsVisible(visible: Boolean, song: Song? = null) {
+        _state.value = _state.value.copyWith(songActionsVisible = visible, songActionsSong = song)
     }
 
     /** 多歌手选择面板 */

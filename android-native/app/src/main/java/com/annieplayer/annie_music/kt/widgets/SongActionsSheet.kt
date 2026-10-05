@@ -164,7 +164,7 @@ fun SongActionsSheet(
                         modifier = Modifier.size(AppIconSize.icon20),
                     )
                 },
-                label = "歌手",
+                label = "跳转到歌手",
                 subtitle = if (artists.isEmpty()) "未知歌手" else artists.joinToString(" / ") { it.name },
                 enabled = artists.isNotEmpty(),
                 onTap = {
@@ -184,7 +184,7 @@ fun SongActionsSheet(
                         tint = tint,
                     )
                 },
-                label = "专辑",
+                label = "跳转到专辑",
                 subtitle = if (albumName.isEmpty()) "未知专辑" else albumName,
                 enabled = albumId.isNotEmpty(),
                 onTap = {

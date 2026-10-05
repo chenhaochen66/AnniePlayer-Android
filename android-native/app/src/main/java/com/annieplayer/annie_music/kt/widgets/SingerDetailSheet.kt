@@ -89,6 +89,8 @@ import com.annieplayer.annie_music.kt.data.fetchArtistSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
 import com.annieplayer.annie_music.kt.data.model.DownloadTask
@@ -566,7 +568,7 @@ private fun SingerDetailContent(
                             pageRange = pageRange,
                             showPagination = showPagination,
                             onPlay = { scope.launch { playSong(it) } },
-                            onDownload = { openPicker(it) },
+                            onDownload = { uiViewModel.setSongActionsVisible(true, it) },
                             onToggle = { toggleSelect(it) },
                             onGoToPage = { scope.launch { loadSongs(it) } },
                         )
@@ -589,7 +591,14 @@ private fun SingerDetailContent(
         val pickerPanel: @Composable () -> Unit = {
             QualityPickerSheet(
                 visible = st.pickerVisible,
-                qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                qualities = if (data.platform == MusicPlatform.qobuz) {
+                    listOf(Quality.hires, Quality.flac, Quality.k320k)
+                } else {
+                    listOf(Quality.flac, Quality.k320k, Quality.k128k)
+                },
+                labelOf = { q ->
+                    if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
+                },
                 onSelect = { q -> scope.launch { downloadWithQuality(q) } },
                 onCancel = {
                     st.pickerVisible = false
@@ -598,7 +607,14 @@ private fun SingerDetailContent(
             )
             QualityPickerSheet(
                 visible = st.batchPickerVisible,
-                qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                qualities = if (data.platform == MusicPlatform.qobuz) {
+                    listOf(Quality.hires, Quality.flac, Quality.k320k)
+                } else {
+                    listOf(Quality.flac, Quality.k320k, Quality.k128k)
+                },
+                labelOf = { q ->
+                    if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
+                },
                 onSelect = { q -> scope.launch { batchDownload(q) } },
                 onCancel = { st.batchPickerVisible = false },
             )
@@ -1203,25 +1219,19 @@ private fun SingerDetailSongRow(
         }
 
         if (!selected) {
-            Box(
-                modifier = Modifier
-                    .clickableRipple { onDownload(song) }
-                    // 内边距对齐专辑详情行（sp4），配合外层 sp16 → 图标右缘距屏 20dp，与专辑一致
-                    .padding(AppSpacing.sp4),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (isDownloading) {
+            if (isDownloading) {
+                Box(
+                    modifier = Modifier.padding(AppSpacing.sp4),
+                    contentAlignment = Alignment.Center,
+                ) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(14.dp),
                         color = AppColors.primary,
                         strokeWidth = 2.dp,
                     )
-                } else {
-                    SingerDetailDownloadGlyph(
-                        modifier = Modifier.size(AppIconSize.icon16),
-                        tint = AppColors.whiteA25,
-                    )
                 }
+            } else {
+                SongMoreButton(onClick = { onDownload(song) })
             }
         }
     }

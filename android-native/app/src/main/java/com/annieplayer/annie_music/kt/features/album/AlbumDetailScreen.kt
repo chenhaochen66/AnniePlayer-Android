@@ -54,7 +54,9 @@ import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
+import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
 import com.annieplayer.annie_music.kt.data.model.DownloadTask
@@ -75,6 +77,7 @@ import com.annieplayer.annie_music.kt.widgets.DetailCheckBox
 import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
 import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
 import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
+import com.annieplayer.annie_music.kt.widgets.SongMoreGlyph
 import com.annieplayer.annie_music.kt.widgets.LocalDetailQualityPickerHost
 import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
@@ -141,6 +144,7 @@ fun AlbumDetailScreen(
     artist: String = "",
     fallback: AlbumDetailData? = null,
     colorViewModel: ColorViewModel = activityViewModel(),
+    uiViewModel: UiViewModel = activityViewModel(),
 ) {
     val useFallback = albumId.isEmpty() && fallback != null
     val resolvedId = if (useFallback) fallback?.id.orEmpty() else albumId
@@ -336,8 +340,7 @@ fun AlbumDetailScreen(
                     currentSongId = playerState.currentSong?.id,
                     onPlay = { play(it) },
                     onDownload = { target ->
-                        st.pickerSong = target
-                        st.pickerVisible = true
+                        uiViewModel.setSongActionsVisible(true, toSong(target))
                     },
                     onToggleSelect = { id ->
                         if (!st.selectedIds.remove(id)) st.selectedIds.add(id)
@@ -696,7 +699,7 @@ private fun AlbumDetailSongRow(
                     .padding(AppSpacing.sp4),
                 contentAlignment = Alignment.Center,
             ) {
-                DownloadIconPlaceholder(
+                SongMoreGlyph(
                     modifier = Modifier.size(AppIconSize.icon16),
                     tint = AppColors.textDisabled,
                 )

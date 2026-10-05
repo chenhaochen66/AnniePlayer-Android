@@ -135,7 +135,7 @@ fun SongTile(
             if (isDownloading) {
                 DownloadRing()
             } else {
-                DownloadIconPlaceholder(modifier = Modifier.size(18.dp))
+                SongMoreGlyph(modifier = Modifier.size(18.dp))
             }
         }
     }
