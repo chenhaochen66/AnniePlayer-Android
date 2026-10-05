@@ -233,6 +233,8 @@ data class AlbumSong(
     val artistName: String,
     val duration: Int,
     val track: Int? = null,
+    val discNumber: Int? = null,
+    val qualities: List<Quality> = emptyList(),
     /** 歌手名列表（多歌手逐个列出） */
     val artistNames: List<String> = emptyList(),
     /** 歌手 id 列表（与 [artistNames] 按下标对应；平台拿不到时为空） */
@@ -264,6 +266,11 @@ data class QobuzTrack(
     val streamable: Boolean,
     val label: String = "",
     val year: Int = 0,
+    val releaseDateOriginal: String? = null,
+    /** 多歌手名（performers 逗号串拆分；单歌手时取 performer.name） */
+    val artistNames: List<String> = emptyList(),
+    /** 与 [artistNames] 下标对应；仅单歌手时拿得到 performer.id */
+    val artistIds: List<String> = emptyList(),
 )
 
 /** Qobuz 专辑 */
@@ -276,6 +283,10 @@ data class QobuzAlbum(
     val year: Int = 0,
     val label: String = "",
     val tracks: List<QobuzTrack>,
+    val maxBitDepth: Int? = null,
+    val maxSamplingRateKhz: Double? = null,
+    val hires: Boolean = false,
+    val trackCount: Int = 0,
 )
 
 /** Qobuz Token */

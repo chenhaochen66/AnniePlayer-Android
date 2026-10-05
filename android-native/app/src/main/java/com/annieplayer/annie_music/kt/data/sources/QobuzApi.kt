@@ -1,7 +1,12 @@
 package com.annieplayer.annie_music.kt.data.sources
 
+import com.annieplayer.annie_music.kt.data.model.Album
+import com.annieplayer.annie_music.kt.data.model.Artist
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.QobuzAlbum
 import com.annieplayer.annie_music.kt.data.model.QobuzTrack
+import com.annieplayer.annie_music.kt.data.model.Quality
+import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.network.httpGetJson
 import com.annieplayer.annie_music.kt.data.network.retryUntilSuccess
 import kotlinx.coroutines.withTimeout
@@ -55,6 +60,37 @@ const val qobuzAppSecret = "e79f8b9be485692b0e5f9dd895826368"
 
 /** Qobuz API 基址（对齐 RN 版 BASE_URL） */
 const val qobuzBaseUrl = "https://www.qobuz.com/api.json/0.2/"
+
+/** getFileUrl 的 format_id：27 = FLAC 24bit，6 = FLAC CD，5 = MP3 320 */
+const val qobuzHiresFormatId = 27
+const val qobuzFlacFormatId = 6
+const val qobuzMp3FormatId = 5
+
+fun qobuzQualityLabel(q: Quality): String = when (q) {
+    Quality.hires -> "FLAC Hires Max"
+    Quality.flac -> "FLAC 16bit/44.1kHz"
+    Quality.k320k -> "MP3 320"
+    Quality.k128k -> "MP3 128"
+}
+
+/** 专辑规格文案（位深 / 采样率 / Hi-Res）；无数据返回空串 */
+fun qobuzQualitySpec(a: QobuzAlbum): String = listOfNotNull(
+    a.maxBitDepth?.let { "${it}bit" },
+    a.maxSamplingRateKhz?.let { khz ->
+        val text = if (khz % 1.0 == 0.0) khz.toInt().toString() else khz.toString()
+        "${text}kHz"
+    },
+    if (a.hires) "Hi-Res" else null,
+).joinToString(" / ")
+
+fun qobuzQualityFormatId(q: Quality): Int = when (q) {
+    Quality.hires -> qobuzHiresFormatId
+    Quality.flac -> qobuzFlacFormatId
+    else -> qobuzMp3FormatId
+}
+
+/** 活跃 token 提供者，由 AppShell 注入 `QobuzViewModel.getActiveToken()?.token` */
+var qobuzTokenProvider: () -> String? = { null }
 
 // ── 通用辅助（对齐 JS 真值/取整/类型语义） ──
 
@@ -168,16 +204,17 @@ fun createSignature(method: String, params: Map<String, String>): QobuzSignature
 
 /** 构造 Qobuz 请求头（对齐 RN 版 headers，固定 Android 设备指纹） */
 fun qobuzHeaders(token: String): Map<String, String> {
-    return mapOf(
+    val base = mapOf(
         "X-Device-Platform" to "android",
         "X-Device-Model" to "Pixel 3",
         "X-Device-Os-Version" to "10",
-        "X-User-Auth-Token" to token,
         "X-Device-Manufacturer-Id" to "482D8CB7-015D-402F-A93B-5EEF0E0996F3",
         "X-App-Version" to "5.16.1.5",
         "User-Agent" to
             "Dalvik/2.1.0 (Linux; U; Android 10; Pixel 3 Build/QP1A.190711.020))QobuzMobileAndroid/5.16.1.5-b21041415",
     )
+    // 搜索 / 专辑 / 歌手接口免 token：为空时不带该头（带空串会被服务端判未授权）
+    return if (token.isEmpty()) base else base + ("X-User-Auth-Token" to token)
 }
 
 /** 从文本解析 Qobuz 链接（对齐 RN 版 parseQobuzUrl） */
@@ -293,6 +330,11 @@ fun mapTrackToQobuzTrack(raw: Map<String, Any?>): QobuzTrack {
 
     val discRaw = _firstTruthy(listOf(raw["media_number"], raw["disc_number"]))
 
+    // 只用 performer（该曲演唱者）：performers 逗号串会把制作人/工程师也算进来
+    val performerId = if (performer is Map<*, *>) (performer["id"] ?: "").toString() else ""
+    val artistNames = if (_jsTruthy(performerName)) listOf(performerName.toString()) else emptyList()
+    val artistIds = if (performerId.isNotEmpty()) listOf(performerId) else emptyList()
+
     return QobuzTrack(
         id = raw["id"]?.toString() ?: "",
         title = (_firstTruthy(listOf(raw["title"])) ?: "").toString(),
@@ -310,6 +352,9 @@ fun mapTrackToQobuzTrack(raw: Map<String, Any?>): QobuzTrack {
         streamable = _jsTruthy(raw["streamable"]),
         label = (_firstTruthy(listOf(raw["label"])) ?: "").toString(),
         year = _toIntOr(raw["year"], 0),
+        releaseDateOriginal = raw["release_date_original"]?.toString()?.takeIf { it.isNotEmpty() },
+        artistNames = artistNames,
+        artistIds = artistIds,
     )
 }
 
@@ -337,13 +382,19 @@ fun mapAlbumToQobuzAlbum(raw: Map<String, Any?>): QobuzAlbum {
         } else {
             LinkedHashMap<String, Any?>()
         }
-        merged["album"] = mapOf(
-            "id" to raw["id"],
-            "title" to raw["title"],
-            "image" to mapOf("large" to cover),
-            "artist" to mapOf("name" to artistStr),
-        )
-        merged["performer"] = mapOf("name" to artistStr)
+        // 只在缺失时补：专辑接口的曲目相对专辑是「绝对」信息，曲目自带的 performer 才是该曲真实表演者
+        //（单歌手专辑里也会有 feat. 曲目，覆盖会把多歌手信息压成专辑艺术家）
+        if (merged["album"] == null) {
+            merged["album"] = mapOf(
+                "id" to raw["id"],
+                "title" to raw["title"],
+                "image" to mapOf("large" to cover),
+                "artist" to mapOf("name" to artistStr),
+            )
+        }
+        if (merged["performer"] == null) {
+            merged["performer"] = mapOf("name" to artistStr)
+        }
         mapTrackToQobuzTrack(merged)
     }
 
@@ -355,5 +406,161 @@ fun mapAlbumToQobuzAlbum(raw: Map<String, Any?>): QobuzAlbum {
         year = _toIntOr(raw["year"], 0),
         label = (_firstTruthy(listOf(raw["label"])) ?: "").toString(),
         tracks = tracks,
+        maxBitDepth = (raw["maximum_bit_depth"] as? Number)?.toInt(),
+        maxSamplingRateKhz = (raw["maximum_sampling_rate"] as? Number)?.toDouble(),
+        hires = _jsTruthy(raw["hires"]),
+        trackCount = _toIntOr(
+            _firstTruthy(listOf(raw["tracks_count"], raw["media_count"])),
+            tracks.size,
+        ),
+    )
+}
+
+// ── 统一模型映射（搜索 / 详情共用；UI 不再各自实现一份） ──
+
+/** Qobuz 单曲 -> [Song]。[hires] 用于推断可用音质档位。 */
+fun qobuzTrackToSong(track: QobuzTrack, hires: Boolean = false): Song = Song(
+    id = "qobuz:${track.id}",
+    title = track.title,
+    artist = track.artist,
+    cover = track.cover,
+    album = track.album,
+    albumId = track.albumId.ifEmpty { null },
+    duration = track.duration,
+    platform = MusicPlatform.qobuz,
+    albumArtist = track.albumArtist,
+    trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
+    discNumber = track.discNumber?.toString(),
+    releaseDate = track.releaseDateOriginal
+        ?: if (track.year > 0) track.year.toString() else null,
+    qualities = if (hires) {
+        listOf(Quality.hires, Quality.flac, Quality.k320k)
+    } else {
+        listOf(Quality.flac, Quality.k320k)
+    },
+    artistNames = track.artistNames,
+    artistIds = track.artistIds,
+)
+
+/** Qobuz 专辑 -> [Album]（封面放 `pic`，`buildAlbumCoverUrl` 对 qobuz 直接取它）。 */
+fun qobuzAlbumToAlbum(a: QobuzAlbum): Album = Album(
+    albumid = a.id,
+    name = a.title,
+    artist = a.artist,
+    platform = MusicPlatform.qobuz,
+    musiccnt = a.trackCount.toString(),
+    pic = a.cover,
+    img = a.cover,
+)
+
+private fun _asMap(v: Any?): Map<String, Any?>? =
+    if (v is Map<*, *>) v.entries.associate { (k, item) -> k.toString() to item } else null
+
+private fun _containerItems(container: Any?): List<Any?> {
+    val m = _asMap(container) ?: return emptyList()
+    val items = m["items"]
+    return if (items is List<*>) items else emptyList()
+}
+
+// ── 搜索（catalog/search：免 token、免签名，仅 app_id） ──
+
+enum class QobuzSearchType(val value: String) {
+    tracks("tracks"),
+    albums("albums"),
+    artists("artists"),
+}
+
+private suspend fun _searchQobuzRaw(
+    type: QobuzSearchType,
+    query: String,
+    limit: Int,
+    offset: Int,
+): Map<String, Any?> {
+    val url = "${qobuzBaseUrl}catalog/search?query=${_encodeComponent(query)}" +
+        "&type=${type.value}&limit=$limit&offset=$offset&app_id=$qobuzAppId"
+    return retryUntilSuccess { _getJson(url, "") }
+}
+
+private suspend fun _searchQobuzItems(
+    type: QobuzSearchType,
+    query: String,
+    limit: Int,
+    offset: Int = 0,
+): List<Map<String, Any?>> =
+    _containerItems(_searchQobuzRaw(type, query, limit, offset)[type.value])
+        .mapNotNull { _asMap(it) }
+
+suspend fun searchQobuzTracks(query: String, limit: Int = 60, offset: Int = 0): List<Song> =
+    _searchQobuzItems(QobuzSearchType.tracks, query, limit, offset)
+        .map { qobuzTrackToSong(mapTrackToQobuzTrack(it), hires = _jsTruthy(it["hires"])) }
+
+suspend fun searchQobuzAlbums(query: String, limit: Int = 30, offset: Int = 0): List<Album> =
+    _searchQobuzItems(QobuzSearchType.albums, query, limit, offset)
+        .map { qobuzAlbumToAlbum(mapAlbumToQobuzAlbum(it)) }
+
+suspend fun searchQobuzArtists(query: String, limit: Int = 60, offset: Int = 0): List<Artist> =
+    _searchQobuzItems(QobuzSearchType.artists, query, limit, offset).map { r ->
+        Artist(
+            id = r["id"]?.toString() ?: "",
+            name = (_firstTruthy(listOf(r["name"])) ?: "").toString(),
+            picture = (_directLarge(r["image"]) ?: "").toString(),
+            musicNum = _toIntOr(r["albums_count"], 0),
+        )
+    }
+
+// ── 歌手详情（artist/get：免 token） ──
+
+private suspend fun fetchArtistJson(artistId: String, limit: Int = 100, offset: Int = 0): Map<String, Any?> {
+    val url = "${qobuzBaseUrl}artist/get?artist_id=$artistId&app_id=$qobuzAppId" +
+        "&extra=albums,playlists,tracks_appears_on,albums_with_last_release,focusAll" +
+        "&limit=$limit&offset=$offset"
+    return retryUntilSuccess { _getJson(url, "") }
+}
+
+/** 歌手头像（`artist/get` 的 `image.large`）；失败或缺失返回空串 */
+suspend fun fetchQobuzArtistPicture(artistId: String): String = try {
+    (_directLarge(fetchArtistJson(artistId)["image"]) ?: "").toString()
+} catch (_: Throwable) {
+    ""
+}
+
+data class QobuzArtistPage(
+    val name: String,
+    val picture: String,
+    val albums: List<Album>,
+    val songs: List<Song>,
+)
+
+/**
+ * 歌手详情数据。Qobuz 没有"歌手全部单曲"接口，故歌曲 = `tracks_appears_on`
+ * ∪ 按歌手名搜索后按 performer.id 过滤（前者量少、后者量足），专辑取其 albums 全量。
+ */
+suspend fun getQobuzArtistPage(artistId: String, artistName: String = ""): QobuzArtistPage {
+    val raw = fetchArtistJson(artistId)
+    val name = (_firstTruthy(listOf(raw["name"])) ?: artistName).toString()
+    val picture = (_directLarge(raw["image"]) ?: "").toString()
+    val albums = _containerItems(raw["albums"])
+        .mapNotNull { _asMap(it) }
+        .map { qobuzAlbumToAlbum(mapAlbumToQobuzAlbum(it)) }
+
+    val appearsOn = _containerItems(raw["tracks_appears_on"])
+        .mapNotNull { _asMap(it) }
+        .map { qobuzTrackToSong(mapTrackToQobuzTrack(it), hires = _jsTruthy(it["hires"])) }
+
+    val byNameSearch = if (name.isEmpty()) {
+        emptyList()
+    } else {
+        runCatching {
+            _searchQobuzItems(QobuzSearchType.tracks, name, 60)
+                .filter { r -> (_asMap(r["performer"])?.get("id")?.toString() ?: "") == artistId }
+                .map { qobuzTrackToSong(mapTrackToQobuzTrack(it), hires = _jsTruthy(it["hires"])) }
+        }.getOrDefault(emptyList())
+    }
+
+    return QobuzArtistPage(
+        name = name,
+        picture = picture,
+        albums = albums,
+        songs = (appearsOn + byNameSearch).distinctBy { it.id },
     )
 }

@@ -34,6 +34,9 @@ import com.annieplayer.annie_music.kt.data.sources.fetchKugouMusicUrl
 import com.annieplayer.annie_music.kt.data.sources.fetchKuwoPlayUrl
 import com.annieplayer.annie_music.kt.data.sources.fetchNeteasePlayUrl
 import com.annieplayer.annie_music.kt.data.sources.fetchQQMusicUrl
+import com.annieplayer.annie_music.kt.data.sources.getFileUrl
+import com.annieplayer.annie_music.kt.data.sources.qobuzHiresFormatId
+import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToLong
@@ -516,7 +519,8 @@ class MediaPlayerBackend(
      * 预取 URL（1:1 移植 Dart `fetchPreloadUrl`）。
      *
      * - 队列项自带 url（qobuz 详情页 / 已解析）优先
-     * - qobuz / kkbox：无 url 时返回 null（与 Dart 相同）
+     * - kkbox：无 url 时返回 null（与 Dart 相同）
+     * - qobuz：无 url 时用活跃 token 取直链（搜索 / 跳转进来的歌靠这条）
      * - netease / qq / kugou / kuwo：委托既有 `data/sources/` 的实现，qq/kugou 固定 320k（同 Dart）
      */
     private suspend fun _fetchPreloadUrl(item: Map<String, String>): String? {
@@ -524,7 +528,17 @@ class MediaPlayerBackend(
         if (!provided.isNullOrEmpty()) return provided
         val id = item["id"].orEmpty()
         return when (item["platform"]) {
-            "qobuz", "kkbox" -> null
+            "qobuz" -> {
+                val token = qobuzTokenProvider().orEmpty()
+                if (token.isEmpty()) null else {
+                    getFileUrl(
+                        id.removePrefix("qobuz:"),
+                        token,
+                        qualityId = qobuzHiresFormatId,
+                    ).url
+                }
+            }
+            "kkbox" -> null
             "netease" -> fetchNeteasePlayUrl(id)
             "qq" -> fetchQQMusicUrl(id.replaceFirst(_reQqPrefix, ""), _prefetchQuality)
             "kugou" -> fetchKugouMusicUrl(id.replaceFirst(_reKugouPrefix, ""), _prefetchQuality)

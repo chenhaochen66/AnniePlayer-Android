@@ -38,6 +38,17 @@ import com.annieplayer.annie_music.kt.data.sources.getNeteaseArtistSongs
 import com.annieplayer.annie_music.kt.data.sources.getQQAlbumSongs
 import com.annieplayer.annie_music.kt.data.sources.getQQArtistAlbums
 import com.annieplayer.annie_music.kt.data.sources.getQQArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.getQobuzAlbum
+import com.annieplayer.annie_music.kt.data.sources.getQobuzArtistPage
+import com.annieplayer.annie_music.kt.data.sources.getTrack
+import com.annieplayer.annie_music.kt.data.sources.fetchQobuzArtistPicture
+import com.annieplayer.annie_music.kt.data.sources.getFileUrl
+import com.annieplayer.annie_music.kt.data.sources.qobuzHiresFormatId
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityFormatId
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualitySpec
+import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
+import com.annieplayer.annie_music.kt.data.sources.searchQobuzAlbums
+import com.annieplayer.annie_music.kt.data.sources.searchQobuzArtists
 import com.annieplayer.annie_music.kt.data.sources.getSongLyrics
 import com.annieplayer.annie_music.kt.data.sources.searchAlbum
 import com.annieplayer.annie_music.kt.data.sources.searchArtist
@@ -70,6 +81,7 @@ data class LyricResult(
 data class RepoAlbumSongs(
     val songs: List<AlbumSong>,
     val pub: String,
+    val qualitySpec: String = "",
 )
 
 /** 歌手单曲结果（对齐 Dart `({List<Song> songs, int total})`） */
@@ -89,8 +101,7 @@ suspend fun fetchPlayUrlBySong(song: Song): String = when (song.platform) {
         song.id.replaceFirst(Regex("^kugou:"), ""),
         if (song.qualities.contains(Quality.k320k)) "320k" else "128k",
     )
-    // qobuz 播放由详情页直接处理（需 token），此处按 kuwo 兜底不应发生
-    MusicPlatform.qobuz -> throw IllegalStateException("qobuz 播放请使用详情页")
+    MusicPlatform.qobuz -> fetchQobuzUrl(song)
     MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoPlayUrl(song.id)
 }
 
@@ -105,8 +116,16 @@ suspend fun fetchDownloadUrlBySong(song: Song, quality: Quality): String = when 
         song.id.replaceFirst(Regex("^kugou:"), ""),
         quality.value,
     )
-    MusicPlatform.qobuz -> throw IllegalStateException("qobuz 下载请使用详情页")
+    MusicPlatform.qobuz -> fetchQobuzUrl(song, quality)
     MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoDownloadUrl(song.id, quality)
+}
+
+/** Qobuz 直链（需 token；[quality] 为空表示播放，取最高档） */
+private suspend fun fetchQobuzUrl(song: Song, quality: Quality? = null): String {
+    val token = qobuzTokenProvider().orEmpty()
+    if (token.isEmpty()) throw IllegalStateException("请先在菜单里配置 Qobuz Token")
+    val formatId = if (quality == null) qobuzHiresFormatId else qobuzQualityFormatId(quality)
+    return getFileUrl(song.id.removePrefix("qobuz:"), token, qualityId = formatId).url
 }
 
 /** 专辑搜索（按平台分发） */
@@ -119,7 +138,12 @@ suspend fun searchAlbumByPlatform(
     MusicPlatform.netease -> searchNeteaseAlbum(query, page = page, pageSize = pageSize)
     MusicPlatform.qq -> searchQQAlbum(query, page = page, pageSize = pageSize)
     MusicPlatform.kugou -> searchKugouAlbum(query, page = page, pageSize = pageSize)
-    MusicPlatform.kuwo, MusicPlatform.kkbox, MusicPlatform.qobuz ->
+    MusicPlatform.qobuz -> searchQobuzAlbums(
+        query,
+        limit = pageSize,
+        offset = (page - 1) * pageSize,
+    )
+    MusicPlatform.kuwo, MusicPlatform.kkbox ->
         searchAlbum(query, page = page, pageSize = pageSize)
 }
 
@@ -131,7 +155,31 @@ suspend fun fetchAlbumSongsByPlatform(
     MusicPlatform.netease -> RepoAlbumSongs(getNeteaseAlbumSongs(albumId), "")
     MusicPlatform.qq -> RepoAlbumSongs(getQQAlbumSongs(albumId), "")
     MusicPlatform.kugou -> RepoAlbumSongs(getKugouAlbumSongs(albumId), "")
-    MusicPlatform.kuwo, MusicPlatform.kkbox, MusicPlatform.qobuz -> {
+    MusicPlatform.qobuz -> {
+        val a = getQobuzAlbum(albumId, "")
+        RepoAlbumSongs(
+            a.tracks.map { t ->
+                AlbumSong(
+                    id = "qobuz:${t.id}",
+                    name = t.title,
+                    artistName = t.artist,
+                    duration = t.duration,
+                    track = if (t.trackNumber > 0) t.trackNumber else null,
+                    discNumber = t.discNumber,
+                    qualities = if (a.hires) {
+                        listOf(Quality.hires, Quality.flac, Quality.k320k)
+                    } else {
+                        listOf(Quality.flac, Quality.k320k)
+                    },
+                    artistNames = t.artistNames,
+                    artistIds = t.artistIds,
+                )
+            },
+            if (a.year > 0) a.year.toString() else "",
+            qobuzQualitySpec(a),
+        )
+    }
+    MusicPlatform.kuwo, MusicPlatform.kkbox -> {
         val r = getAlbumSongs(albumId)
         RepoAlbumSongs(r.songs, r.pub)
     }
@@ -159,7 +207,8 @@ suspend fun fetchArtistAvatarByPlatform(
     MusicPlatform.kugou -> fetchKugouArtistInfo(artistId).avatar
     MusicPlatform.netease -> fetchNeteaseArtistAvatar(artistId)
     MusicPlatform.kuwo -> fetchKuwoArtistAvatar(name)
-    MusicPlatform.kkbox, MusicPlatform.qobuz -> ""
+    MusicPlatform.qobuz -> fetchQobuzArtistPicture(artistId)
+    MusicPlatform.kkbox -> ""
 }
 
 /**
@@ -198,7 +247,8 @@ suspend fun searchArtistByPlatform(
     MusicPlatform.netease -> searchNeteaseArtist(query)
     MusicPlatform.qq -> searchQQArtist(query)
     MusicPlatform.kugou -> searchKugouArtist(query)
-    MusicPlatform.kuwo, MusicPlatform.kkbox, MusicPlatform.qobuz -> searchArtist(query)
+    MusicPlatform.qobuz -> searchQobuzArtists(query)
+    MusicPlatform.kuwo, MusicPlatform.kkbox -> searchArtist(query)
 }
 
 /** 歌手单曲（按平台分发） */
@@ -219,7 +269,11 @@ suspend fun fetchArtistSongsByPlatform(
         val songs = getKugouArtistSongs(artistId)
         RepoArtistSongs(songs, songs.size)
     }
-    MusicPlatform.kuwo, MusicPlatform.kkbox, MusicPlatform.qobuz -> {
+    MusicPlatform.qobuz -> {
+        val p = getQobuzArtistPage(artistId)
+        RepoArtistSongs(p.songs, p.songs.size)
+    }
+    MusicPlatform.kuwo, MusicPlatform.kkbox -> {
         val r = getArtistSongs(artistId, page)
         RepoArtistSongs(r.songs, r.total)
     }
@@ -238,7 +292,8 @@ suspend fun fetchArtistAlbumsByPlatform(
     MusicPlatform.netease -> getNeteaseArtistAlbums(artistId)
     MusicPlatform.qq -> getQQArtistAlbums(artistId, artistName)
     MusicPlatform.kugou -> getKugouArtistAlbums(artistId)
-    MusicPlatform.kuwo, MusicPlatform.kkbox, MusicPlatform.qobuz -> getArtistAlbums(artistId)
+    MusicPlatform.qobuz -> getQobuzArtistPage(artistId).albums
+    MusicPlatform.kuwo, MusicPlatform.kkbox -> getArtistAlbums(artistId)
 }
 
 /**
@@ -333,6 +388,14 @@ suspend fun enrichSong(song: Song): Map<String, Any?> = when (song.platform) {
             "trackNumber" to r.trackNumber,
             "discNumber" to r.discNumber,
             "releaseDate" to r.releaseDate,
+        )
+    }
+    MusicPlatform.qobuz -> {
+        val t = getTrack(song.id.removePrefix("qobuz:"), qobuzTokenProvider().orEmpty())
+        mapOf<String, Any?>(
+            "trackNumber" to t.trackNumber.takeIf { it > 0 }?.toString(),
+            "discNumber" to t.discNumber?.toString(),
+            "releaseDate" to (t.releaseDateOriginal ?: t.year.takeIf { it > 0 }?.toString()),
         )
     }
     MusicPlatform.netease, MusicPlatform.kkbox, MusicPlatform.qobuz -> emptyMap()

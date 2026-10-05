@@ -258,6 +258,7 @@ fun buildAlbumCoverUrl(album: Album): String = when (album.platform) {
         // 搜索接口直接给 picUrl
         _strOr(_firstTruthy(listOf(album.pic, album.img)), "")
     }
+    MusicPlatform.qobuz -> _strOr(_firstTruthy(listOf(album.pic, album.img)), "")
     MusicPlatform.kugou -> {
         // imgurl 带 {size} 占位符
         val raw = _strOr(_firstTruthy(listOf(album.pic, album.img)), "")

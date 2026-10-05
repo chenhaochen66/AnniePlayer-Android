@@ -46,7 +46,9 @@ import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.state.QobuzViewModel
+import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
@@ -55,7 +57,9 @@ import com.annieplayer.annie_music.kt.data.model.QobuzTrack
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.sources.getFileUrl
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityFormatId
 import com.annieplayer.annie_music.kt.data.sources.getQobuzAlbum
+import com.annieplayer.annie_music.kt.data.sources.qobuzTrackToSong
 import com.annieplayer.annie_music.kt.data.sources.getTrack
 import com.annieplayer.annie_music.kt.ui.theme.AppBorder
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
@@ -75,6 +79,7 @@ import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
 import com.annieplayer.annie_music.kt.widgets.clickableRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
+import com.annieplayer.annie_music.kt.widgets.SongMoreGlyph
 import com.annieplayer.annie_music.kt.widgets.glassPanel
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
 import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
@@ -104,6 +109,9 @@ private class QobuzDetailScreenState {
     var artist by mutableStateOf("")
     var year by mutableStateOf(0)
     var label by mutableStateOf("")
+    var maxBitDepth by mutableStateOf<Int?>(null)
+    var maxSamplingRateKhz by mutableStateOf<Double?>(null)
+    var hires by mutableStateOf(false)
     var loading by mutableStateOf(true)
     var error by mutableStateOf("")
     var loadedToken by mutableStateOf<String?>(null)
@@ -119,20 +127,12 @@ private class QobuzDetailScreenState {
 private fun qobuzDetailActiveToken(tokens: List<QobuzToken>): QobuzToken? =
     tokens.firstOrNull { it.isActive } ?: tokens.firstOrNull()
 
-/** `QobuzTrack` -> `Song`（对齐 Dart `_toSong`，id 前缀 `qobuz:`） */
-private fun qobuzDetailToSong(track: QobuzTrack): Song = Song(
-    id = "qobuz:${track.id}",
-    title = track.title,
-    artist = track.artist,
-    cover = track.cover,
-    album = track.album,
-    duration = track.duration,
-    platform = MusicPlatform.qobuz,
-    albumArtist = track.albumArtist,
-    trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
-    discNumber = track.discNumber?.toString(),
-    releaseDate = if (track.year > 0) track.year.toString() else null,
-)
+private fun qobuzRateText(khz: Double): String =
+    if (khz % 1.0 == 0.0) khz.toInt().toString() else khz.toString()
+
+/** `QobuzTrack` -> `Song`（走共享映射；[hires] 决定音质档位） */
+private fun qobuzDetailToSong(track: QobuzTrack, hires: Boolean = false): Song =
+    qobuzTrackToSong(track, hires)
 
 /**
  * Qobuz 详情整页（1:1 移植 Flutter `lib/features/qobuz/qobuz_detail_screen.dart`）。
@@ -158,6 +158,7 @@ private fun qobuzDetailToSong(track: QobuzTrack): Song = Song(
 @Composable
 fun QobuzDetailScreen(
     qobuzViewModel: QobuzViewModel,
+    uiViewModel: UiViewModel = activityViewModel(),
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     onBack: () -> Unit,
@@ -213,6 +214,9 @@ fun QobuzDetailScreen(
                 st.artist = album.artist
                 st.year = album.year
                 st.label = album.label
+                st.maxBitDepth = album.maxBitDepth
+                st.maxSamplingRateKhz = album.maxSamplingRateKhz
+                st.hires = album.hires
             }
             st.loadedToken = token.id
         } catch (e: Exception) {
@@ -262,9 +266,10 @@ fun QobuzDetailScreen(
     fun downloadTrack(track: QobuzTrack) {
         val token = qobuzViewModel.getActiveToken() ?: return
         val songId = "qobuz:${track.id}"
-        val song = qobuzDetailToSong(track)
+        val song = qobuzDetailToSong(track, hires = st.hires)
+        val quality = if (st.hires) Quality.hires else Quality.flac
         st.downloadingId = track.id
-        downloadViewModel.addTask(song, Quality.flac)
+        downloadViewModel.addTask(song, quality)
         enqueueDownload(songId) {
             try {
                 val filePath = qobuzDetailDownloadTrack(
@@ -276,6 +281,7 @@ fun QobuzDetailScreen(
                     updateProgress = { v ->
                         downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
                     },
+                    quality = quality,
                 )
                 downloadViewModel.completeTask(songId, filePath)
                 playerViewModel.addDownloadedId(songId)
@@ -293,7 +299,7 @@ fun QobuzDetailScreen(
         val selected = st.tracks.filter { st.selectedIds.contains(it.id) }
         if (selected.isEmpty()) return
         st.batchDownloading = true
-        for (t in selected) downloadViewModel.addTask(qobuzDetailToSong(t), Quality.flac)
+        for (t in selected) downloadViewModel.addTask(qobuzDetailToSong(t, hires = st.hires), Quality.flac)
         val batchId = "qobuz_batch_${System.currentTimeMillis()}"
         enqueueDownload(batchId) {
             var success = 0
@@ -386,7 +392,12 @@ fun QobuzDetailScreen(
                     palette = palette,
                     playingSongId = playingSongId,
                     onPlay = { play(it) },
-                    onDownload = { downloadTrack(it) },
+                            onDownload = {
+                                uiViewModel.setSongActionsVisible(
+                                    true,
+                                    qobuzDetailToSong(it, hires = st.hires),
+                                )
+                            },
                     onToggleSelect = { tid ->
                         if (!st.selectedIds.remove(tid)) st.selectedIds.add(tid)
                     },
@@ -598,6 +609,19 @@ private fun QobuzDetailListHeader(st: QobuzDetailScreenState) {
             )
             Spacer(modifier = Modifier.height(AppSpacing.sp2))
             Row {
+                val specText = listOfNotNull(
+                    st.maxBitDepth?.let { "${it}bit" },
+                    st.maxSamplingRateKhz?.let { "${qobuzRateText(it)}kHz" },
+                    if (st.hires) "Hi-Res" else null,
+                ).joinToString(" / ")
+                if (specText.isNotEmpty()) {
+                    Text(
+                        text = specText,
+                        modifier = Modifier.padding(end = AppSpacing.sp8),
+                        color = AppColors.whiteA50,
+                        fontSize = AppFontSize.xs,
+                    )
+                }
                 if (st.year > 0) {
                     Text(
                         text = "${st.year}",
@@ -710,7 +734,7 @@ private fun QobuzDetailTrackRow(
                     .padding(AppSpacing.sp4),
                 contentAlignment = Alignment.Center,
             ) {
-                DownloadIconPlaceholder(
+                SongMoreGlyph(
                     modifier = Modifier.size(AppIconSize.icon16),
                     tint = AppColors.textDisabled,
                 )
@@ -719,7 +743,7 @@ private fun QobuzDetailTrackRow(
     }
 }
 
-/** 下载单曲 FLAC（format_id 27），返回最终文件路径（对齐 Dart `_downloadQobuzTrack`） */
+/** 下载单曲（[quality] 决定 format_id），返回最终文件路径 */
 private suspend fun qobuzDetailDownloadTrack(
     context: Context,
     track: QobuzTrack,
@@ -727,8 +751,9 @@ private suspend fun qobuzDetailDownloadTrack(
     token: String,
     pageArtist: String,
     updateProgress: (Double) -> Unit,
+    quality: Quality = Quality.flac,
 ): String {
-    val info = getFileUrl(track.id, token, qualityId = QobuzDetailFormatId)
+    val info = getFileUrl(track.id, token, qualityId = qobuzQualityFormatId(quality))
     val songObj = qobuzDetailToSong(track)
     val lyricResult = fetchLyric(songObj)
     return detailDownloadSong(
@@ -739,7 +764,7 @@ private suspend fun qobuzDetailDownloadTrack(
         coverUrl = track.cover,
         album = track.album,
         downloadUrl = info.url,
-        quality = Quality.flac,
+        quality = quality,
         onProgress = { p -> updateProgress(p * 100.0) },
         lyric = lyricResult.lrc,
         tlyric = lyricResult.tlyric,

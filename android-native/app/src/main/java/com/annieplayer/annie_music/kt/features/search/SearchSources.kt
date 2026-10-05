@@ -19,6 +19,8 @@ enum class SearchSource(
     netease("网易"),
     qq("QQ"),
     kugou("酷狗"),
+    qobuz("Qobuz"),
+    kkbox("KKBOX"),
     ;
 }
 
@@ -48,13 +50,15 @@ val albumSearchPlatforms: List<MusicPlatform> = listOf(
     MusicPlatform.netease,
     MusicPlatform.qq,
     MusicPlatform.kugou,
+    MusicPlatform.qobuz,
 )
 
 /** 歌手搜索支持的平台，与 [albumSearchPlatforms] 同一份列表（对齐 Flutter 复用行为）。 */
 val artistSearchPlatforms: List<MusicPlatform> = albumSearchPlatforms
 
-/** 「搜索选择」面板里可选的分组（只保留两组常用搭配）。 */
+/** 「搜索选择」面板里可选的分组（只保留两组常用搭配 + Qobuz/KBOX 一组，KKBOX 列暂空）。 */
 val sourceGroups: List<SourceGroup> = listOf(
     SourceGroup(SearchSource.kuwo, SearchSource.netease),
     SourceGroup(SearchSource.qq, SearchSource.kugou),
+    SourceGroup(SearchSource.qobuz, SearchSource.kkbox),
 )
