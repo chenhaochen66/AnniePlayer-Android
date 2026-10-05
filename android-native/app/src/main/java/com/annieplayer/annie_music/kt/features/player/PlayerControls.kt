@@ -253,8 +253,7 @@ fun PlayerControlsBar(
                 if (loopMode == LoopMode.single) {
                     Text(
                         text = "1",
-                        // Flutter `Positioned(top:1, right:1)` 是「向内缩 1」，故 x 负、y 正
-                        modifier = Modifier.align(Alignment.TopEnd).offset(x = (-1).dp, y = 1.dp),
+                        modifier = Modifier.align(Alignment.Center),
                         color = AppColors.white70,
                         fontSize = AppFontSize.size9,
                         fontWeight = AppFontWeight.extraBold,

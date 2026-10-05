@@ -138,8 +138,8 @@ fun SearchScreen(
                             onBatch = { batchPickerVisible = true },
                         )
                     }
-                    // 搜索栏（歌单解析 / 国外解析模式隐藏）
-                    if (mode != ModeDropdownMode.qobuz && mode != ModeDropdownMode.playlist) {
+                    // 搜索栏（国外解析模式隐藏）
+                    if (mode != ModeDropdownMode.qobuz) {
                         SearchBarField(
                             value = queryText,
                             onValueChange = { queryText = it },
@@ -201,22 +201,20 @@ fun SearchScreen(
                                 onQobuzSubmit = { handleQobuzSubmit(it) },
                                 onKkboxSubmit = { handleKkboxSubmit(it) },
                             )
-                            ModeDropdownMode.playlist -> HomePlaylistLinkView(
-                                onSubmit = { handlePlaylistSubmit(it) },
-                            )
                         }
                     }
                 }
 
-                // ⇄ 呼出「搜索选择」面板（歌单/国外解析模式隐藏；抽屉/播放页/详情页打开时让位）
-                if (mode != ModeDropdownMode.playlist &&
-                    mode != ModeDropdownMode.qobuz &&
+                // ⇄ 呼出「搜索选择」面板（国外解析模式隐藏；抽屉/播放页/详情页打开时让位）
+                if (mode != ModeDropdownMode.qobuz &&
                     !uiState.drawerVisible &&
                     !uiState.playerOverlayVisible &&
                     qobuzDetailRoute == null &&
                     kkboxDetailRoute == null
                 ) {
                     HomeSourceSwitchButton(
+                        // 按钮上直接显示当前生效的源分组 / 平台名（与「搜索选择」面板选项同源）
+                        label = pickerOptions.getOrNull(pickerIndex) ?: "切换源",
                         onTap = { sourcePickerVisible = true },
                     )
                 }

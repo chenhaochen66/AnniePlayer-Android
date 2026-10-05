@@ -81,6 +81,7 @@ fun QualityPickerSheet(
     onSelect: (Quality) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    labelOf: (Quality) -> String = { it.label },
     avoidMiniPlayer: Boolean = false,
     miniPlayerVisible: Boolean = false,
 ) {
@@ -189,6 +190,7 @@ fun QualityPickerSheet(
                         quality = quality,
                         enabled = visible,
                         onTap = { onSelect(quality) },
+                        labelOf = labelOf,
                     )
                     Spacer(modifier = Modifier.height(AppSpacing.sp8))
                 }
@@ -223,7 +225,12 @@ fun QualityPickerSheet(
 
 /** 音质选项行（对齐 Dart `_OptionRow`：图标 + 标签 / 描述 + 右侧下载角标）。 */
 @Composable
-private fun QualityPickerOptionRow(quality: Quality, enabled: Boolean, onTap: () -> Unit) {
+private fun QualityPickerOptionRow(
+    quality: Quality,
+    enabled: Boolean,
+    onTap: () -> Unit,
+    labelOf: (Quality) -> String,
+) {
     val detail = QualityPickerDetails.getValue(quality)
     val interaction = remember { MutableInteractionSource() }
 
@@ -254,7 +261,7 @@ private fun QualityPickerOptionRow(quality: Quality, enabled: Boolean, onTap: ()
         Spacer(modifier = Modifier.width(AppSpacing.sp14))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = quality.label,
+                text = labelOf(quality),
                 color = AppColors.textPrimary,
                 fontSize = AppFontSize.lg,
                 fontWeight = FontWeight.SemiBold,

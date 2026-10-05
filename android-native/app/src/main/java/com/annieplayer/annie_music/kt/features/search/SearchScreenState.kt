@@ -9,14 +9,12 @@ import androidx.compose.runtime.setValue
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
-import com.annieplayer.annie_music.kt.core.state.PlaylistDetailData
 import com.annieplayer.annie_music.kt.core.state.SearchSelectionViewModel
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.LyricResult
-import com.annieplayer.annie_music.kt.data.PlaylistService
 import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
@@ -35,6 +33,7 @@ import com.annieplayer.annie_music.kt.data.sources.searchKugouMusic
 import com.annieplayer.annie_music.kt.data.sources.searchMusic
 import com.annieplayer.annie_music.kt.data.sources.searchNeteaseMusic
 import com.annieplayer.annie_music.kt.data.sources.searchQQMusic
+import com.annieplayer.annie_music.kt.data.sources.searchQobuzTracks
 import com.annieplayer.annie_music.kt.widgets.SongArtistRef
 import com.annieplayer.annie_music.kt.widgets.SongSearchColumn
 import com.annieplayer.annie_music.kt.widgets.closeOtherDetailOverlays
@@ -105,6 +104,12 @@ class SearchScreenState(
             SearchSource.netease -> searchNeteaseMusic(query, page = page, pageSize = kSearchPageSize)
             SearchSource.qq -> searchQQMusic(query, page = page, pageSize = kSearchPageSize)
             SearchSource.kugou -> searchKugouMusic(query, page = page, pageSize = kSearchPageSize)
+            SearchSource.qobuz -> searchQobuzTracks(
+                query,
+                limit = kSearchPageSize,
+                offset = (page - 1) * kSearchPageSize,
+            )
+            SearchSource.kkbox -> emptyList()
         }
 
     /** 按当前源分组发起双列搜索（两列各自独立返回） */
@@ -209,7 +214,7 @@ class SearchScreenState(
                 artistSubmitted = query
                 startArtistSearch(query)
             }
-            ModeDropdownMode.playlist, ModeDropdownMode.qobuz -> Unit
+            ModeDropdownMode.qobuz -> Unit
         }
     }
 
@@ -265,7 +270,7 @@ class SearchScreenState(
     }
 
     fun handleDownload(song: Song) {
-        uiViewModel.setPicker(true, song = song)
+        uiViewModel.setSongActionsVisible(true, song)
     }
 
     fun handleToggleSelect(song: Song) {
@@ -377,18 +382,6 @@ class SearchScreenState(
         }
         // 对齐 Dart `context.push('/kkbox-detail?type=&id=')`：进入全屏详情页
         kkboxDetailRoute = parsed.type to parsed.id
-    }
-
-    fun handlePlaylistSubmit(text: String) {
-        val parsed = PlaylistService.parsePlaylistUrl(text)
-        if (parsed == null) {
-            scope.launch { snackbarHostState.showSnackbar("未识别到有效的歌单链接或ID") }
-            return
-        }
-        uiViewModel.setPlaylistDetailVisible(
-            true,
-            PlaylistDetailData(id = parsed.id, platform = parsed.platform.name),
-        )
     }
 
     /** ⋮ → 歌手：有 id 直接开；没有则按名字搜索一次（对齐 Dart `openArtistDetail`） */

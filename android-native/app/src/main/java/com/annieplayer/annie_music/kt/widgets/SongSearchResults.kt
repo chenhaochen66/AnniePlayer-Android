@@ -156,7 +156,7 @@ fun SongSearchResults(
     fun loadMore(source: SearchSource) {
         if (loadingMoreBySource[source] == true) return
         val column = columns.firstOrNull { it.source == source } ?: return
-        val hasMore = hasMoreBySource[source] ?: (column.songs.size >= pageSize)
+        val hasMore = hasMoreBySource[source] ?: column.songs.isNotEmpty()
         if (!hasMore) return
 
         loadingMoreBySource[source] = true
@@ -180,8 +180,12 @@ fun SongSearchResults(
             pageBySource[source] = nextPage
             // 按歌曲 id 去重（保留首次出现）：源站翻页常返回与前面页重复的歌曲，
             // 重复 id 传给 items(key=...) 会抛「Key was already used」导致整屏崩溃
-            extrasBySource[source] = (extrasBySource[source].orEmpty() + list).distinctBy { it.id }
-            hasMoreBySource[source] = list.size >= pageSize
+            val before = extrasBySource[source].orEmpty().size
+            val merged = (extrasBySource[source].orEmpty() + list).distinctBy { it.id }
+            extrasBySource[source] = merged
+            // 本页非空且带来新条目才算还有下一页；不能用 size >= pageSize ——
+            // 映射会丢弃部分条目（如酷狗无版权），条数天然少于页大小会误判成到底。
+            hasMoreBySource[source] = list.isNotEmpty() && merged.size > before
         }
     }
 
@@ -334,7 +338,7 @@ private fun SongSearchColumnBody(
         onDownload = onDownload,
         onToggleSelect = onToggleSelect,
         downloadStatusOf = downloadStatusOf,
-        hasMore = hasMoreBySource[column.source] ?: (column.songs.size >= pageSize),
+        hasMore = hasMoreBySource[column.source] ?: column.songs.isNotEmpty(),
         loadingMore = loadingMoreBySource[column.source] == true,
         onLoadMore = { onLoadMore(column.source) },
     )

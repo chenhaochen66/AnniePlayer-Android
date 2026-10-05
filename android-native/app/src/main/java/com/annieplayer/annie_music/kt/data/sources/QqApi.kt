@@ -120,6 +120,15 @@ private fun _neqZero(v: Any?): Boolean = !_isZero(v)
 private fun _normMap(m: Map<*, *>): Map<String, Any?> =
     m.entries.associate { (k, v) -> k.toString() to v }
 
+/** 取嵌套字段：支持 `album.name` 这类路径（新接口把字段收进了子对象） */
+private fun _deep(s: Map<String, Any?>, vararg path: String): Any? {
+    var cur: Any? = s
+    for (key in path) {
+        cur = (cur as? Map<*, *>)?.get(key) ?: return null
+    }
+    return cur
+}
+
 /** 将任意值安全转换为 `Map<String, Any?>?` */
 private fun _toMap(v: Any?): Map<String, Any?>? =
     if (v is Map<*, *>) _normMap(v) else null
@@ -185,13 +194,20 @@ fun mapQQSong(s: Map<String, Any?>): Song {
         .filter { it.isNotEmpty() }
     val singer = artistNames.joinToString(" / ")
 
+    // 新旧字段并存：旧接口平铺，musicu 收进 file.*
     val qual = mutableListOf<Quality>()
-    if (_truthy(s["sizeflac"])) qual.add(Quality.flac)
-    if (_truthy(s["size320"])) qual.add(Quality.k320k)
-    if (_truthy(s["size128"])) qual.add(Quality.k128k)
+    if (_truthy(_firstTruthy(listOf(s["sizeflac"], _deep(s, "file", "size_flac"))))) {
+        qual.add(Quality.flac)
+    }
+    if (_truthy(_firstTruthy(listOf(s["size320"], _deep(s, "file", "size_320mp3"))))) {
+        qual.add(Quality.k320k)
+    }
+    if (_truthy(_firstTruthy(listOf(s["size128"], _deep(s, "file", "size_128mp3"))))) {
+        qual.add(Quality.k128k)
+    }
     if (qual.isEmpty()) qual.add(Quality.k128k)
 
-    val albumMid = _s(s["albummid"])
+    val albumMid = _s(_firstTruthy(listOf(s["albummid"], _deep(s, "album", "mid"))))
     val coverUrl = if (albumMid.isNotEmpty()) {
         "https://y.gtimg.cn/music/photo_new/T002R800x800M000$albumMid.jpg"
     } else {
@@ -199,15 +215,18 @@ fun mapQQSong(s: Map<String, Any?>): Song {
     }
     val artist = decodeHtmlEntities(singer)
 
-    val songmid = _s(s["songmid"])
+    // songmid / songname / albumname：新接口对应 `mid` / `name` / `album.name`
+    val songmid = _s(_firstTruthy(listOf(s["songmid"], s["mid"])))
     val interval = s["interval"]
 
     return Song(
         id = "qq:$songmid",
-        title = decodeHtmlEntities(_or(s["songname"], "未知歌曲")),
+        title = decodeHtmlEntities(_or(_firstTruthy(listOf(s["songname"], s["name"])), "未知歌曲")),
         artist = artist,
         cover = coverUrl,
-        album = decodeHtmlEntities(_s(s["albumname"])),
+        album = decodeHtmlEntities(
+            _s(_firstTruthy(listOf(s["albumname"], _deep(s, "album", "name")))),
+        ),
         albumId = if (albumMid.isNotEmpty()) albumMid else null,
         duration = if (interval is Number) interval.toInt() else 0,
         platform = MusicPlatform.qq,
@@ -390,8 +409,7 @@ suspend fun enrichQQSong(songId: String): QqEnrich {
  * （songmid / songname / singer[0].name / albummid / albumname / interval /
  * size128·320·flac），因此直接复用 [mapQQSong]。
  *
- * [page] 从 1 开始；[pageSize] 每页条数。接口单次最多 60 条（`n > 60` 返回空），
- * 内部按 60 条/次 多次拉取再切片（每页 ≤60 时只需 1 次请求）。
+ * [page] 从 1 开始；[pageSize] 每页条数（单次请求上限 60，超出分多次拉取再切片）。
  */
 suspend fun searchQQMusic(query: String, page: Int = 1, pageSize: Int = 100): List<Song> {
     val q = query.trim()
@@ -422,25 +440,59 @@ suspend fun searchQQMusic(query: String, page: Int = 1, pageSize: Int = 100): Li
     return _mapQQSearchSongs(list)
 }
 
-/** 拉取 QQ 搜索单页原始条目（[pageSize] 不得超过 60） */
+/** 移动端搜索接口（单次 60 条，比旧网页接口快约 3 倍）。 */
+private const val _qqMusicuSearchUrl = "https://u.y.qq.com/cgi-bin/musicu.fcg"
+
+/** musicu `comm.guid`：32 位 hex，进程内随机一次。 */
+private val _qqMusicuGuid: String by lazy {
+    val hex = "0123456789abcdef"
+    (1..32).joinToString("") { hex[(Math.random() * 16).toInt()].toString() }
+}
+
+/**
+ * 拉取 QQ 搜索单页原始条目（[pageSize] ≤ 60）。
+ *
+ * musicu 三个坑：`grp` 必须 "1"（否则 item_song 为空）；`page_num` 必须是数字
+ * （字符串会被忽略、永远第 1 页）；结果在 `body.item_song`，直接是数组、无 `.list`。
+ */
 private suspend fun _fetchQQSearchRawPage(
     query: String,
     page: Int,
     pageSize: Int,
 ): List<Any?> {
-    val url =
-        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp" +
-            "?p=$page&n=$pageSize&w=${_encodeComponent(query)}&format=json"
-    try {
-        val text = httpGetText(url, qqHeaders)
-        val decoded = jsonElementToAny(json.parseToJsonElement(_stripBom(text)))
-        if (decoded !is Map<*, *>) return emptyList()
-        val data = decoded["data"]
-        val song = if (data is Map<*, *>) data["song"] else null
-        val listRaw = if (song is Map<*, *>) song["list"] else null
-        return if (listRaw is List<*>) listRaw else emptyList()
+    val payload = mapOf(
+        "req_0" to mapOf(
+            "module" to "music.search.SearchCgiService",
+            "method" to "DoSearchForQQMusicMobile",
+            "param" to mapOf(
+                "query" to query,
+                "search_type" to "song",
+                "num_per_page" to pageSize,
+                // 必须是数字：字符串会被忽略（永远第 1 页）
+                "page_num" to page,
+                // 必须保留：去掉后 code=0 但 item_song 为空
+                "grp" to "1",
+            ),
+        ),
+        "comm" to mapOf(
+            "guid" to _qqMusicuGuid,
+            "ct" to 19,
+            "cv" to 1914,
+        ),
+    )
+    return try {
+        val data = httpPostJson(_qqMusicuSearchUrl, qqHeaders, payload)
+        val req0 = data["req_0"]
+        val body = if (req0 is Map<*, *>) {
+            val d = req0["data"]
+            if (d is Map<*, *>) d["body"] else null
+        } else {
+            null
+        }
+        val songs = if (body is Map<*, *>) body["item_song"] else null
+        if (songs is List<*>) songs.toList() else emptyList()
     } catch (_: Throwable) {
-        return emptyList()
+        emptyList()
     }
 }
 
@@ -604,8 +656,8 @@ private fun _mapQQArtists(raw: Any?): List<Artist> {
 /**
  * QQ 音乐歌手单曲（musicu `get_singer_detail_info`）。
  *
- * 注意：musicu 的 `SearchCgiService` 返回错误码 500001 且不可用，
- * 搜索一律走 `client_search_cp`，不经过 musicu。
+ * 注意：musicu 的 `get_singer_detail_info` 已不可用（500001）；
+ * 单曲搜索走 `DoSearchForQQMusicMobile`（见 [_fetchQQSearchRawPage]）。
  */
 suspend fun getQQArtistSongs(singerMid: String, limit: Int = 100): List<Song> {
     try {

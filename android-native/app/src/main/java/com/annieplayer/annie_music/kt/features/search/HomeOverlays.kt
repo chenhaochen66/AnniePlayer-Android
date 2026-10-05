@@ -52,6 +52,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppShadow
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.clickableRipple
+import com.annieplayer.annie_music.kt.widgets.glassPanel
 
 /**
  * 首页的零散构件（1:1 移植 Flutter `lib/features/search/home_screen.dart` 内的私有 Widget）：
@@ -178,32 +179,41 @@ internal fun HomePendingDownloadBar(
 }
 
 /**
- * ⇄ 切换搜索源按钮（对齐 Dart `_SourceSwitchButton`）：
- * 48dp 主色方块（圆角 14）+ 自绘 swap_horiz 图标 26dp；右下角（右 16 / 底 100）。
+ * ⇄ 切换搜索源按钮（原「圆形主色 FAB」，现对齐详情页「下载 N 首」的玻璃 pill）。
+ *
+ * 样式：`glassPanel` + [AppRadius.pill]（白 5% 底、无描边无投影），高 44dp
+ * （[AppSize.detailDownloadBarHeight]）、左右内边距 16dp、⇄ 图标 18dp + 当前源文案。
+ * 位置仍在右下角：右 16 / 底 [AppSpacing.sheetBottomInset]（避开迷你播放条）；
+ * 原圆形按钮需让出半个身位（end = 40）才与列表右缘对齐，改成 pill 后改回 16。
+ *
+ * @param label 当前生效的搜索源 / 平台文案（宿主按 `pickerOptions[pickerIndex]` 注入）。
  */
 @Composable
-internal fun BoxScope.HomeSourceSwitchButton(onTap: () -> Unit) {
-    // 圆形 FAB：原先「圆角方块 + 满宽双箭头」显得扁扁的，改成圆形并把图标收小更协调
-    val shape: androidx.compose.ui.graphics.Shape = CircleShape
-    val shadowColor = AppColors.black.copy(alpha = 0.35f)
-    Box(
+internal fun BoxScope.HomeSourceSwitchButton(label: String, onTap: () -> Unit) {
+    Row(
         modifier = Modifier
             .align(Alignment.BottomEnd)
-            // 相对 Flutter 的 right:16 再往左让出「半个按钮」（48/2 = 24dp）→ 16 + 24 = 40dp
-            .padding(end = AppSpacing.sp40, bottom = AppSpacing.sheetBottomInset)
-            .size(AppSize.headerActionHeight)
-            .shadow(
-                elevation = AppShadow.blurXl,
-                shape = shape,
-                clip = false,
-                ambientColor = shadowColor,
-                spotColor = shadowColor,
+            .padding(end = AppSpacing.sp16, bottom = AppSpacing.sheetBottomInset)
+            .height(AppSize.detailDownloadBarHeight)
+            // 玻璃底加深到 surfaceLight @50%（默认白 5% 浮在列表上太透），与底栏同一口径
+            .glassPanel(
+                shape = RoundedCornerShape(AppRadius.pill),
+                tint = AppColors.surfaceLight.copy(alpha = 0.50f),
             )
-            .background(AppColors.primary, shape)
-            .clickableRipple(onTap),
-        contentAlignment = Alignment.Center,
+            .clickableRipple(onTap)
+            .padding(horizontal = AppSpacing.sp16),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        HomeSourceSwitchGlyph(modifier = Modifier.size(AppIconSize.icon24), tint = AppColors.white)
+        HomeSourceSwitchGlyph(modifier = Modifier.size(AppIconSize.icon18), tint = AppColors.white)
+        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+        Text(
+            text = label,
+            color = AppColors.white,
+            fontSize = AppFontSize.base,
+            fontWeight = AppFontWeight.medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

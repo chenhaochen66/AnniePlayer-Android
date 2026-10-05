@@ -8,11 +8,15 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * 宿主屏 tab（Android-only 设计，Flutter 基线无对应实现）。
  *
- * 只有两个 tab：搜索（原首页内容）与本地曲库（占位页）。
+ * 三个 tab：搜索（原首页内容）、歌单解析（从搜索模式迁出的独立页面）、本地曲库（占位页）。
+ * 底栏排布「左上搜索 + 其右侧歌单解析 / 右上本地曲库 / 中间封面」，左右数量不对称是有意为之。
  */
 enum class AppTab {
     /** 搜索（首页） */
     Search,
+
+    /** 歌单解析（粘贴歌单链接 / ID → 打开歌单详情浮层） */
+    PlaylistParse,
 
     /** 本地曲库 */
     Library,

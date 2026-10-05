@@ -56,6 +56,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.LocalLibraryGlyph
 import com.annieplayer.annie_music.kt.widgets.MiniProgressBar
 import com.annieplayer.annie_music.kt.widgets.MovingText
+import com.annieplayer.annie_music.kt.widgets.PlaylistParseGlyph
 import com.annieplayer.annie_music.kt.widgets.SearchGlyph
 import com.annieplayer.annie_music.kt.widgets.VinylRecord
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
@@ -245,6 +246,18 @@ fun AppBottomBar(
                     .padding(start = BottomBarSidePadding)
                     .alpha(1f - morph),
                 icon = { tint -> SearchGlyph(modifier = Modifier.size(AppIconSize.icon22), tint = tint) },
+            )
+            // 搜索右侧：歌单解析 tab（左侧成组排列；迷你态随其它 tab 一起淡出并禁点，
+            // 避免淡出后残留的透明热区截走点击）
+            BottomBarTab(
+                selected = selectedTab == AppTab.PlaylistParse,
+                enabled = !isMiniPlayer,
+                onClick = { onSelectTab(AppTab.PlaylistParse) },
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = BottomBarSidePadding + AppSize.bottomBarTabHitSize)
+                    .alpha(1f - morph),
+                icon = { tint -> PlaylistParseGlyph(modifier = Modifier.size(AppIconSize.icon22), tint = tint) },
             )
             BottomBarTab(
                 selected = selectedTab == AppTab.Library,

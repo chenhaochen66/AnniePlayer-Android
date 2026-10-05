@@ -435,3 +435,29 @@ fun LocalLibraryGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) 
         )
     }
 }
+
+/**
+ * 「歌单解析」glyph（底栏搜索右侧 tab 图标，自绘）。
+ *
+ * 语义拆解：左侧三行 = 歌单条目，右侧向下箭头 = 「解析 / 导入进来」；与 [SearchGlyph]、
+ * [LocalLibraryGlyph] 共用 [GlyphStrokeRatio] 的圆头笔画，三个图形并排粗细一致。
+ */
+@Composable
+fun PlaylistParseGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * GlyphStrokeRatio
+
+        // 歌单条目：三行短线（长度参差，读起来像「条目」而非「汉堡菜单」）
+        drawLine(tint, Offset(w * 0.14f, h * 0.30f), Offset(w * 0.50f, h * 0.30f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.14f, h * 0.50f), Offset(w * 0.44f, h * 0.50f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.14f, h * 0.70f), Offset(w * 0.50f, h * 0.70f), stroke, StrokeCap.Round)
+
+        // 解析箭头：竖干 + 箭头（端点圆头，与其它 glyph 一致）
+        val arrowX = w * 0.76f
+        drawLine(tint, Offset(arrowX, h * 0.28f), Offset(arrowX, h * 0.66f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(arrowX - w * 0.14f, h * 0.52f), Offset(arrowX, h * 0.66f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(arrowX + w * 0.14f, h * 0.52f), Offset(arrowX, h * 0.66f), stroke, StrokeCap.Round)
+    }
+}
