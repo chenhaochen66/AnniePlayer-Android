@@ -2,10 +2,13 @@ package com.annieplayer.annie_music.kt.widgets
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,8 +31,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -54,6 +60,10 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,10 +96,13 @@ import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
 import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
+import com.annieplayer.annie_music.kt.ui.theme.AppBorder
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
+import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppEasing
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
+import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
 import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
@@ -105,8 +118,8 @@ import okhttp3.Request
  * 歌手详情浮层（1:1 移植 Flutter `lib/widgets/singer_detail_sheet.dart`，对齐 RN 版
  * components/SingerDetailOverlay.tsx）。
  *
- * 结构（自上而下）：返回条 → 歌手头像 / 名字 / 歌曲数 → （多选时）待下载选择条 →
- * 「歌曲 / 专辑」分段 → 内容区（分页歌曲列表，或 2 列专辑网格）。
+ * 结构（自上而下）：返回条（多选时含三态全选 + 多选 / 取消 chip）→ 歌手头像 / 名字 / 歌曲数 →
+ * （多选时）批量下载条 [MultiSelectDownloadBar] →「歌曲 / 专辑」分段 → 内容区（分页歌曲列表，或 2 列专辑网格）。
  *
  * 关键行为：
  * - 每次以 `data.id` 为 key 重建内部状态（对应 Flutter 的 ValueKey）。
@@ -166,11 +179,17 @@ private class SingerDetailState {
 
     val selectedSongs = mutableStateListOf<Song>()
 
+    /** 多选模式显式开关（长按行或头部「多选」chip 进入；「取消」/ 批量下载完成后退出）。 */
+    var selectMode by mutableStateOf(false)
+
     var pickerVisible by mutableStateOf(false)
     var pickerSong by mutableStateOf<Song?>(null)
     var downloadingId by mutableStateOf<String?>(null)
     var batchPickerVisible by mutableStateOf(false)
     var batchDownloading by mutableStateOf(false)
+
+    /** 批量下载进度文案（[MultiSelectDownloadBar] 下载中展示，形如 `3/12 歌名`）。 */
+    var batchProgress by mutableStateOf("")
 
     var avatarUrl by mutableStateOf("")
 }
@@ -237,12 +256,40 @@ private fun SingerDetailContent(
     fun switchTab(tab: String) {
         if (st.tab == tab) return
         st.tab = tab
-        if (tab == "album") scope.launch { loadAlbums() }
+        if (tab == "album") {
+                // 切到「专辑」分页时退出多选：该分页没有歌曲可选，留着多选态会出现
+                // 「能进多选但没有可选项」的空壳状态（真机反馈）。
+                st.selectMode = false
+                st.selectedSongs.clear()
+                scope.launch { loadAlbums() }
+            }
     }
 
     fun toggleSelect(song: Song) {
         val idx = st.selectedSongs.indexOfFirst { it.id == song.id }
         if (idx >= 0) st.selectedSongs.removeAt(idx) else st.selectedSongs.add(song)
+    }
+
+    /** 全选 / 取消全选当前页歌曲（半选态点击同样走「补齐为全选」分支）。 */
+    fun toggleSelectAll() {
+        if (singerDetailAllSelected(st.songs, st.selectedSongs)) {
+            val pageIds = st.songs.map { it.id }.toSet()
+            st.selectedSongs.removeAll { it.id in pageIds }
+        } else {
+            for (s in st.songs) {
+                if (st.selectedSongs.none { it.id == s.id }) st.selectedSongs.add(s)
+            }
+        }
+    }
+
+    /** 进入 / 退出多选；退出时连同已选歌曲一并清空（等价原「清空」的观感）。 */
+    fun toggleSelectMode() {
+        if (st.selectMode) {
+            st.selectMode = false
+            st.selectedSongs.clear()
+        } else {
+            st.selectMode = true
+        }
     }
 
     fun openPicker(song: Song) {
@@ -323,7 +370,9 @@ private fun SingerDetailContent(
         st.batchDownloading = true
         val songs = st.selectedSongs.toList()
         for (s in songs) downloadViewModel.addTask(s, quality)
-        for (song in songs) {
+        for ((i, song) in songs.withIndex()) {
+            // 只补 UI 进度文案（下载流程本身与原来一致）
+            st.batchProgress = "${i + 1}/${songs.size} ${song.title}"
             try {
                 val url = fetchDownloadUrlBySong(song, quality)
                 val lyric = fetchLyric(song)
@@ -353,7 +402,9 @@ private fun SingerDetailContent(
             }
         }
         st.batchDownloading = false
+        st.batchProgress = ""
         st.selectedSongs.clear()
+        st.selectMode = false
     }
 
     LaunchedEffect(Unit) {
@@ -401,30 +452,108 @@ private fun SingerDetailContent(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                // 吞掉面板空白处的点击：本浮层盖在歌手搜索结果之上，若不吞，未命中可点子元素的
+                // 触摸会**漏给下层列表**（真机复现：点「待下载歌曲」那片区域跳到了下一个歌手）。
+                // 与专辑详情面板同一套做法（见 AlbumDetailSheet）。
+                .clickableNoRipple { }
                 .graphicsLayer { translationY = slide.value * size.height },
         ) {
-            // ── 背景：正在播放歌曲的封面取色氛围（sheen = true，与详情页一致的液态玻璃高光） ──
+            // ── 背景：液态玻璃质感保留，但底色**不跟随当前播放封面**（用户要求）
+            // —— 固定品牌色板 + sheen 高光，coverUrl = null。
             CoverPaletteBackdrop(
                 sheen = true,
-                coverUrl = playerState.currentSong?.cover,
-                palette = colorState.colors,
+                coverUrl = null,
+                palette = ColorPalette.fallback,
                 modifier = Modifier.fillMaxSize(),
             )
             Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
-                SingerDetailHeader(onClose = { uiViewModel.setSingerDetailVisible(false) })
+                SingerDetailHeader(
+                    // 仅在「歌曲」分页显示多选入口：专辑分页没有歌曲可选（真机反馈）
+                    showSelectEntry = st.tab == "song",
+                    selectMode = st.tab == "song" && st.selectMode,
+                    triState = if (st.tab == "song" && st.selectMode) {
+                        singerDetailTriState(st.songs, st.selectedSongs)
+                    } else {
+                        null
+                    },
+                    onClose = { uiViewModel.setSingerDetailVisible(false) },
+                    onToggleSelectAll = { toggleSelectAll() },
+                    onToggleSelectMode = { toggleSelectMode() },
+                )
                 SingerDetailArtistInfo(
                     name = artistName,
                     songTotal = st.songTotal,
                     avatarUrl = st.avatarUrl.ifEmpty { data.picture },
                     avatarKey = data.id,
                 )
-                if (st.tab == "song" && st.selectedSongs.isNotEmpty()) {
-                    SingerDetailSelectionBar(
-                        count = st.selectedSongs.size,
-                        batchDownloading = st.batchDownloading,
-                        onClear = { st.selectedSongs.clear() },
-                        onBatch = { st.batchPickerVisible = true },
-                    )
+                if (st.tab == "song" && st.selectMode) {
+                    // 待下载选择条（对齐 Dart `_selectionBar`）：数量徽标 + 「待下载歌曲」+
+                    // 清空 + 下载全部。样式与新的视觉语言一致（玻璃条 + 主色动作按钮），
+                    // 进度文案沿用 `st.batchProgress`（形如 `3/12 歌名`）。
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = AppSpacing.sp16, end = AppSpacing.sp16, bottom = AppSpacing.sp8)
+                            .glassPanel(RoundedCornerShape(AppRadius.panel), elevated = false)
+                            .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp14),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(AppSpacing.sp22)
+                                .clip(CircleShape)
+                                .background(AppColors.primary),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "${st.selectedSongs.size}",
+                                color = AppColors.white,
+                                fontSize = AppFontSize.xs,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(AppSpacing.sp6))
+                        Text(
+                            text = "待下载歌曲",
+                            modifier = Modifier.weight(1f),
+                            color = AppColors.white70,
+                            fontSize = AppFontSize.size13,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clickableRipple { st.selectedSongs.clear() }
+                                .padding(AppSpacing.sp4),
+                        ) {
+                            Text(text = "清空", color = AppColors.textTertiary, fontSize = AppFontSize.sm)
+                        }
+                        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+                        Box(
+                            modifier = Modifier
+                                .graphicsLayer { alpha = if (st.batchDownloading) 0.5f else 1f }
+                                .clip(RoundedCornerShape(AppRadius.r10))
+                                .background(AppColors.primary)
+                                .then(
+                                    if (st.batchDownloading) {
+                                        Modifier
+                                    } else {
+                                        Modifier.clickableRipple { st.batchPickerVisible = true }
+                                    },
+                                )
+                                .padding(vertical = AppSpacing.sp8, horizontal = AppSpacing.sp16),
+                        ) {
+                            Text(
+                                text = when {
+                                    st.batchDownloading && st.batchProgress.isNotEmpty() -> st.batchProgress
+                                    st.batchDownloading -> "下载中..."
+                                    else -> "下载全部"
+                                },
+                                color = AppColors.white,
+                                fontSize = AppFontSize.sm,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
                 }
                 SingerDetailTabBar(tab = st.tab, onSwitch = { switchTab(it) })
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -453,25 +582,40 @@ private fun SingerDetailContent(
         }
 
         // ── 音质选择器（单曲 / 批量，复用 QualityPickerSheet） ──
-        QualityPickerSheet(
-            visible = st.pickerVisible,
-            qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
-            onSelect = { q -> scope.launch { downloadWithQuality(q) } },
-            onCancel = {
-                st.pickerVisible = false
-                st.pickerSong = null
-            },
-            avoidMiniPlayer = true,
-            miniPlayerVisible = playerState.currentSong != null && !uiState.playerOverlayVisible,
-        )
-        QualityPickerSheet(
-            visible = st.batchPickerVisible,
-            qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
-            onSelect = { q -> scope.launch { batchDownload(q) } },
-            onCancel = { st.batchPickerVisible = false },
-            avoidMiniPlayer = true,
-            miniPlayerVisible = playerState.currentSong != null && !uiState.playerOverlayVisible,
-        )
+        // 面板内容交给 AppShell 在「迷你播放条之上」渲染（见 DetailQualityPickerHost 注释）；
+        // 无宿主时退化为内联渲染，行为不变。
+        val pickerHost = LocalDetailQualityPickerHost.current
+        val pickerOwner = remember { Any() }
+        val pickerPanel: @Composable () -> Unit = {
+            QualityPickerSheet(
+                visible = st.pickerVisible,
+                qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                onSelect = { q -> scope.launch { downloadWithQuality(q) } },
+                onCancel = {
+                    st.pickerVisible = false
+                    st.pickerSong = null
+                },
+            )
+            QualityPickerSheet(
+                visible = st.batchPickerVisible,
+                qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                onSelect = { q -> scope.launch { batchDownload(q) } },
+                onCancel = { st.batchPickerVisible = false },
+            )
+        }
+        if (pickerHost == null) {
+            pickerPanel()
+        } else {
+            // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
+            SideEffect {
+                if (st.pickerVisible || st.batchPickerVisible) {
+                    pickerHost.show(pickerOwner, pickerPanel)
+                }
+            }
+            DisposableEffect(pickerOwner) {
+                onDispose { pickerHost.clear(pickerOwner) }
+            }
+        }
 
         // ── 「正在下载」轻提示 ──
         val downloadingId = st.downloadingId
@@ -509,6 +653,17 @@ private fun singerDetailSongTitleOf(st: SingerDetailState, id: String): String {
     return if (idx >= 0) st.songs[idx].title else "..."
 }
 
+/** 当前页歌曲是否全部已选（头部三态全选用；空列表视为未全选）。 */
+private fun singerDetailAllSelected(pageSongs: List<Song>, selected: List<Song>): Boolean =
+    pageSongs.isNotEmpty() && pageSongs.all { s -> selected.any { it.id == s.id } }
+
+/** 当前页歌曲的三态（全选 / 部分选中 / 未选），供头部 [SingerDetailTriStateCheckBox] 使用。 */
+private fun singerDetailTriState(pageSongs: List<Song>, selected: List<Song>): SingerDetailTriState = when {
+    singerDetailAllSelected(pageSongs, selected) -> SingerDetailTriState.Checked
+    pageSongs.any { s -> selected.any { it.id == s.id } } -> SingerDetailTriState.Indeterminate
+    else -> SingerDetailTriState.Unchecked
+}
+
 /** 页段算法（对齐 Dart `_pageRange` / RN getPageRange） */
 private fun singerDetailPageRange(current: Int, total: Int): List<Any> {
     if (total <= 7) return (1..total).toList()
@@ -540,9 +695,19 @@ private fun singerDetailPageRange(current: Int, total: Int): List<Any> {
 // 头部与信息区
 // ================================================================================================
 
-/** 返回条：chevron_left 22 + 「歌手详情」16 w600（对齐 Dart `_header`） */
+/**
+ * 返回条：chevron_left 22 + 「歌手详情」16 w600 +（多选时）三态全选 + 多选 / 取消玻璃 chip
+ * （对齐 Dart `_header`；控件样式见 [SingerDetailTriStateCheckBox] / [SingerDetailSelectChip]）。
+ */
 @Composable
-private fun SingerDetailHeader(onClose: () -> Unit) {
+private fun SingerDetailHeader(
+    selectMode: Boolean,
+    triState: SingerDetailTriState?,
+    showSelectEntry: Boolean,
+    onClose: () -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onToggleSelectMode: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -567,6 +732,20 @@ private fun SingerDetailHeader(onClose: () -> Unit) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        if (triState != null) {
+            SingerDetailTriStateCheckBox(
+                state = triState,
+                onToggle = onToggleSelectAll,
+            )
+            Spacer(modifier = Modifier.width(AppSpacing.sp4))
+        }
+        // 专辑分页没有歌曲可选 → 整颗隐藏多选入口（不是只把它显示成「多选」）
+        if (showSelectEntry) {
+            SingerDetailSelectChip(
+                selectMode = selectMode,
+                onToggle = onToggleSelectMode,
+            )
+        }
     }
 }
 
@@ -620,67 +799,128 @@ private fun SingerDetailArtistInfo(
     }
 }
 
-/** 待下载选择条（对齐 Dart `_selectionBar`） */
+/** 头部全选控件三态：未选 / 部分选中 / 全选。 */
+private enum class SingerDetailTriState { Unchecked, Indeterminate, Checked }
+
+/** 三态复选缩放：未选中静置 0.85（与共享 `DetailCheckBox` 的弹一下反馈同规格）。 */
+private const val SingerDetailCheckRestScale = 0.85f
+
+/** 三态复选缩放：已选（含半选）静置 1.0。 */
+private const val SingerDetailCheckCheckedScale = 1f
+
+/**
+ * 头部「多选 / 取消」入口：玻璃描边 chip（自绘图标 + 文案，48dp 命中区）。
+ *
+ * 视觉：玻璃底（[glassPanel]，无投影）+ 1px [AppColors.primary] 描边 + primary 图标 / 文案
+ * —— 与分段选中态同一套「玻璃 + 描边 + 主色文字」语言，不用实心主色块。
+ * 未进入多选显示「多选」+ checklist 图标；进入后显示「取消」+ 关闭叉。
+ * 交互：点击涟漪（[clickableRipple]）+ 轻触觉（[HapticFeedbackType.TextHandleMove]）。
+ */
 @Composable
-private fun SingerDetailSelectionBar(
-    count: Int,
-    batchDownloading: Boolean,
-    onClear: () -> Unit,
-    onBatch: () -> Unit,
+private fun SingerDetailSelectChip(
+    selectMode: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = AppSpacing.sp16, end = AppSpacing.sp16, bottom = AppSpacing.sp8)
-            .clip(RoundedCornerShape(AppRadius.panel))
-            .background(AppColors.primaryA08)
-            .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp14),
-        verticalAlignment = Alignment.CenterVertically,
+    val haptics = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(AppRadius.pill)
+    Box(
+        modifier = modifier
+            // 命中区 ≥48dp（与 DetailCheckBox / MultiSelectDownloadBar 同一约定）
+            .minimumInteractiveComponentSize()
+            .clip(shape)
+            .clickableRipple {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onToggle()
+            }
+            .semantics { role = Role.Button },
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .glassPanel(shape = shape, elevated = false)
+                .border(AppBorder.thin, AppColors.primary, shape)
+                .padding(horizontal = AppSpacing.sp10, vertical = AppSpacing.sp6),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selectMode) {
+                SingerDetailCloseGlyph(modifier = Modifier.size(AppIconSize.icon16), tint = AppColors.primary)
+            } else {
+                SingerDetailMultiSelectGlyph(modifier = Modifier.size(AppIconSize.icon16), tint = AppColors.primary)
+            }
+            Spacer(modifier = Modifier.width(AppSpacing.sp4))
+            Text(
+                text = if (selectMode) "取消" else "多选",
+                color = AppColors.primary,
+                fontSize = AppFontSize.size13,
+                fontWeight = AppFontWeight.medium,
+            )
+        }
+    }
+}
+
+/**
+ * 本页私有三态复选控件（头部全选）：空框 / 半选横杠 / primary 实心对勾。
+ *
+ * 为什么不复用共享 [DetailCheckBox]：后者只有「未选 / 全选」两态，无法表达部分选中。
+ * 按约定不改共享文件，这里以同一视觉规格（18dp 视觉 [AppSize.detailCheckBoxSize]、r4 圆角、
+ * 1.5dp 等效描边、primary 实心 + [AppColors.background] 勾 / 横杠、0.85 → 1.0 缩放）实现三态版；
+ * 空框与对勾直接复用共享件 [DetailCheckBoxBlank] / [DetailCheckMark]，保证笔重一致。
+ *
+ * 交互：点击在「全选 ⇄ 清空」间切换（半选视作未全选，点击补齐为全选），
+ * 涟漪（[clickableRipple]）+ 轻触觉；命中区由 [minimumInteractiveComponentSize] 预留到 48dp。
+ * 无障碍：`contentDescription` 随状态给出（「全选」/「取消全选」），[Role.Checkbox]。
+ */
+@Composable
+private fun SingerDetailTriStateCheckBox(
+    state: SingerDetailTriState,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = LocalHapticFeedback.current
+    val checked = state != SingerDetailTriState.Unchecked
+    val scale by animateFloatAsState(
+        targetValue = if (checked) SingerDetailCheckCheckedScale else SingerDetailCheckRestScale,
+        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
+        label = "singerDetailTriStateScale",
+    )
+    Box(
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .clip(RoundedCornerShape(AppRadius.r8))
+            .clickableRipple {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onToggle()
+            }
+            .semantics {
+                contentDescription = if (state == SingerDetailTriState.Checked) "取消全选" else "全选"
+                role = Role.Checkbox
+            },
+        contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .size(AppSpacing.sp22)
-                .clip(CircleShape)
-                .background(AppColors.primary),
-            contentAlignment = Alignment.Center,
+                .size(AppSize.detailCheckBoxSize)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                },
         ) {
-            Text(
-                text = "$count",
-                color = AppColors.white,
-                fontSize = AppFontSize.xs,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-        Spacer(modifier = Modifier.width(AppSpacing.sp6))
-        Text(
-            text = "待下载歌曲",
-            modifier = Modifier.weight(1f),
-            color = AppColors.white70,
-            fontSize = AppFontSize.size13,
-            fontWeight = FontWeight.Medium,
-        )
-        Box(
-            modifier = Modifier
-                .clickableRipple(onClear)
-                .padding(AppSpacing.sp4),
-        ) {
-            Text(text = "清空", color = AppColors.textTertiary, fontSize = AppFontSize.sm)
-        }
-        Spacer(modifier = Modifier.width(AppSpacing.sp8))
-        Box(
-            modifier = Modifier
-                .graphicsLayer { alpha = if (batchDownloading) 0.5f else 1f }
-                .clip(RoundedCornerShape(AppRadius.r10))
-                .background(AppColors.primary)
-                .then(if (batchDownloading) Modifier else Modifier.clickableRipple(onBatch))
-                .padding(vertical = AppSpacing.sp8, horizontal = AppSpacing.sp16),
-        ) {
-            Text(
-                text = if (batchDownloading) "下载中..." else "下载全部",
-                color = AppColors.white,
-                fontSize = AppFontSize.sm,
-                fontWeight = FontWeight.SemiBold,
-            )
+            when (state) {
+                SingerDetailTriState.Checked -> {
+                    Box(Modifier.fillMaxSize().background(AppColors.primary, RoundedCornerShape(AppRadius.r4)))
+                    DetailCheckMark(modifier = Modifier.fillMaxSize(), tint = AppColors.background)
+                }
+
+                SingerDetailTriState.Indeterminate -> {
+                    Box(Modifier.fillMaxSize().background(AppColors.primary, RoundedCornerShape(AppRadius.r4)))
+                    SingerDetailDashMark(modifier = Modifier.fillMaxSize(), tint = AppColors.background)
+                }
+
+                SingerDetailTriState.Unchecked -> {
+                    DetailCheckBoxBlank(modifier = Modifier.fillMaxSize(), tint = AppColors.textTertiary)
+                }
+            }
         }
     }
 }
@@ -709,6 +949,12 @@ private fun SingerDetailTabBar(tab: String, onSwitch: (String) -> Unit) {
     }
 }
 
+/**
+ * 分段按钮：选中态 = 玻璃底 + 1px primary 描边 + primary 文字（不再用实心主色块）。
+ *
+ * 切换动效 260ms（借用 [AppDuration.bottomBarMorph] 的值，与底栏两态切换同规格）：
+ * 玻璃层透明度 / 描边色 / 文字色三通道同时过渡；点击有涟漪 + 轻触觉。
+ */
 @Composable
 private fun SingerDetailTabButton(
     label: String,
@@ -716,17 +962,50 @@ private fun SingerDetailTabButton(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val haptics = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(AppRadius.r8)
+    val glassAlpha by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(durationMillis = AppDuration.bottomBarMorph, easing = AppEasing.easeInOutQuad),
+        label = "singerDetailTabGlass",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (active) AppColors.primary else Color.Transparent,
+        animationSpec = tween(durationMillis = AppDuration.bottomBarMorph, easing = AppEasing.easeInOutQuad),
+        label = "singerDetailTabBorder",
+    )
+    val labelColor by animateColorAsState(
+        targetValue = if (active) AppColors.primary else AppColors.textTertiary,
+        animationSpec = tween(durationMillis = AppDuration.bottomBarMorph, easing = AppEasing.easeInOutQuad),
+        label = "singerDetailTabLabel",
+    )
     Box(
         modifier = modifier
             .height(34.dp)
-            .clip(RoundedCornerShape(AppRadius.r8))
-            .background(if (active) AppColors.primary else AppColors.whiteA04)
-            .clickableRipple(onTap),
+            .clip(shape)
+            .background(AppColors.whiteA04)
+            .clickableRipple {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onTap()
+            },
         contentAlignment = Alignment.Center,
     ) {
+        // 选中玻璃层：透明度随切换淡入 / 淡出（无投影，避免与背景氛围叠加发糊）
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = glassAlpha }
+                .glassPanel(shape = shape, elevated = false),
+        )
+        // 1px primary 描边：只在选中时出现（颜色透明 → primary 过渡）
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .border(AppBorder.thin, borderColor, shape),
+        )
         Text(
             text = label,
-            color = if (active) AppColors.white else AppColors.textTertiary,
+            color = labelColor,
             fontSize = AppFontSize.size13,
             fontWeight = FontWeight.SemiBold,
         )
@@ -799,10 +1078,15 @@ private fun SingerDetailSongs(
                         isActive = activeSongId == song.id,
                         isDownloading = isDownloading,
                         selected = st.selectedSongs.any { it.id == song.id },
-                        selectionMode = st.selectedSongs.isNotEmpty(),
+                        selectionMode = st.selectMode,
                         onPlay = onPlay,
                         onDownload = onDownload,
                         onToggle = onToggle,
+                        onLongSelect = { longPressed ->
+                            // 长按 = 进入多选并选中该行（「已选中不重复触发」逻辑在行内保留）
+                            st.selectMode = true
+                            onToggle(longPressed)
+                        },
                     )
                 }
                 if (showPagination) {
@@ -820,7 +1104,7 @@ private fun SingerDetailSongs(
     }
 }
 
-/** 歌曲行：右滑多选 + 点击播放 + 行尾下载（对齐 Dart `_SingerSongRow`） */
+/** 歌曲行：长按进多选 + 点击播放 + 行尾下载（对齐 Dart `_SingerSongRow`） */
 @Composable
 private fun SingerDetailSongRow(
     song: Song,
@@ -832,6 +1116,7 @@ private fun SingerDetailSongRow(
     onPlay: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onToggle: (Song) -> Unit,
+    onLongSelect: (Song) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     val rowBg = when {
@@ -840,7 +1125,14 @@ private fun SingerDetailSongRow(
         else -> Color.Transparent
     }
 
-    Row(modifier = Modifier.fillMaxWidth()) {
+    // 以专辑详情行为基准对齐：右侧预留 sp16（与专辑行 padding 一致），
+    // 并让下载按钮在整个行高内垂直居中（原先默认顶对齐，视觉偏上）。
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(end = AppSpacing.sp16),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -852,7 +1144,7 @@ private fun SingerDetailSongRow(
                         // 对齐 Dart：已选中时长按不再触发（不重复震动 / 不取消选中）
                         if (!selected) {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onToggle(song)
+                            onLongSelect(song)
                         }
                     },
                 )
@@ -914,7 +1206,8 @@ private fun SingerDetailSongRow(
             Box(
                 modifier = Modifier
                     .clickableRipple { onDownload(song) }
-                    .padding(AppSpacing.sp6),
+                    // 内边距对齐专辑详情行（sp4），配合外层 sp16 → 图标右缘距屏 20dp，与专辑一致
+                    .padding(AppSpacing.sp4),
                 contentAlignment = Alignment.Center,
             ) {
                 if (isDownloading) {
@@ -1387,6 +1680,47 @@ private fun SingerDetailMusicNote(modifier: Modifier = Modifier, tint: Color = A
         drawCircle(color = tint, radius = w * 0.20f, center = Offset(w * 0.44f, h * 0.70f))
         // 符尾
         drawLine(tint, Offset(w * 0.64f, h * 0.12f), Offset(w * 0.88f, h * 0.26f), stroke, StrokeCap.Round)
+    }
+}
+
+/** checklist：头部「多选」入口图标（两行「勾 + 线」，本页统一 2dp 圆头笔画） */
+@Composable
+private fun SingerDetailMultiSelectGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.primary) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = SingerDetailIconStroke.toPx()
+        // 上排：勾 + 线
+        drawLine(tint, Offset(w * 0.08f, h * 0.24f), Offset(w * 0.20f, h * 0.36f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.20f, h * 0.36f), Offset(w * 0.40f, h * 0.12f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.52f, h * 0.26f), Offset(w * 0.92f, h * 0.26f), stroke, StrokeCap.Round)
+        // 下排：勾 + 线
+        drawLine(tint, Offset(w * 0.08f, h * 0.70f), Offset(w * 0.20f, h * 0.82f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.20f, h * 0.82f), Offset(w * 0.40f, h * 0.58f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.52f, h * 0.74f), Offset(w * 0.92f, h * 0.74f), stroke, StrokeCap.Round)
+    }
+}
+
+/** close：头部「取消」态图标（×，本页统一 2dp 圆头笔画） */
+@Composable
+private fun SingerDetailCloseGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.primary) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = SingerDetailIconStroke.toPx()
+        drawLine(tint, Offset(w * 0.24f, h * 0.24f), Offset(w * 0.76f, h * 0.76f), stroke, StrokeCap.Round)
+        drawLine(tint, Offset(w * 0.76f, h * 0.24f), Offset(w * 0.24f, h * 0.76f), stroke, StrokeCap.Round)
+    }
+}
+
+/** remove：三态半选横杠（本页统一 2dp 圆头笔画） */
+@Composable
+private fun SingerDetailDashMark(modifier: Modifier = Modifier, tint: Color = AppColors.background) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = SingerDetailIconStroke.toPx()
+        drawLine(tint, Offset(w * 0.26f, h * 0.5f), Offset(w * 0.74f, h * 0.5f), stroke, StrokeCap.Round)
     }
 }
 

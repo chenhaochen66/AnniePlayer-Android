@@ -24,7 +24,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -73,6 +75,7 @@ import com.annieplayer.annie_music.kt.widgets.DetailCheckBox
 import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
 import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
 import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
+import com.annieplayer.annie_music.kt.widgets.LocalDetailQualityPickerHost
 import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
@@ -354,25 +357,42 @@ fun AlbumDetailScreen(
             )
         }
 
-        QualityPickerSheet(
-            visible = st.pickerVisible,
-            qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
-            onSelect = { quality ->
-                val target = st.pickerSong
-                st.pickerVisible = false
-                st.pickerSong = null
-                if (target != null) {
-                    startSingleDownload(target, quality)
-                } else if (!st.batchDownloading) {
-                    val selected = st.songs.filter { st.selectedIds.contains(it.id) }
-                    if (selected.isNotEmpty()) startBatchDownload(selected, quality)
-                }
-            },
-            onCancel = {
-                st.pickerVisible = false
-                st.pickerSong = null
-            },
-        )
+        // ── 音质选择器 ──
+        // 面板内容交给 AppShell 在「迷你播放条之上」渲染（见 DetailQualityPickerHost 注释）；
+        // 本页当前未接入宿主时退化为内联渲染，行为不变。
+        val pickerHost = LocalDetailQualityPickerHost.current
+        val pickerOwner = remember { Any() }
+        val pickerPanel: @Composable () -> Unit = {
+            QualityPickerSheet(
+                visible = st.pickerVisible,
+                qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                onSelect = { quality ->
+                    val target = st.pickerSong
+                    st.pickerVisible = false
+                    st.pickerSong = null
+                    if (target != null) {
+                        startSingleDownload(target, quality)
+                    } else if (!st.batchDownloading) {
+                        val selected = st.songs.filter { st.selectedIds.contains(it.id) }
+                        if (selected.isNotEmpty()) startBatchDownload(selected, quality)
+                    }
+                },
+                onCancel = {
+                    st.pickerVisible = false
+                    st.pickerSong = null
+                },
+            )
+        }
+        if (pickerHost == null) {
+            pickerPanel()
+        } else {
+            SideEffect {
+                if (st.pickerVisible) pickerHost.show(pickerOwner, pickerPanel)
+            }
+            DisposableEffect(pickerOwner) {
+                onDispose { pickerHost.clear(pickerOwner) }
+            }
+        }
     }
 }
 

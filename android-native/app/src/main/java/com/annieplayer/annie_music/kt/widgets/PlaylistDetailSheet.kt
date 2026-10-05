@@ -24,7 +24,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -418,27 +420,43 @@ private fun PlaylistDetailContent(
             }
         }
 
-        // ── 音质选择器（复用 QualityPickerSheet；单曲按歌曲支持档位） ──
-        QualityPickerSheet(
-            visible = st.pickerVisible,
-            qualities = st.pickerSong?.qualities ?: emptyList(),
-            onSelect = { q -> scope.launch { downloadWithQuality(q) } },
-            onCancel = {
-                st.pickerVisible = false
-                st.pickerSong = null
-            },
-            avoidMiniPlayer = true,
-            miniPlayerVisible = playerState.currentSong != null && !uiState.playerOverlayVisible,
-        )
-        // ── 音质选择器（批量：固定三档） ──
-        QualityPickerSheet(
-            visible = st.batchPickerVisible,
-            qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
-            onSelect = { q -> scope.launch { batchDownload(q) } },
-            onCancel = { st.batchPickerVisible = false },
-            avoidMiniPlayer = true,
-            miniPlayerVisible = playerState.currentSong != null && !uiState.playerOverlayVisible,
-        )
+        // ── 音质选择器（复用 QualityPickerSheet） ──
+        // 面板内容交给 AppShell 在「迷你播放条之上」渲染（见 DetailQualityPickerHost 注释）；
+        // 无宿主时退化为内联渲染，行为不变。
+        val pickerHost = LocalDetailQualityPickerHost.current
+        val pickerOwner = remember { Any() }
+        val pickerPanel: @Composable () -> Unit = {
+            // 单曲（按歌曲支持档位）
+            QualityPickerSheet(
+                visible = st.pickerVisible,
+                qualities = st.pickerSong?.qualities ?: emptyList(),
+                onSelect = { q -> scope.launch { downloadWithQuality(q) } },
+                onCancel = {
+                    st.pickerVisible = false
+                    st.pickerSong = null
+                },
+            )
+            // 批量（固定三档）
+            QualityPickerSheet(
+                visible = st.batchPickerVisible,
+                qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                onSelect = { q -> scope.launch { batchDownload(q) } },
+                onCancel = { st.batchPickerVisible = false },
+            )
+        }
+        if (pickerHost == null) {
+            pickerPanel()
+        } else {
+            // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
+            SideEffect {
+                if (st.pickerVisible || st.batchPickerVisible) {
+                    pickerHost.show(pickerOwner, pickerPanel)
+                }
+            }
+            DisposableEffect(pickerOwner) {
+                onDispose { pickerHost.clear(pickerOwner) }
+            }
+        }
     }
 }
 

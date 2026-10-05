@@ -25,7 +25,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -34,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,6 +83,47 @@ import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * 详情页音质面板宿主状态（专辑 / 歌手 / 歌单详情共用）。
+ *
+ * 背景：`AppShell` 的覆盖层顺序把「迷你播放条」(`AppBottomBar`) 画在 `GlobalOverlays`
+ * （三个详情 sheet）之上，因此若音质面板仍内联在详情 sheet 内部，下半截会被迷你条压住。
+ * 为与搜索页观感一致（面板盖住迷你条），详情 sheet 不再内联渲染面板，而是把面板内容交给本
+ * 宿主，由 `AppShell` 在迷你条**之后**（对齐 [com.annieplayer.annie_music.kt.core.routing.Overlay]
+ * 的 QUALITY_PICKER 层）统一渲染。
+ *
+ * 每个详情 sheet 持有一个唯一 `owner`（`remember { Any() }`）：仅当自己的面板打开时才抢占
+ * 槽位；关闭时不写槽位，保留内容让面板自带的淡出动画自然播完；sheet 退出时清理自己的槽位，
+ * 避免面板残留在上层。
+ */
+class DetailQualityPickerHost {
+    /** 当前由 AppShell 顶层渲染的面板内容；由打开的详情 sheet 提供。 */
+    var slot by mutableStateOf<(@Composable () -> Unit)?>(null)
+        private set
+
+    private var owner: Any? = null
+
+    /** 详情 sheet 的面板打开时调用：抢占槽位。 */
+    fun show(owner: Any, content: @Composable () -> Unit) {
+        this.owner = owner
+        slot = content
+    }
+
+    /** 详情 sheet 退出时调用：仅当槽位仍属于自己时清空（避免误清上层详情页的面板）。 */
+    fun clear(owner: Any) {
+        if (this.owner === owner) {
+            this.owner = null
+            slot = null
+        }
+    }
+}
+
+/**
+ * 由 `AppShell` 提供。未提供时（例如独立整页版 [com.annieplayer.annie_music.kt.features.album.AlbumDetailScreen]
+ * 单独渲染）详情页退化为内联渲染，行为与改造前一致。
+ */
+val LocalDetailQualityPickerHost = staticCompositionLocalOf<DetailQualityPickerHost?> { null }
 
 /**
  * 专辑详情浮层（1:1 移植 Flutter `lib/widgets/album_detail_sheet.dart`，对齐 RN 版
@@ -410,21 +454,38 @@ private fun AlbumDetailContent(
         }
 
         // ── 音质选择器（复用 QualityPickerSheet）：pickerSong 为空表示本次选择用于批量下载 ──
-        QualityPickerSheet(
-            visible = st.pickerVisible,
-            qualities = emptyList(),
-            onSelect = { q ->
-                scope.launch {
-                    if (st.pickerSong != null) downloadWithQuality(q) else batchDownload(q)
-                }
-            },
-            onCancel = {
-                st.pickerVisible = false
-                st.pickerSong = null
-            },
-            avoidMiniPlayer = true,
-            miniPlayerVisible = playerState.currentSong != null && !uiState.playerOverlayVisible,
-        )
+        // 面板内容交给 AppShell 在「迷你播放条之上」渲染（见 DetailQualityPickerHost 注释）；
+        // 无宿主（独立整页版）时退化为内联渲染，行为不变。
+        val pickerHost = LocalDetailQualityPickerHost.current
+        val pickerOwner = remember { Any() }
+        val pickerPanel: @Composable () -> Unit = {
+            QualityPickerSheet(
+                visible = st.pickerVisible,
+                // 与曲目实际可用音质一致（toSong 固定三档）；批量下载（pickerSong 为空）同样三档。
+                // 原先传空列表导致组件回退成仅 128k（真机缺陷）。
+                qualities = st.pickerSong?.qualities ?: listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                onSelect = { q ->
+                    scope.launch {
+                        if (st.pickerSong != null) downloadWithQuality(q) else batchDownload(q)
+                    }
+                },
+                onCancel = {
+                    st.pickerVisible = false
+                    st.pickerSong = null
+                },
+            )
+        }
+        if (pickerHost == null) {
+            pickerPanel()
+        } else {
+            // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
+            SideEffect {
+                if (st.pickerVisible) pickerHost.show(pickerOwner, pickerPanel)
+            }
+            DisposableEffect(pickerOwner) {
+                onDispose { pickerHost.clear(pickerOwner) }
+            }
+        }
 
         // ── 「正在下载」轻提示 ──
         val downloadingId = st.downloadingId

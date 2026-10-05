@@ -15,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -62,9 +63,11 @@ import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.widgets.AlbumDetailSheet
 import com.annieplayer.annie_music.kt.widgets.CacheClearModal
 import com.annieplayer.annie_music.kt.widgets.ContactModal
+import com.annieplayer.annie_music.kt.widgets.DetailQualityPickerHost
 import com.annieplayer.annie_music.kt.widgets.DownloadQueueSheet
 import com.annieplayer.annie_music.kt.widgets.GlobalOverlays
 import com.annieplayer.annie_music.kt.widgets.KkboxAccountSheet
+import com.annieplayer.annie_music.kt.widgets.LocalDetailQualityPickerHost
 import com.annieplayer.annie_music.kt.widgets.MenuDrawer
 import com.annieplayer.annie_music.kt.widgets.MenuDrawerCacheSize
 import com.annieplayer.annie_music.kt.widgets.PlayerOverlay
@@ -271,6 +274,11 @@ fun AppShell(
     // 胶囊下缘会留下一条没被玻璃盖住的缝，下层列表透色。
     val bottomInset = WindowInsets.systemBars.asPaddingValues().calculateBottomPadding()
 
+    // 详情页音质面板宿主：三个详情 sheet 把面板内容挂到这里，由本文件在「迷你播放条之后」
+    // 统一渲染（对齐 Overlay.RENDER_ORDER 的 QUALITY_PICKER 层），从而面板盖住迷你条，
+    // 观感与搜索页一致。此前面板内联在详情 sheet 内，必被后声明的 AppBottomBar 压住下半截。
+    val detailPickerHost = remember { DetailQualityPickerHost() }
+
     with(st) {
     // 主页面判定：没有任何浮层 / 抽屉 / sheet（`anyOverlayVisible` 已含 ⇄ 源选择与批量音质
     // 面板），且没有打开 Qobuz / KKBOX 全屏详情页。主页面显示常驻毛玻璃底栏；
@@ -314,6 +322,9 @@ fun AppShell(
                 )
             }
             // ── 详情浮层（RN zIndex 150） ──
+            // 注入「详情页音质面板宿主」：详情 sheet 不再内联渲染音质面板，改由本文件在
+            // AppBottomBar 之后统一渲染（见下方槽位），保证面板盖在迷你播放条之上。
+            CompositionLocalProvider(LocalDetailQualityPickerHost provides detailPickerHost) {
             GlobalOverlays(
                 downloadQueueSheet = {
                     DownloadQueueSheet(
@@ -367,6 +378,7 @@ fun AppShell(
                     )
                 },
             )
+            }
 
             // ── 菜单抽屉（RN zIndex 200） ──
             MenuDrawer(
@@ -528,6 +540,10 @@ fun AppShell(
                 onSelect = { quality -> handleBatchDownload(quality) },
                 onCancel = { batchPickerVisible = false },
             )
+
+            // ── 详情页音质选择（专辑 / 歌手 / 歌单 sheet 提供内容） ──
+            // 声明在 AppBottomBar 之后 → 面板盖住迷你播放条，效果与搜索页一致（对齐 RENDER_ORDER）。
+            detailPickerHost.slot?.invoke()
 
             // ── 播放队列浮层 ──
             QueueSheet(
