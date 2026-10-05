@@ -9,6 +9,8 @@ import com.annieplayer.annie_music.kt.core.util.parseLrc
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
 import com.annieplayer.annie_music.kt.data.sources.decodeHtmlEntities
+import com.annieplayer.annie_music.kt.data.sources.getTrack
+import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Call
@@ -196,10 +198,19 @@ object DownloadService {
         trackNumber: String? = null,
         discNumber: String? = null,
         releaseDate: String? = null,
-        isrc: String? = null,
-        version: String? = null,
-        copyright: String? = null,
     ): String {
+        var isrcValue: String? = null
+        var versionValue: String? = null
+        var copyrightValue: String? = null
+        if (songId.startsWith("qobuz:")) {
+            runCatching { getTrack(songId.removePrefix("qobuz:"), qobuzTokenProvider().orEmpty()) }
+                .getOrNull()
+                ?.let {
+                    isrcValue = it.isrc
+                    versionValue = it.version
+                    copyrightValue = it.copyright
+                }
+        }
         val safeTitle = decodeHtmlEntities(title)
         val safeArtist = decodeHtmlEntities(artist)
         val e = _ext(quality)
@@ -268,9 +279,9 @@ object DownloadService {
                     trackNumber = trackNumber,
                     discNumber = discNumber,
                     releaseDate = releaseDate,
-                    isrc = isrc,
-                    version = version,
-                    copyright = copyright,
+                    isrc = isrcValue,
+                    version = versionValue,
+                    copyright = copyrightValue,
                 )
             } catch (ex: Throwable) {
                 Log.w(TAG, "[download] tag failed (with cover): $ex")
@@ -287,9 +298,9 @@ object DownloadService {
                         trackNumber = trackNumber,
                         discNumber = discNumber,
                         releaseDate = releaseDate,
-                        isrc = isrc,
-                        version = version,
-                        copyright = copyright,
+                        isrc = isrcValue,
+                        version = versionValue,
+                        copyright = copyrightValue,
                     )
                     Log.i(TAG, "[download] tag retry WITHOUT cover succeeded")
                 } catch (ex2: Throwable) {

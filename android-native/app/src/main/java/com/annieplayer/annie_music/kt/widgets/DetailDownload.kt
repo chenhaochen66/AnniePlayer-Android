@@ -125,9 +125,6 @@ internal suspend fun detailDownloadSong(
     trackNumber: String? = null,
     discNumber: String? = null,
     releaseDate: String? = null,
-    isrc: String? = null,
-    version: String? = null,
-    copyright: String? = null,
 ): String = DownloadService.downloadSong(
     songId = songId,
     title = title,
@@ -143,7 +140,4 @@ internal suspend fun detailDownloadSong(
     trackNumber = trackNumber,
     discNumber = discNumber,
     releaseDate = releaseDate,
-    isrc = isrc,
-    version = version,
-    copyright = copyright,
 )

@@ -760,9 +760,6 @@ private suspend fun qobuzDetailDownloadTrack(
         discNumber = track.discNumber?.toString(),
         releaseDate = track.releaseDateOriginal
             ?: if (track.year > 0) track.year.toString() else null,
-        isrc = track.isrc,
-        version = track.version,
-        copyright = track.copyright,
     )
 }
 
