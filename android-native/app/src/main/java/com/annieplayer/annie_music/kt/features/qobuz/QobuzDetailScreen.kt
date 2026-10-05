@@ -120,7 +120,6 @@ private class QobuzDetailScreenState {
     var error by mutableStateOf("")
     var loadedToken by mutableStateOf<String?>(null)
 
-    var downloadingId by mutableStateOf<String?>(null)
     var selectMode by mutableStateOf(false)
     val selectedIds = mutableStateListOf<String>()
     var batchDownloading by mutableStateOf(false)
@@ -266,36 +265,6 @@ fun QobuzDetailScreen(
                 )
             }
             playerViewModel.setQueue(songs, if (index < 0) 0 else index)
-        }
-    }
-
-    fun downloadTrack(track: QobuzTrack) {
-        val token = qobuzViewModel.getActiveToken() ?: return
-        val songId = "qobuz:${track.id}"
-        val song = qobuzDetailToSong(track, hires = st.hires)
-        val quality = if (st.hires) Quality.hires else Quality.flac
-        st.downloadingId = track.id
-        downloadViewModel.addTask(song, quality)
-        enqueueDownload(songId) {
-            try {
-                val filePath = qobuzDetailDownloadTrack(
-                    context = context,
-                    track = track,
-                    songId = songId,
-                    token = token.token,
-                    pageArtist = st.artist,
-                    updateProgress = { v ->
-                        downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
-                    },
-                    quality = quality,
-                )
-                downloadViewModel.completeTask(songId, filePath)
-                playerViewModel.addDownloadedId(songId)
-                playerViewModel.addToQueue(song)
-            } catch (_: Exception) {
-                downloadViewModel.failTask(songId)
-            }
-            withContext(Dispatchers.Main) { st.downloadingId = null }
         }
     }
 
@@ -562,8 +531,7 @@ private fun QobuzDetailBody(
                         selectMode = st.selectMode,
                         selected = st.selectedIds.contains(track.id),
                         playing = playingSongId == "qobuz:${track.id}",
-                        downloading = st.downloadingId == track.id ||
-                            tasks["qobuz:${track.id}"]?.status == DownloadStatus.downloading ||
+                        downloading = tasks["qobuz:${track.id}"]?.status == DownloadStatus.downloading ||
                             tasks["qobuz:${track.id}"]?.status == DownloadStatus.pending,
                         palette = palette,
                         onPlay = onPlay,

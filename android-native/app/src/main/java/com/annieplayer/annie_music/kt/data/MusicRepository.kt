@@ -398,5 +398,5 @@ suspend fun enrichSong(song: Song): Map<String, Any?> = when (song.platform) {
             "releaseDate" to (t.releaseDateOriginal ?: t.year.takeIf { it > 0 }?.toString()),
         )
     }
-    MusicPlatform.netease, MusicPlatform.kkbox, MusicPlatform.qobuz -> emptyMap()
+    MusicPlatform.netease, MusicPlatform.kkbox -> emptyMap()
 }
