@@ -183,7 +183,6 @@ private class SingerDetailState {
     /** 多选模式显式开关（长按行或头部「多选」chip 进入；「取消」/ 批量下载完成后退出）。 */
     var selectMode by mutableStateOf(false)
 
-    var downloadingId by mutableStateOf<String?>(null)
     var batchPickerVisible by mutableStateOf(false)
     var batchDownloading by mutableStateOf(false)
 
@@ -567,42 +566,11 @@ private fun SingerDetailContent(
                 onDispose { pickerHost.clear(pickerOwner) }
             }
         }
-
-        // ── 「正在下载」轻提示 ──
-        val downloadingId = st.downloadingId
-        if (downloadingId != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = AppSpacing.sp20, end = AppSpacing.sp20, bottom = AppSpacing.sheetBottomInset),
-                contentAlignment = Alignment.BottomCenter,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(AppRadius.card))
-                        .background(AppColors.surface95)
-                        .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp20),
-                ) {
-                    Text(
-                        text = "正在下载 ${singerDetailSongTitleOf(st, downloadingId)}",
-                        color = AppColors.primary,
-                        fontSize = AppFontSize.base,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
-        }
     }
 }
 
 /** 分页大小（对齐 Dart `_pageSize = 20`） */
 private const val PageSize = 20
-
-/** 查找当前页内歌曲标题（对齐 Dart `_songTitleOf`） */
-private fun singerDetailSongTitleOf(st: SingerDetailState, id: String): String {
-    val idx = st.songs.indexOfFirst { it.id == id }
-    return if (idx >= 0) st.songs[idx].title else "..."
-}
 
 /** 当前页歌曲是否全部已选（头部三态全选用；空列表视为未全选）。 */
 private fun singerDetailAllSelected(pageSongs: List<Song>, selected: List<Song>): Boolean =
@@ -1020,8 +988,7 @@ private fun SingerDetailSongs(
                 items(count = st.songs.size) { index ->
                     val song = st.songs[index]
                     val task = tasks[song.id]
-                    val isDownloading = st.downloadingId == song.id ||
-                        task?.status == DownloadStatus.downloading ||
+                    val isDownloading = task?.status == DownloadStatus.downloading ||
                         task?.status == DownloadStatus.pending
                     SingerDetailSongRow(
                         song = song,

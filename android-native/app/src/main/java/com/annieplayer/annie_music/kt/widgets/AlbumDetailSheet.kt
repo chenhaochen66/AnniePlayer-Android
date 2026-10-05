@@ -183,7 +183,6 @@ private class AlbumDetailState {
     val selectedIds = mutableStateListOf<String>()
 
     var pickerVisible by mutableStateOf(false)
-    var downloadingId by mutableStateOf<String?>(null)
     var batchDownloading by mutableStateOf(false)
     var batchProgress by mutableStateOf("")
 }
@@ -244,7 +243,6 @@ private fun AlbumDetailContent(
         st.batchDownloading = false
         st.batchProgress = ""
         st.pickerVisible = false
-        st.downloadingId = null
         st.releaseDate = ""
     }
 
@@ -444,38 +442,7 @@ private fun AlbumDetailContent(
                 onDispose { pickerHost.clear(pickerOwner) }
             }
         }
-
-        // ── 「正在下载」轻提示 ──
-        val downloadingId = st.downloadingId
-        if (downloadingId != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = AppSpacing.sp20, end = AppSpacing.sp20, bottom = AppSpacing.sheetBottomInset),
-                contentAlignment = Alignment.BottomCenter,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(AppRadius.card))
-                        .background(AppColors.surface95)
-                        .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp20),
-                ) {
-                    Text(
-                        text = "正在下载 ${albumDetailSongNameOf(st, downloadingId)}",
-                        color = AppColors.primary,
-                        fontSize = AppFontSize.base,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
-        }
     }
-}
-
-/** 查找当前列表内歌曲名（对齐 Dart `_songNameOf`） */
-private fun albumDetailSongNameOf(st: AlbumDetailState, id: String): String {
-    val idx = st.songs.indexOfFirst { it.id == id }
-    return if (idx >= 0) st.songs[idx].name else "..."
 }
 
 /** 返回条：chevron_left + 「专辑详情」+（多选时）全选 / 取消全选 + 多选 / 取消 */
