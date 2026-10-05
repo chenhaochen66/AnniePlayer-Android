@@ -110,8 +110,6 @@ private class AlbumDetailScreenState {
     val selectedIds = mutableStateListOf<String>()
 
     var pickerVisible by mutableStateOf(false)
-    var pickerSong by mutableStateOf<AlbumSong?>(null)
-    var downloadingId by mutableStateOf<String?>(null)
     var batchDownloading by mutableStateOf(false)
     var batchProgress by mutableStateOf("")
 }
@@ -198,43 +196,6 @@ fun AlbumDetailScreen(
         }
     }
 
-    fun startSingleDownload(s: AlbumSong, quality: Quality) {
-        val songObj = toSong(s)
-        downloadViewModel.addTask(songObj, quality)
-        val index = st.songs.indexOfFirst { it.id == s.id }
-        val track = if (s.track != null) s.track.toString() else "${index + 1}"
-        val releaseDate = st.releaseDate.ifEmpty { null }
-        enqueueDownload(songObj.id) {
-            withContext(Dispatchers.Main) { st.downloadingId = songObj.id }
-            try {
-                val url = fetchDownloadUrlBySong(songObj, quality)
-                val lyric = fetchLyric(songObj)
-                val filePath = detailDownloadSong(
-                    context = context,
-                    songId = songObj.id,
-                    title = songObj.title,
-                    artist = songObj.artist,
-                    coverUrl = resolvedCover,
-                    album = resolvedName,
-                    downloadUrl = url,
-                    quality = quality,
-                    onProgress = { p -> downloadViewModel.updateProgress(songObj.id, (p * 100.0).coerceIn(0.0, 100.0)) },
-                    lyric = lyric.lrc,
-                    tlyric = lyric.tlyric,
-                    albumArtist = resolvedArtist,
-                    trackNumber = track,
-                    releaseDate = releaseDate,
-                )
-                downloadViewModel.completeTask(songObj.id, filePath)
-                playerViewModel.addDownloadedId(songObj.id)
-                playerViewModel.addToQueue(songObj)
-            } catch (_: Exception) {
-                downloadViewModel.failTask(songObj.id)
-            }
-            withContext(Dispatchers.Main) { st.downloadingId = null }
-        }
-    }
-
     fun startBatchDownload(selected: List<AlbumSong>, quality: Quality) {
         st.batchDownloading = true
         for (s in selected) downloadViewModel.addTask(toSong(s), quality)
@@ -292,8 +253,6 @@ fun AlbumDetailScreen(
         st.selectMode = false
         st.selectedIds.clear()
         st.pickerVisible = false
-        st.pickerSong = null
-        st.downloadingId = null
         st.batchDownloading = false
         st.batchProgress = ""
         if (resolvedId.isEmpty()) {
@@ -345,19 +304,9 @@ fun AlbumDetailScreen(
                     onToggleSelect = { id ->
                         if (!st.selectedIds.remove(id)) st.selectedIds.add(id)
                     },
-                    onBatch = {
-                        st.pickerSong = null
-                        st.pickerVisible = true
-                    },
+                    onBatch = { st.pickerVisible = true },
                 )
             }
-        }
-
-        val downloadingId = st.downloadingId
-        if (downloadingId != null) {
-            AlbumDetailDownloadingToast(
-                name = st.songs.firstOrNull { it.id == downloadingId }?.name ?: "...",
-            )
         }
 
         // ── 音质选择器 ──
@@ -370,20 +319,13 @@ fun AlbumDetailScreen(
                 visible = st.pickerVisible,
                 qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
                 onSelect = { quality ->
-                    val target = st.pickerSong
                     st.pickerVisible = false
-                    st.pickerSong = null
-                    if (target != null) {
-                        startSingleDownload(target, quality)
-                    } else if (!st.batchDownloading) {
+                    if (!st.batchDownloading) {
                         val selected = st.songs.filter { st.selectedIds.contains(it.id) }
                         if (selected.isNotEmpty()) startBatchDownload(selected, quality)
                     }
                 },
-                onCancel = {
-                    st.pickerVisible = false
-                    st.pickerSong = null
-                },
+                onCancel = { st.pickerVisible = false },
             )
         }
         if (pickerHost == null) {
@@ -772,31 +714,6 @@ private fun AlbumDetailProgressRing(modifier: Modifier = Modifier) {
             color = AppColors.primary,
             strokeWidth = AppBorder.thick,
         )
-    }
-}
-
-/** 「正在下载 xxx」轻提示（底部 100，避开迷你播放条） */
-@Composable
-private fun AlbumDetailDownloadingToast(name: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(start = AppSpacing.sp20, end = AppSpacing.sp20, bottom = AppSpacing.sheetBottomInset),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(AppRadius.card))
-                .background(AppColors.surface95)
-                .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp20),
-        ) {
-            Text(
-                text = "正在下载 $name",
-                color = AppColors.primary,
-                fontSize = AppFontSize.base,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
     }
 }
 
