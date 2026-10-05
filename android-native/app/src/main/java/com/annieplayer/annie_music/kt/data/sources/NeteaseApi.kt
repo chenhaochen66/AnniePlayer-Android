@@ -118,6 +118,26 @@ private fun _isoDate(timestamp: Any?): String {
 private fun _rawId(songId: String): String =
     songId.replaceFirst(Regex("^netease:"), "")
 
+/**
+ * 从搜索原始条目中提取可用的网易云数字 id。
+ *
+ * 网易云歌曲 id 为 **64 位**（如 `3397732267`，已超过 `Int.MAX_VALUE`），
+ * 且 cloudsearch 响应通常只给顶层 `id`、不带 `idStr`，因此按 `Long` 解析。
+ * 取值顺序：顶层 `id` → `idStr`。两者都拿不到正整数时返回 null，
+ * 调用方应丢弃该条目，避免生成 `netease:null` 这类不可用 id。
+ */
+private fun _extractNeteaseId(item: Map<String, Any?>): Long? {
+    for (candidate in listOf(item["id"], item["idStr"])) {
+        val parsed = when (candidate) {
+            is Number -> candidate.toLong()
+            is String -> candidate.trim().toLongOrNull()
+            else -> null
+        }
+        if (parsed != null && parsed > 0L) return parsed
+    }
+    return null
+}
+
 /** 将任意值安全转换为 `Map<String, Any?>`；非 Map 返回 null */
 private fun _asMap(value: Any?): Map<String, Any?>? {
     if (value !is Map<*, *>) return null
@@ -248,9 +268,12 @@ suspend fun searchNeteaseMusic(
 
 /** 将网易云搜索原始条目映射为 [Song]（缓存命中与网络路径共用） */
 private fun _mapSearchSongs(raw: Any?): List<Song> =
-    _listOfMaps(raw).map { _mapSearchSong(it) }
+    _listOfMaps(raw).mapNotNull { _mapSearchSong(it) }
 
-private fun _mapSearchSong(item: Map<String, Any?>): Song {
+private fun _mapSearchSong(item: Map<String, Any?>): Song? {
+    // id 缺失或不可解析的条目直接丢弃（返回 null）：不生成 `netease:null`，
+    // 否则这条记录会进列表但点播放/下载必然失败且没有任何提示。
+    val numericId = _extractNeteaseId(item) ?: return null
     val arList = _listOfMaps(item["ar"])
     val artistNames = arList
         .map { decodeHtmlEntities((it["name"] ?: "").toString()) }
@@ -269,7 +292,7 @@ private fun _mapSearchSong(item: Map<String, Any?>): Song {
     val firstArName = arList.firstOrNull()?.get("name")
 
     return Song(
-        id = "netease:${item["id"]}",
+        id = "netease:$numericId",
         title = decodeHtmlEntities((item["name"] ?: "未知歌曲").toString()),
         artist = artist,
         cover = (al["picUrl"] ?: "").toString(),
@@ -532,7 +555,13 @@ suspend fun getNeteaseArtistAlbums(artistId: String): List<Album> {
 // ── 播放链接 ──
 
 private suspend fun _fetchNeteaseMusicUrl(songId: String, quality: String): String {
-    val rawId = _rawId(songId).toIntOrNull() ?: 0
+    // 网易云 id 为 64 位（可超过 Int.MAX，如 3397732267）：必须用 toLongOrNull。
+    // 旧实现用 toIntOrNull()，遇到大 id 解析失败后静默回落 0，把 musicId=0 发出去，
+    // 第三方接口必然返回「url 为空」且用户看不到任何原因。这里直接抛出明确文案。
+    val rawId = _rawId(songId).trim().toLongOrNull()
+    if (rawId == null || rawId <= 0L) {
+        throw IllegalStateException("该歌曲在网易云无可用音源")
+    }
     val payload = mapOf<String, Any?>(
         "source" to "wy",
         "musicId" to rawId,
