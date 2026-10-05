@@ -61,7 +61,6 @@ import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
-import com.annieplayer.annie_music.kt.data.LyricResult
 import com.annieplayer.annie_music.kt.data.fetchAlbumSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
@@ -184,7 +183,6 @@ private class AlbumDetailState {
     val selectedIds = mutableStateListOf<String>()
 
     var pickerVisible by mutableStateOf(false)
-    var pickerSong by mutableStateOf<Song?>(null)
     var downloadingId by mutableStateOf<String?>(null)
     var batchDownloading by mutableStateOf(false)
     var batchProgress by mutableStateOf("")
@@ -246,7 +244,6 @@ private fun AlbumDetailContent(
         st.batchDownloading = false
         st.batchProgress = ""
         st.pickerVisible = false
-        st.pickerSong = null
         st.downloadingId = null
         st.releaseDate = ""
     }
@@ -266,11 +263,6 @@ private fun AlbumDetailContent(
         }
     }
 
-    fun openPicker(s: AlbumSong) {
-        st.pickerSong = toSong(s)
-        st.pickerVisible = true
-    }
-
     fun toggleSelect(id: String) {
         if (!st.selectedIds.remove(id)) st.selectedIds.add(id)
     }
@@ -287,48 +279,6 @@ private fun AlbumDetailContent(
     fun toggleSelectMode() {
         st.selectMode = !st.selectMode
         st.selectedIds.clear()
-    }
-
-    suspend fun downloadWithQuality(quality: Quality) {
-        val song = st.pickerSong ?: return
-        st.pickerVisible = false
-        st.pickerSong = null
-        st.downloadingId = song.id
-        downloadViewModel.addTask(song, quality)
-        try {
-            val url = fetchDownloadUrlBySong(song, quality)
-            val lyric = if (song.lyric != null && song.tlyric != null) {
-                LyricResult(lrc = song.lyric, tlyric = song.tlyric)
-            } else {
-                fetchLyric(song)
-            }
-            val idx = st.songs.indexOfFirst { it.id == song.id }
-            val trackValue = if (idx >= 0) st.songs[idx].track else null
-            val track = if (trackValue != null) trackValue.toString() else "${idx + 1}"
-            val filePath = detailDownloadSong(
-                context = context,
-                songId = song.id,
-                title = song.title,
-                artist = song.artist,
-                coverUrl = song.cover,
-                album = song.album,
-                downloadUrl = url,
-                quality = quality,
-                onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
-                lyric = lyric.lrc,
-                tlyric = lyric.tlyric,
-                albumArtist = data.artist,
-                trackNumber = track,
-                releaseDate = st.releaseDate.ifEmpty { null },
-            )
-            downloadViewModel.completeTask(song.id, filePath)
-            playerViewModel.addDownloadedId(song.id)
-            playerViewModel.addToQueue(song)
-        } catch (_: Exception) {
-            downloadViewModel.failTask(song.id)
-        } finally {
-            st.downloadingId = null
-        }
     }
 
     suspend fun batchDownload(quality: Quality) {
@@ -462,7 +412,7 @@ private fun AlbumDetailContent(
             }
         }
 
-        // ── 音质选择器（复用 QualityPickerSheet）：pickerSong 为空表示本次选择用于批量下载 ──
+        // ── 音质选择器（批量下载，复用 QualityPickerSheet） ──
         // 面板内容交给 AppShell 在「迷你播放条之上」渲染（见 DetailQualityPickerHost 注释）；
         // 无宿主（独立整页版）时退化为内联渲染，行为不变。
         val pickerHost = LocalDetailQualityPickerHost.current
@@ -470,25 +420,17 @@ private fun AlbumDetailContent(
         val pickerPanel: @Composable () -> Unit = {
             QualityPickerSheet(
                 visible = st.pickerVisible,
-                // 与曲目实际可用音质一致（toSong 固定三档）；批量下载（pickerSong 为空）同样三档。
-                // 原先传空列表导致组件回退成仅 128k（真机缺陷）。
-                qualities = st.pickerSong?.qualities ?: listOf(Quality.flac, Quality.k320k, Quality.k128k),
+                // 与曲目实际可用音质一致（Qobuz 专辑含 Hi-Res，其余三档）
+                qualities = if (data.platform == MusicPlatform.qobuz) {
+                    listOf(Quality.hires, Quality.flac, Quality.k320k)
+                } else {
+                    listOf(Quality.flac, Quality.k320k, Quality.k128k)
+                },
                 labelOf = { q ->
-                    if (st.pickerSong?.platform == MusicPlatform.qobuz) {
-                        qobuzQualityLabel(q)
-                    } else {
-                        q.label
-                    }
+                    if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
                 },
-                onSelect = { q ->
-                    scope.launch {
-                        if (st.pickerSong != null) downloadWithQuality(q) else batchDownload(q)
-                    }
-                },
-                onCancel = {
-                    st.pickerVisible = false
-                    st.pickerSong = null
-                },
+                onSelect = { q -> scope.launch { batchDownload(q) } },
+                onCancel = { st.pickerVisible = false },
             )
         }
         if (pickerHost == null) {

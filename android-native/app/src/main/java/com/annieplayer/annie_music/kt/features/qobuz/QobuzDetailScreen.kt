@@ -54,10 +54,13 @@ import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.QobuzToken
 import com.annieplayer.annie_music.kt.data.model.QobuzTrack
+import com.annieplayer.annie_music.kt.data.model.DownloadStatus
+import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.sources.getFileUrl
 import com.annieplayer.annie_music.kt.data.sources.qobuzQualityFormatId
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
 import com.annieplayer.annie_music.kt.data.sources.getQobuzAlbum
 import com.annieplayer.annie_music.kt.data.sources.qobuzTrackToSong
 import com.annieplayer.annie_music.kt.data.sources.getTrack
@@ -77,6 +80,7 @@ import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
 import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
+import com.annieplayer.annie_music.kt.widgets.QualityPickerSheet
 import com.annieplayer.annie_music.kt.widgets.clickableRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
 import com.annieplayer.annie_music.kt.widgets.SongMoreGlyph
@@ -121,6 +125,7 @@ private class QobuzDetailScreenState {
     val selectedIds = mutableStateListOf<String>()
     var batchDownloading by mutableStateOf(false)
     var batchProgress by mutableStateOf("")
+    var batchPickerVisible by mutableStateOf(false)
 }
 
 /** Qobuz 活跃 Token（对齐 Dart `getActiveToken`：优先 `isActive`，否则首个） */
@@ -170,6 +175,7 @@ fun QobuzDetailScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val tokens by qobuzViewModel.state.collectAsState()
+    val tasks by downloadViewModel.state.collectAsState()
 
     // 全局色板（Activity 作用域，与 AppShell / 播放页同一实例）：本页进出时快照 / 恢复
     val colorViewModel: ColorViewModel = activityViewModel()
@@ -293,13 +299,13 @@ fun QobuzDetailScreen(
         }
     }
 
-    fun batchDownload() {
+    fun batchDownload(quality: Quality) {
         if (st.batchDownloading) return
         val token = qobuzViewModel.getActiveToken() ?: return
         val selected = st.tracks.filter { st.selectedIds.contains(it.id) }
         if (selected.isEmpty()) return
         st.batchDownloading = true
-        for (t in selected) downloadViewModel.addTask(qobuzDetailToSong(t, hires = st.hires), Quality.flac)
+        for (t in selected) downloadViewModel.addTask(qobuzDetailToSong(t, hires = st.hires), quality)
         val batchId = "qobuz_batch_${System.currentTimeMillis()}"
         enqueueDownload(batchId) {
             var success = 0
@@ -319,6 +325,7 @@ fun QobuzDetailScreen(
                         updateProgress = { v ->
                             downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
                         },
+                        quality = quality,
                     )
                     downloadViewModel.completeTask(songId, filePath)
                     playerViewModel.addDownloadedId(songId)
@@ -389,6 +396,7 @@ fun QobuzDetailScreen(
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 QobuzDetailBody(
                     st = st,
+                    tasks = tasks,
                     palette = palette,
                     playingSongId = playingSongId,
                     onPlay = { play(it) },
@@ -412,13 +420,21 @@ fun QobuzDetailScreen(
                 total = st.tracks.size,
                 downloading = st.batchDownloading,
                 progressText = st.batchProgress,
-                onDownload = { batchDownload() },
+                onDownload = { st.batchPickerVisible = true },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(bottom = AppSpacing.sp20),
             )
         }
+
+        QualityPickerSheet(
+            visible = st.batchPickerVisible,
+            qualities = listOf(Quality.hires, Quality.flac, Quality.k320k),
+            labelOf = { q -> qobuzQualityLabel(q) },
+            onSelect = { q -> batchDownload(q) },
+            onCancel = { st.batchPickerVisible = false },
+        )
     }
 }
 
@@ -492,6 +508,7 @@ private fun QobuzDetailHeader(
 @Composable
 private fun QobuzDetailBody(
     st: QobuzDetailScreenState,
+    tasks: Map<String, DownloadTask>,
     palette: ColorPalette,
     playingSongId: String?,
     onPlay: (QobuzTrack) -> Unit,
@@ -545,7 +562,9 @@ private fun QobuzDetailBody(
                         selectMode = st.selectMode,
                         selected = st.selectedIds.contains(track.id),
                         playing = playingSongId == "qobuz:${track.id}",
-                        downloading = st.downloadingId == track.id,
+                        downloading = st.downloadingId == track.id ||
+                            tasks["qobuz:${track.id}"]?.status == DownloadStatus.downloading ||
+                            tasks["qobuz:${track.id}"]?.status == DownloadStatus.pending,
                         palette = palette,
                         onPlay = onPlay,
                         onDownload = onDownload,

@@ -60,15 +60,15 @@ import com.annieplayer.annie_music.kt.core.state.PlaylistDetailData
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.util.bestQuality
-import com.annieplayer.annie_music.kt.data.LyricResult
 import com.annieplayer.annie_music.kt.data.PlaylistService
 import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
+import com.annieplayer.annie_music.kt.data.model.DownloadStatus
+import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
@@ -137,8 +137,6 @@ private class PlaylistDetailState {
     var selectMode by mutableStateOf(false)
     val selectedIds = mutableStateListOf<String>()
 
-    var pickerVisible by mutableStateOf(false)
-    var pickerSong by mutableStateOf<Song?>(null)
     var batchPickerVisible by mutableStateOf(false)
     var batchDownloading by mutableStateOf(false)
 
@@ -160,6 +158,7 @@ private fun PlaylistDetailContent(
     val context = LocalContext.current
 
     val playerState by playerViewModel.state.collectAsState()
+    val tasks by downloadViewModel.state.collectAsState()
 
     /** 全局颜色状态（`activityViewModel()` 与 AppShell 同款宿主查找 → 同一 Activity 作用域实例） */
     val colorViewModel: ColorViewModel = activityViewModel()
@@ -195,11 +194,6 @@ private fun PlaylistDetailContent(
         }
     }
 
-    fun openPicker(song: Song) {
-        st.pickerSong = song
-        st.pickerVisible = true
-    }
-
     fun toggleSelect(id: String) {
         if (!st.selectedIds.remove(id)) st.selectedIds.add(id)
     }
@@ -216,44 +210,6 @@ private fun PlaylistDetailContent(
     fun toggleSelectMode() {
         st.selectMode = !st.selectMode
         st.selectedIds.clear()
-    }
-
-    suspend fun downloadWithQuality(quality: Quality) {
-        val song = st.pickerSong ?: return
-        st.pickerVisible = false
-        st.pickerSong = null
-        downloadViewModel.addTask(song, quality)
-        try {
-            val url = fetchDownloadUrlBySong(song, quality)
-            val lyric = if (song.lyric != null && song.tlyric != null) {
-                LyricResult(lrc = song.lyric, tlyric = song.tlyric)
-            } else {
-                fetchLyric(song)
-            }
-            val extra = enrichSong(song)
-            val filePath = detailDownloadSong(
-                context = context,
-                songId = song.id,
-                title = song.title,
-                artist = song.artist,
-                coverUrl = song.cover,
-                album = song.album,
-                downloadUrl = url,
-                quality = quality,
-                onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
-                lyric = lyric.lrc,
-                tlyric = lyric.tlyric,
-                albumArtist = song.albumArtist,
-                trackNumber = song.trackNumber ?: extra["trackNumber"] as? String,
-                discNumber = song.discNumber ?: extra["discNumber"] as? String,
-                releaseDate = song.releaseDate ?: extra["releaseDate"] as? String,
-            )
-            downloadViewModel.completeTask(song.id, filePath)
-            playerViewModel.addDownloadedId(song.id)
-            playerViewModel.addToQueue(song)
-        } catch (_: Exception) {
-            downloadViewModel.failTask(song.id)
-        }
     }
 
     suspend fun batchDownload(quality: Quality) {
@@ -330,7 +286,7 @@ private fun PlaylistDetailContent(
     val higherFlags = OverlayVisibilityFlags(
         songActions = uiState.songActionsVisible,
         artistPicker = uiState.artistPickerVisible,
-        qualityPicker = uiState.pickerVisible || st.pickerVisible || st.batchPickerVisible,
+        qualityPicker = uiState.pickerVisible || st.batchPickerVisible,
         queue = uiState.queueVisible,
         playerOverlay = uiState.playerOverlayVisible,
         detail = true,
@@ -384,6 +340,7 @@ private fun PlaylistDetailContent(
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     PlaylistDetailBody(
                         st = st,
+                        tasks = tasks,
                         palette = palette,
                         playingId = playerState.currentSong?.id,
                         onPlay = { scope.launch { play(it) } },
@@ -400,23 +357,6 @@ private fun PlaylistDetailContent(
         val pickerHost = LocalDetailQualityPickerHost.current
         val pickerOwner = remember { Any() }
         val pickerPanel: @Composable () -> Unit = {
-            // 单曲（按歌曲支持档位）
-            QualityPickerSheet(
-                visible = st.pickerVisible,
-                qualities = st.pickerSong?.qualities ?: emptyList(),
-                labelOf = { q ->
-                    if (st.pickerSong?.platform == MusicPlatform.qobuz) {
-                        qobuzQualityLabel(q)
-                    } else {
-                        q.label
-                    }
-                },
-                onSelect = { q -> scope.launch { downloadWithQuality(q) } },
-                onCancel = {
-                    st.pickerVisible = false
-                    st.pickerSong = null
-                },
-            )
             // 批量（固定三档）
             QualityPickerSheet(
                 visible = st.batchPickerVisible,
@@ -430,7 +370,7 @@ private fun PlaylistDetailContent(
         } else {
             // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
             SideEffect {
-                if (st.pickerVisible || st.batchPickerVisible) {
+                if (st.batchPickerVisible) {
                     pickerHost.show(pickerOwner, pickerPanel)
                 }
             }
@@ -516,6 +456,7 @@ private fun PlaylistDetailHeader(
 @Composable
 private fun PlaylistDetailBody(
     st: PlaylistDetailState,
+    tasks: Map<String, DownloadTask>,
     palette: ColorPalette,
     playingId: String?,
     onPlay: (Song) -> Unit,
@@ -569,6 +510,7 @@ private fun PlaylistDetailBody(
                         PlaylistDetailSongRow(
                             song = song,
                             index = index,
+                            downloadStatus = tasks[song.id]?.status,
                             selectMode = st.selectMode,
                             selected = st.selectedIds.contains(song.id),
                             playing = song.id == playingId,
@@ -679,6 +621,7 @@ private fun PlaylistDetailListHeader(st: PlaylistDetailState) {
 private fun PlaylistDetailSongRow(
     song: Song,
     index: Int,
+    downloadStatus: DownloadStatus?,
     selectMode: Boolean,
     selected: Boolean,
     playing: Boolean,
@@ -760,6 +703,8 @@ private fun PlaylistDetailSongRow(
                 SongMoreGlyph(
                     modifier = Modifier.size(AppIconSize.icon16),
                     tint = AppColors.textDisabled,
+                    downloading = downloadStatus == DownloadStatus.downloading ||
+                        downloadStatus == DownloadStatus.pending,
                 )
             }
         }

@@ -81,7 +81,6 @@ import com.annieplayer.annie_music.kt.core.state.SingerDetailData
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.data.DownloadDirService
-import com.annieplayer.annie_music.kt.data.LyricResult
 import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchArtistAlbumsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchArtistAvatarByPlatform
@@ -184,8 +183,6 @@ private class SingerDetailState {
     /** 多选模式显式开关（长按行或头部「多选」chip 进入；「取消」/ 批量下载完成后退出）。 */
     var selectMode by mutableStateOf(false)
 
-    var pickerVisible by mutableStateOf(false)
-    var pickerSong by mutableStateOf<Song?>(null)
     var downloadingId by mutableStateOf<String?>(null)
     var batchPickerVisible by mutableStateOf(false)
     var batchDownloading by mutableStateOf(false)
@@ -294,11 +291,6 @@ private fun SingerDetailContent(
         }
     }
 
-    fun openPicker(song: Song) {
-        st.pickerSong = song
-        st.pickerVisible = true
-    }
-
     suspend fun playSong(song: Song) {
         val idx = st.songs.indexOfFirst { it.id == song.id }
         if (idx < 0) return
@@ -324,47 +316,6 @@ private fun SingerDetailContent(
                 platform = album.platform,
             ),
         )
-    }
-
-    suspend fun downloadWithQuality(quality: Quality) {
-        val song = st.pickerSong ?: return
-        st.pickerVisible = false
-        st.pickerSong = null
-        st.downloadingId = song.id
-        downloadViewModel.addTask(song, quality)
-        try {
-            val url = fetchDownloadUrlBySong(song, quality)
-            val lyric = if (song.lyric != null && song.tlyric != null) {
-                LyricResult(lrc = song.lyric, tlyric = song.tlyric)
-            } else {
-                fetchLyric(song)
-            }
-            val extra = enrichSong(song)
-            val filePath = detailDownloadSong(
-                context = context,
-                songId = song.id,
-                title = song.title,
-                artist = song.artist,
-                coverUrl = song.cover,
-                album = song.album,
-                downloadUrl = url,
-                quality = quality,
-                onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
-                lyric = lyric.lrc,
-                tlyric = lyric.tlyric,
-                albumArtist = song.albumArtist ?: artistName,
-                trackNumber = song.trackNumber ?: extra["trackNumber"] as? String,
-                discNumber = song.discNumber,
-                releaseDate = song.releaseDate ?: extra["releaseDate"] as? String,
-            )
-            downloadViewModel.completeTask(song.id, filePath)
-            playerViewModel.addDownloadedId(song.id)
-            playerViewModel.addToQueue(song)
-        } catch (_: Exception) {
-            downloadViewModel.failTask(song.id)
-        } finally {
-            st.downloadingId = null
-        }
     }
 
     suspend fun batchDownload(quality: Quality) {
@@ -418,7 +369,7 @@ private fun SingerDetailContent(
     val higherFlags = OverlayVisibilityFlags(
         songActions = uiState.songActionsVisible,
         artistPicker = uiState.artistPickerVisible,
-        qualityPicker = uiState.pickerVisible || st.pickerVisible || st.batchPickerVisible,
+        qualityPicker = uiState.pickerVisible || st.batchPickerVisible,
         queue = uiState.queueVisible,
         playerOverlay = uiState.playerOverlayVisible,
         detail = true,
@@ -590,22 +541,6 @@ private fun SingerDetailContent(
         val pickerOwner = remember { Any() }
         val pickerPanel: @Composable () -> Unit = {
             QualityPickerSheet(
-                visible = st.pickerVisible,
-                qualities = if (data.platform == MusicPlatform.qobuz) {
-                    listOf(Quality.hires, Quality.flac, Quality.k320k)
-                } else {
-                    listOf(Quality.flac, Quality.k320k, Quality.k128k)
-                },
-                labelOf = { q ->
-                    if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
-                },
-                onSelect = { q -> scope.launch { downloadWithQuality(q) } },
-                onCancel = {
-                    st.pickerVisible = false
-                    st.pickerSong = null
-                },
-            )
-            QualityPickerSheet(
                 visible = st.batchPickerVisible,
                 qualities = if (data.platform == MusicPlatform.qobuz) {
                     listOf(Quality.hires, Quality.flac, Quality.k320k)
@@ -624,7 +559,7 @@ private fun SingerDetailContent(
         } else {
             // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
             SideEffect {
-                if (st.pickerVisible || st.batchPickerVisible) {
+                if (st.batchPickerVisible) {
                     pickerHost.show(pickerOwner, pickerPanel)
                 }
             }

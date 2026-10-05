@@ -24,6 +24,7 @@ fun SongMoreButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     tint: Color = AppColors.textTertiary,
+    downloading: Boolean = false,
 ) {
     Box(
         modifier = modifier
@@ -31,7 +32,7 @@ fun SongMoreButton(
             .padding(AppSpacing.sp4),
         contentAlignment = Alignment.Center,
     ) {
-        SongMoreGlyph(tint = tint)
+        SongMoreGlyph(tint = tint, downloading = downloading)
     }
 }
 
@@ -40,7 +41,12 @@ fun SongMoreButton(
 fun SongMoreGlyph(
     modifier: Modifier = Modifier,
     tint: Color = AppColors.textTertiary,
+    downloading: Boolean = false,
 ) {
+    if (downloading) {
+        DownloadRing()
+        return
+    }
     Canvas(modifier = modifier.size(AppIconSize.icon20)) {
         val radius = size.width * 0.09f
         val centerX = size.width / 2f
