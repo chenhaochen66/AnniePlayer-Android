@@ -267,6 +267,9 @@ data class QobuzTrack(
     val label: String = "",
     val year: Int = 0,
     val releaseDateOriginal: String? = null,
+    val isrc: String? = null,
+    val version: String? = null,
+    val copyright: String? = null,
     /** 多歌手名（performers 逗号串拆分；单歌手时取 performer.name） */
     val artistNames: List<String> = emptyList(),
     /** 与 [artistNames] 下标对应；仅单歌手时拿得到 performer.id */

@@ -771,7 +771,11 @@ private suspend fun qobuzDetailDownloadTrack(
         albumArtist = track.albumArtist ?: pageArtist,
         trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
         discNumber = track.discNumber?.toString(),
-        releaseDate = if (track.year > 0) track.year.toString() else null,
+        releaseDate = track.releaseDateOriginal
+            ?: if (track.year > 0) track.year.toString() else null,
+        isrc = track.isrc,
+        version = track.version,
+        copyright = track.copyright,
     )
 }
 

@@ -36,6 +36,9 @@ internal object FfmpegTagger {
         trackNumber: String?,
         discNumber: String?,
         releaseDate: String?,
+        isrc: String? = null,
+        version: String? = null,
+        copyright: String? = null,
     ): Boolean {
         val input = File(inputPath)
         if (!input.exists()) return false
@@ -59,6 +62,9 @@ internal object FfmpegTagger {
         if (!trackNumber.isNullOrEmpty()) args += listOf("-metadata", "track=$trackNumber")
         if (!discNumber.isNullOrEmpty()) args += listOf("-metadata", "disc=$discNumber")
         if (!releaseDate.isNullOrEmpty()) args += listOf("-metadata", "date=$releaseDate")
+    if (!isrc.isNullOrEmpty()) args += listOf("-metadata", "ISRC=$isrc")
+    if (!version.isNullOrEmpty()) args += listOf("-metadata", "comment=$version")
+    if (!copyright.isNullOrEmpty()) args += listOf("-metadata", "copyright=$copyright")
         if (lyric.isNotEmpty()) args += listOf("-metadata", "lyrics=$lyric")
         if (cover != null) args += listOf("-disposition:v", "attached_pic")
         args += tmpOut.absolutePath

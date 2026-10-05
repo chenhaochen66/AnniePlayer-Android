@@ -353,6 +353,9 @@ fun mapTrackToQobuzTrack(raw: Map<String, Any?>): QobuzTrack {
         label = (_firstTruthy(listOf(raw["label"])) ?: "").toString(),
         year = _toIntOr(raw["year"], 0),
         releaseDateOriginal = raw["release_date_original"]?.toString()?.takeIf { it.isNotEmpty() },
+        isrc = raw["isrc"]?.toString()?.takeIf { it.isNotEmpty() },
+        version = raw["version"]?.toString()?.takeIf { it.isNotEmpty() },
+        copyright = raw["copyright"]?.toString()?.takeIf { it.isNotEmpty() },
         artistNames = artistNames,
         artistIds = artistIds,
     )

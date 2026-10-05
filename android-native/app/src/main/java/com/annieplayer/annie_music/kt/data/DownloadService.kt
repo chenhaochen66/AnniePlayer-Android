@@ -196,6 +196,9 @@ object DownloadService {
         trackNumber: String? = null,
         discNumber: String? = null,
         releaseDate: String? = null,
+        isrc: String? = null,
+        version: String? = null,
+        copyright: String? = null,
     ): String {
         val safeTitle = decodeHtmlEntities(title)
         val safeArtist = decodeHtmlEntities(artist)
@@ -265,6 +268,9 @@ object DownloadService {
                     trackNumber = trackNumber,
                     discNumber = discNumber,
                     releaseDate = releaseDate,
+                    isrc = isrc,
+                    version = version,
+                    copyright = copyright,
                 )
             } catch (ex: Throwable) {
                 Log.w(TAG, "[download] tag failed (with cover): $ex")
@@ -281,6 +287,9 @@ object DownloadService {
                         trackNumber = trackNumber,
                         discNumber = discNumber,
                         releaseDate = releaseDate,
+                        isrc = isrc,
+                        version = version,
+                        copyright = copyright,
                     )
                     Log.i(TAG, "[download] tag retry WITHOUT cover succeeded")
                 } catch (ex2: Throwable) {
@@ -494,6 +503,9 @@ object DownloadService {
         trackNumber: String?,
         discNumber: String?,
         releaseDate: String?,
+        isrc: String? = null,
+        version: String? = null,
+        copyright: String? = null,
     ) {
         // 交给 ffmpeg 写入（覆盖 mp3/flac/m4a 等全格式，对齐 Flutter 的 ffmpeg 打标）
         fun runTag(cover: String?): Boolean = FfmpegTagger.tagInPlace(
@@ -507,6 +519,9 @@ object DownloadService {
             trackNumber = trackNumber,
             discNumber = discNumber,
             releaseDate = releaseDate,
+            isrc = isrc,
+            version = version,
+            copyright = copyright,
         )
 
         var ok = runTag(coverPath)
