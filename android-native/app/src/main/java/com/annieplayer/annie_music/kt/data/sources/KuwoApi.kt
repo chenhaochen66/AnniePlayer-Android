@@ -947,7 +947,19 @@ suspend fun fetchKuwoLyric(songId: String, title: String, artist: String): KuwoL
         }
         if (i + 1 < lines.size) {
             val nextText = _s(lines[i + 1]["lineLyric"]).trim()
-            if (nextText.isNotEmpty() && isOriginal(text) && isTranslation(nextText)) {
+            val curTime = _s(lines[i]["time"]).toDoubleOrNull() ?: -1.0
+            val nextTime = _s(lines[i + 1]["time"]).toDoubleOrNull() ?: -2.0
+            val afterTime = if (i + 2 < lines.size) {
+                _s(lines[i + 2]["time"]).toDoubleOrNull() ?: -3.0
+            } else {
+                -4.0
+            }
+            // 酷我翻译行的两种排布：①与原文同时间戳；②紧跟在原文后、沿用「下一句原文」的时间戳
+            // （Adele《Hello》：原文 6.59 → 翻译 12.08 → 下一句原文 12.08）。中英混杂的歌里相邻的
+            // 英文句与中文句两者都不满足（《来自天堂的魔鬼》52.1 → 59.2 → 66.0），不会被误吞。
+            val aligned = kotlin.math.abs(nextTime - curTime) <= 0.1 ||
+                kotlin.math.abs(nextTime - afterTime) <= 0.1
+            if (nextText.isNotEmpty() && aligned && isOriginal(text) && isTranslation(nextText)) {
                 val t = fmtTime(_s(lines[i]["time"]))
                 lrcLines.add("$t$text")
                 tlyricLines.add("$t$nextText")

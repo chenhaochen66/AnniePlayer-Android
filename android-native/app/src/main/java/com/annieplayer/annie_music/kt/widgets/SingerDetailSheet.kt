@@ -481,7 +481,7 @@ private fun SingerDetailContent(
                     title = when (st.tab) {
                         "song" -> "全部单曲"
                         "album" -> "全部专辑"
-                        else -> null
+                        else -> "歌手详情"
                     },
                     titleCount = if (st.tab == "song" && st.songTotal > 0) {
                         "${st.songTotal} 首"
@@ -1175,13 +1175,14 @@ private fun SingerDetailSongRow(
         ) {
             Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier.width(AppSpacing.sp22),
+                    modifier = Modifier.width(AppSpacing.sp28),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = "${index + 1}",
-                        color = if (selected) AppColors.primary else AppColors.textDisabled,
-                        fontSize = AppFontSize.sm,
+                        color = if (selected) AppColors.primary else AppColors.white60,
+                        fontSize = AppFontSize.size15,
+                        fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center,
                     )
                 }
@@ -1196,7 +1197,7 @@ private fun SingerDetailSongRow(
                     Text(
                         text = song.title,
                         color = if (isActive) AppColors.primary else AppColors.textPrimary,
-                        fontSize = AppFontSize.base,
+                        fontSize = AppFontSize.lg,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1205,7 +1206,7 @@ private fun SingerDetailSongRow(
                     Text(
                         text = if (song.album.isNullOrEmpty()) song.artist else "${song.artist} · ${song.album}",
                         color = AppColors.textTertiary,
-                        fontSize = AppFontSize.xs,
+                        fontSize = AppFontSize.size13,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

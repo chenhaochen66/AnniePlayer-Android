@@ -327,8 +327,9 @@ class PlayerViewModel : ViewModel() {
 
     // ── 状态迁移（逐条对齐 Dart） ──
 
-    /** 设置队列并从 startIndex 开播；整体重建 state（loopMode 回落 sequential，对齐 Dart） */
+    /** 设置队列并从 startIndex 开播；整体重建 state，但**沿用当前循环模式**（切歌不该把模式打回顺序） */
     fun setQueue(songs: List<Song>, startIndex: Int = 0) {
+        val mode = _state.value.loopMode
         _state.value = PlayerState(
             queue = songs,
             currentIndex = startIndex,
@@ -338,9 +339,10 @@ class PlayerViewModel : ViewModel() {
             downloadedIds = _state.value.downloadedIds,
             isLyricsVisible = _state.value.isLyricsVisible,
             duration = if (songs.isEmpty()) 0.0 else songs[startIndex].duration.toDouble(),
+            loopMode = mode,
         )
         val items = songs.map { _toBackendItem(it) }
-        val modeName = _state.value.loopMode.name
+        val modeName = mode.name
         _backendCall { it.setQueue(items, startIndex, modeName) }
         _onSongChanged(_state.value.currentSong)
     }

@@ -330,8 +330,8 @@ class MediaPlayerBackend(
     /**
      * 设置队列并从 [startIndex] 开播（对齐 Dart `setQueue`）。
      *
-     * 注意：与 Dart 一致，这里**不**设置 `player.repeatMode`——单曲循环的循环模式只在
-     * [setAppLoopMode] 里落到播放器（Dart 的 `_appLoopMode` 同理）。
+     * 注意：这里必须把 `loopMode` 同步落到播放器（见 [_applyRepeatMode]）——否则冷启动后
+     * `_appLoopMode` 已是 single 而 `player.repeatMode` 仍是 OFF，单曲循环会「播完即停」。
      */
     override suspend fun setQueue(items: List<Map<String, String>>, startIndex: Int, loopMode: String) {
         withContext(Dispatchers.Main.immediate) {
@@ -342,6 +342,7 @@ class MediaPlayerBackend(
             _pendingPrefetch.clear()
             _consecutiveFailures = 0
             _appLoopMode = LoopMode.fromName(loopMode)
+            _applyRepeatMode()
             if (_queue.isEmpty()) return@withContext
             val safeIndex = if (startIndex in _queue.indices) startIndex else 0
             _playAbsIndex(safeIndex)
@@ -384,11 +385,16 @@ class MediaPlayerBackend(
     override suspend fun setAppLoopMode(loopMode: String) {
         withContext(Dispatchers.Main.immediate) {
             _appLoopMode = LoopMode.fromName(loopMode)
-            _player?.repeatMode = if (_appLoopMode == LoopMode.single) {
-                Player.REPEAT_MODE_ONE
-            } else {
-                Player.REPEAT_MODE_OFF
-            }
+            _applyRepeatMode()
+        }
+    }
+
+    /** 把 `_appLoopMode` 落到播放器（单曲 -> ONE，其余 -> OFF）；[setQueue] 与 [setAppLoopMode] 共用 */
+    private fun _applyRepeatMode() {
+        _player?.repeatMode = if (_appLoopMode == LoopMode.single) {
+            Player.REPEAT_MODE_ONE
+        } else {
+            Player.REPEAT_MODE_OFF
         }
     }
 

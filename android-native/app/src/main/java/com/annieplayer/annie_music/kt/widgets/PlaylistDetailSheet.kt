@@ -407,6 +407,14 @@ private fun PlaylistDetailHeader(
         ) {
             DetailChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
         }
+        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+        Text(
+            text = "歌单详情",
+            color = AppColors.textPrimary,
+            fontSize = AppFontSize.size17,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
         Spacer(modifier = Modifier.weight(1f))
         if (loading) {
             CircularProgressIndicator(
@@ -663,7 +671,7 @@ private fun PlaylistDetailSongRow(
             Spacer(modifier = Modifier.width(AppSpacing.sp10))
         }
         Box(
-            modifier = Modifier.width(AppSpacing.sp24),
+            modifier = Modifier.width(AppSpacing.sp28),
             contentAlignment = Alignment.Center,
         ) {
             if (playing) {
@@ -671,8 +679,9 @@ private fun PlaylistDetailSongRow(
             } else {
                 Text(
                     text = "${index + 1}",
-                    color = AppColors.whiteA25,
-                    fontSize = AppFontSize.sm,
+                    color = AppColors.white60,
+                    fontSize = AppFontSize.size15,
+                    fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                 )
             }
@@ -686,7 +695,7 @@ private fun PlaylistDetailSongRow(
             Text(
                 text = song.title,
                 color = if (playing) palette.readablePrimary() else AppColors.textPrimary,
-                fontSize = AppFontSize.base,
+                fontSize = AppFontSize.lg,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -695,7 +704,7 @@ private fun PlaylistDetailSongRow(
             Text(
                 text = subtitle,
                 color = AppColors.textTertiary,
-                fontSize = AppFontSize.xs,
+                fontSize = AppFontSize.size13,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

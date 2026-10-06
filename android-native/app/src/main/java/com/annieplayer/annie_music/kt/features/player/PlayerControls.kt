@@ -185,16 +185,18 @@ fun PlayerProgressBar(
                 Text(
                     text = playerFormatTime(displayTime),
                     style = TextStyle(
-                        color = AppColors.white30,
-                        fontSize = AppFontSize.xs,
+                        color = AppColors.white70,
+                        fontSize = AppFontSize.sm,
+                        fontWeight = AppFontWeight.bold,
                         fontFeatureSettings = "tnum",
                     ),
                 )
                 Text(
                     text = playerFormatTime(duration),
                     style = TextStyle(
-                        color = AppColors.whiteA20,
-                        fontSize = AppFontSize.xs,
+                        color = AppColors.white70,
+                        fontSize = AppFontSize.sm,
+                        fontWeight = AppFontWeight.bold,
                         fontFeatureSettings = "tnum",
                     ),
                 )

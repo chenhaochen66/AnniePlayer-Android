@@ -469,6 +469,14 @@ private fun AlbumDetailHeader(
         ) {
             DetailChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
         }
+        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+        Text(
+            text = "专辑详情",
+            color = AppColors.textPrimary,
+            fontSize = AppFontSize.size17,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
         Spacer(modifier = Modifier.weight(1f))
         if (selectMode) {
             Box(
@@ -726,7 +734,7 @@ private fun AlbumDetailSongRow(
             Spacer(modifier = Modifier.width(AppSpacing.sp10))
         }
         Box(
-            modifier = Modifier.width(AppSpacing.sp24),
+            modifier = Modifier.width(AppSpacing.sp28),
             contentAlignment = Alignment.Center,
         ) {
             if (isPlaying) {
@@ -734,8 +742,9 @@ private fun AlbumDetailSongRow(
             } else {
                 Text(
                     text = "${index + 1}",
-                    color = AppColors.whiteA25,
-                    fontSize = AppFontSize.sm,
+                    color = AppColors.white60,
+                    fontSize = AppFontSize.size15,
+                    fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                 )
             }
@@ -749,7 +758,7 @@ private fun AlbumDetailSongRow(
             Text(
                 text = song.name,
                 color = if (isPlaying) playingTint else AppColors.textPrimary,
-                fontSize = AppFontSize.base,
+                fontSize = AppFontSize.lg,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -758,7 +767,7 @@ private fun AlbumDetailSongRow(
             Text(
                 text = song.artistName,
                 color = AppColors.textTertiary,
-                fontSize = AppFontSize.xs,
+                fontSize = AppFontSize.size13,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
