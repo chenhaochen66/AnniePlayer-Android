@@ -383,13 +383,24 @@ object DownloadService {
                 tmpFile.outputStream().use { output ->
                     val buf = ByteArray(64 * 1024)
                     var received = 0L
+                    var lastPct = -1
                     var n = input.read(buf)
                     while (n >= 0) {
                         output.write(buf, 0, n)
                         received += n
-                        if (total > 0) onProgress(received.toDouble() / total)
+                        // 节流：只在整数百分比变化时上报。原先每 64KB 都回调，一首歌几百次，
+                        // 批量下载上千首时会把状态流刷爆（每次 emit 都让订阅者重组成新 map）。
+                        if (total > 0) {
+                            val pct = ((received * 100) / total).toInt()
+                            if (pct != lastPct) {
+                                lastPct = pct
+                                onProgress(received.toDouble() / total)
+                            }
+                        }
                         n = input.read(buf)
                     }
+                    // 补一次收尾，避免最后不足 1% 的尾巴没上报
+                    if (total > 0 && lastPct != 100) onProgress(1.0)
                 }
             }
         }

@@ -80,15 +80,11 @@ class MusicSessionService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        // 先摘除会话，避免 Media3 在 onDestroy 时连带释放由 backend 持有、需要复用的会话。
-        AnnieAudioHolder.session?.let { session ->
-            try {
-                if (sessions.contains(session)) removeSession(session)
-            } catch (_: Throwable) {
-            }
-        }
-        // 不释放共享的 player / MediaSession：它们由 MediaPlayerBackend 持有并复用
-        // 但需复位 backend 的前台服务启动标志，否则后续播放不会再拉起服务/通知。
+        // 【不要 removeSession】Media3 的 removeSession() 语义是「移除并释放」：释放会话会连带
+        // 把底层 ExoPlayer 停到 STATE_IDLE，于是「暂停 → 切后台 → 回来点播放」不播（play() 对
+        // IDLE 是空操作），要点第二次或切歌才恢复（真机复现）。
+        // 会话与播放器都由 MediaPlayerBackend 创建并复用，服务只是它们的宿主，所以这里不释放
+        // 任何东西，只复位 backend 的前台服务启动标志（否则后续播放不会再拉起服务/通知）。
         AnnieAudioHolder.onServiceStopped?.invoke()
         super.onDestroy()
     }

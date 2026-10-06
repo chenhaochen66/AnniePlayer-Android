@@ -398,6 +398,10 @@ class MediaPlayerBackend(
         withContext(Dispatchers.Main.immediate) {
             val p = _player ?: return@withContext
             if (p.mediaItemCount == 0) return@withContext
+            // 播放器可能已退到 IDLE（服务被系统回收时会话被释放 → 底层 stop）：此时 play() 是
+            // 空操作，表现为「暂停后切后台、回来点播放不播」，要点第二次或切歌（setQueue 里有
+            // prepare）才恢复。这里兜底重新 prepare，保证一次点击就能续播。
+            if (p.playbackState == Player.STATE_IDLE) p.prepare()
             p.play()
             _ensureServiceStarted()
         }
