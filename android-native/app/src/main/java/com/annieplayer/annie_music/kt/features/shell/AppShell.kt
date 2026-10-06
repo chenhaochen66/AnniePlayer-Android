@@ -507,7 +507,7 @@ fun AppShell(
                         playerViewModel.setLoopMode(next)
                     },
                     onOpenQueue = { uiViewModel.setQueueVisible(true) },
-                    onOpenSongActions = { uiViewModel.setSongActionsVisible(true) },
+                    onOpenSongActions = { uiViewModel.setSongActionsVisible(true, currentSong) },
                     onSetVolume = { volume -> playerViewModel.setVolume(volume) },
                     onToggleTranslation = {
                         uiViewModel.setShowLyricsTranslation(!uiState.showLyricsTranslation)

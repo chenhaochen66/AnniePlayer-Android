@@ -57,8 +57,11 @@ data class SongArtistRef(
     val id: String,
 )
 
-/** 多歌手名分隔符（对齐 Dart `RegExp(r'\s*[/、,&]\s*')`）。 */
-private val SongArtistSeparators by lazy { Regex("\\s*[/、,&]\\s*") }
+/**
+ * 多歌手名分隔符：**不含 `&`**。结构化字段缺失时才会走这个兜底拆名，而 `&` 更常见的身份是
+ * 「组合名的一部分」（Lucas & Steve / Simon & Garfunkel…），当分隔符用会把一个歌手劈成两个。
+ */
+private val SongArtistSeparators by lazy { Regex("\\s*[/、,]\\s*") }
 /**
  * 从歌曲取出歌手列表（对齐 Dart `artistsOfSong`）：
  * 优先用结构化字段 `artistNames` / `artistIds`，缺失时按分隔符拆 `artist` 字符串。

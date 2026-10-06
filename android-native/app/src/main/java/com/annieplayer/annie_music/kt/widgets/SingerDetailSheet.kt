@@ -2,9 +2,14 @@ package com.annieplayer.annie_music.kt.widgets
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -16,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,14 +30,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -84,6 +93,7 @@ import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchArtistAlbumsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchArtistAvatarByPlatform
+import com.annieplayer.annie_music.kt.data.fetchArtistBioByPlatform
 import com.annieplayer.annie_music.kt.data.fetchArtistSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
@@ -98,7 +108,6 @@ import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
 import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
-import com.annieplayer.annie_music.kt.ui.theme.AppBorder
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
@@ -167,7 +176,7 @@ fun SingerDetailSheet(
 
 /** 歌手详情内部可变状态（对齐 Dart `_SingerDetailViewState` 的字段） */
 private class SingerDetailState {
-    var tab by mutableStateOf("song")
+    var tab by mutableStateOf("overview")
 
     var songs by mutableStateOf<List<Song>>(emptyList())
     var songTotal by mutableStateOf(0)
@@ -192,6 +201,9 @@ private class SingerDetailState {
     var batchProgress by mutableStateOf("")
 
     var avatarUrl by mutableStateOf("")
+
+    /** 歌手简介（各平台从已有的歌手接口顺带取；为空则整段不显示） */
+    var bio by mutableStateOf("")
 }
 
 @Composable
@@ -222,7 +234,15 @@ private fun SingerDetailContent(
         st.songError = ""
         try {
             val result = fetchArtistSongsByPlatform(data.platform, data.id, page)
-            st.songs = result.songs
+            // 酷我 / 酷狗的「歌手单曲」接口不带结构化歌手字段：用本页歌手补上，
+            // 这样行尾 ⋮ 的「跳转到歌手」有确定 id（秒开），也不会把组合名按 & 拆成两个人。
+            st.songs = result.songs.map { s ->
+                if (s.artistNames.isEmpty()) {
+                    s.copy(artistNames = listOf(data.name), artistIds = listOf(data.id))
+                } else {
+                    s
+                }
+            }
             st.songTotal = result.total
             st.songPageable = result.pageable
         } catch (e: Exception) {
@@ -251,6 +271,17 @@ private fun SingerDetailContent(
             if (url.isNotEmpty()) st.avatarUrl = url
         } catch (_: Exception) {
             // 对齐 Dart：补头像失败保持占位
+        }
+    }
+
+    // 简介必须独立于头像请求：从「跳转到歌手」进来时 data.picture 非空，头像那一支会直接跳过
+    suspend fun loadBioIfNeeded() {
+        if (st.bio.isNotEmpty()) return
+        try {
+            val bio = fetchArtistBioByPlatform(data.platform, data.id, data.name)
+            if (bio.isNotEmpty()) st.bio = bio
+        } catch (_: Exception) {
+            // 拿不到就整段不显示
         }
     }
 
@@ -364,7 +395,10 @@ private fun SingerDetailContent(
 
     LaunchedEffect(Unit) {
         loadSongs(1)
+        // overview 需要同时有「Most popular 前几首」与「Albums 横滑」，进页就把两者都拉上
+        loadAlbums()
         loadAvatarIfNeeded()
+        loadBioIfNeeded()
     }
 
     // 返回手势：本页音质选择器优先；更高层浮层可见时让位（见 OverlayStack.kt）
@@ -381,9 +415,21 @@ private fun SingerDetailContent(
     val detailIsTop = handleBack(higherFlags) == BackTarget.DETAIL &&
         !uiState.albumDetailVisible &&
         !uiState.downloadQueueVisible
-    BackHandler(enabled = detailIsTop) {
-        uiViewModel.setSingerDetailVisible(false)
+
+    // 子页（全部歌曲 / 全部专辑）的返回先回 overview，overview 才真正关面板
+    fun goBack() {
+        if (st.tab != "overview") {
+            st.tab = "overview"
+            st.selectMode = false
+            st.selectedSongs.clear()
+            // overview 的「最热门」只认第 1 页 → 从完整列表回来时把列表复位
+            if (st.songPage != 1) scope.launch { loadSongs(1) }
+        } else {
+            uiViewModel.setSingerDetailVisible(false)
+        }
     }
+
+    BackHandler(enabled = detailIsTop) { goBack() }
 
     // 进出场：150ms + 线性（AppDuration.sheet + AppEasing.linear，与其它浮层同规格）
     val slide = remember { Animatable(1f) }
@@ -423,23 +469,25 @@ private fun SingerDetailContent(
             )
             Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
                 SingerDetailHeader(
-                    // 仅在「歌曲」分页显示多选入口：专辑分页没有歌曲可选（真机反馈）
+                    // 多选入口只在「全部歌曲」子页出现（专辑子页没有歌曲可选）
                     showSelectEntry = st.tab == "song",
                     selectMode = st.tab == "song" && st.selectMode,
-                    triState = if (st.tab == "song" && st.selectMode) {
-                        singerDetailTriState(st.songs, st.selectedSongs)
+                    selectedAll = st.tab == "song" && st.selectMode &&
+                        singerDetailTriState(st.songs, st.selectedSongs) ==
+                        SingerDetailTriState.Checked,
+                    onClose = { goBack() },
+                    onToggleSelectAll = { toggleSelectAll() },
+                    onToggleSelectMode = { toggleSelectMode() },
+                    title = when (st.tab) {
+                        "song" -> "全部单曲"
+                        "album" -> "全部专辑"
+                        else -> null
+                    },
+                    titleCount = if (st.tab == "song" && st.songTotal > 0) {
+                        "${st.songTotal} 首"
                     } else {
                         null
                     },
-                    onClose = { uiViewModel.setSingerDetailVisible(false) },
-                    onToggleSelectAll = { toggleSelectAll() },
-                    onToggleSelectMode = { toggleSelectMode() },
-                )
-                SingerDetailArtistInfo(
-                    name = artistName,
-                    songTotal = st.songTotal,
-                    avatarUrl = st.avatarUrl.ifEmpty { data.picture },
-                    avatarKey = data.id,
                 )
                 if (st.tab == "song" && st.selectMode) {
                     // 待下载选择条（对齐 Dart `_selectionBar`）：数量徽标 + 「待下载歌曲」+
@@ -510,27 +558,55 @@ private fun SingerDetailContent(
                         }
                     }
                 }
-                SingerDetailTabBar(tab = st.tab, onSwitch = { switchTab(it) })
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    if (st.tab == "song") {
-                        SingerDetailSongs(
-                            st = st,
-                            tasks = tasks,
-                            activeSongId = playerState.currentSong?.id,
-                            totalPages = totalPages,
-                            pageRange = pageRange,
-                            showPagination = showPagination,
-                            onPlay = { scope.launch { playSong(it) } },
-                            onDownload = { uiViewModel.setSongActionsVisible(true, it) },
-                            onToggle = { toggleSelect(it) },
-                            onGoToPage = { scope.launch { loadSongs(it) } },
-                        )
-                    } else {
-                        SingerDetailAlbums(
-                            st = st,
-                            onSortToggle = { st.albumSortAsc = !st.albumSortAsc },
-                            onOpenAlbum = { openAlbum(it) },
-                        )
+                    AnimatedContent(
+                        targetState = st.tab,
+                        transitionSpec = {
+                            // 进子页时新页从右侧滑入、返回时从左侧滑入（overview 视为上一层）
+                            val enterFromRight = targetState != "overview"
+                            val enter = slideInHorizontally(
+                                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+                            ) { if (enterFromRight) it else -it / 3 }
+                            val exit = slideOutHorizontally(
+                                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+                            ) { if (enterFromRight) -it / 3 else it }
+                            (enter + fadeIn(tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear))) togetherWith
+                                (exit + fadeOut(tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear)))
+                        },
+                        label = "singerDetailView",
+                    ) { tab ->
+                        when (tab) {
+                            "overview" -> SingerDetailOverview(
+                                st = st,
+                                data = data,
+                                artistName = artistName,
+                                activeSongId = playerState.currentSong?.id,
+                                onPlay = { scope.launch { playSong(it) } },
+                                onDownload = { uiViewModel.setSongActionsVisible(true, it) },
+                                onOpenAlbum = { openAlbum(it) },
+                                onSeeAllSongs = { switchTab("song") },
+                                onSeeAllAlbums = { switchTab("album") },
+                            )
+
+                            "song" -> SingerDetailSongs(
+                                st = st,
+                                tasks = tasks,
+                                activeSongId = playerState.currentSong?.id,
+                                totalPages = totalPages,
+                                pageRange = pageRange,
+                                showPagination = showPagination,
+                                onPlay = { scope.launch { playSong(it) } },
+                                onDownload = { uiViewModel.setSongActionsVisible(true, it) },
+                                onToggle = { toggleSelect(it) },
+                                onGoToPage = { scope.launch { loadSongs(it) } },
+                            )
+
+                            else -> SingerDetailAlbums(
+                                st = st,
+                                onSortToggle = { st.albumSortAsc = !st.albumSortAsc },
+                                onOpenAlbum = { openAlbum(it) },
+                            )
+                        }
                     }
                 }
             }
@@ -579,7 +655,7 @@ private const val PageSize = ArtistSongsPageSize
 private fun singerDetailAllSelected(pageSongs: List<Song>, selected: List<Song>): Boolean =
     pageSongs.isNotEmpty() && pageSongs.all { s -> selected.any { it.id == s.id } }
 
-/** 当前页歌曲的三态（全选 / 部分选中 / 未选），供头部 [SingerDetailTriStateCheckBox] 使用。 */
+/** 当前页歌曲的三态（全选 / 部分选中 / 未选），供头部「全选 / 取消全选」按钮使用。 */
 private fun singerDetailTriState(pageSongs: List<Song>, selected: List<Song>): SingerDetailTriState = when {
     singerDetailAllSelected(pageSongs, selected) -> SingerDetailTriState.Checked
     pageSongs.any { s -> selected.any { it.id == s.id } } -> SingerDetailTriState.Indeterminate
@@ -618,17 +694,20 @@ private fun singerDetailPageRange(current: Int, total: Int): List<Any> {
 // ================================================================================================
 
 /**
- * 返回条：chevron_left 22 + 「歌手详情」16 w600 +（多选时）三态全选 + 多选 / 取消玻璃 chip
- * （对齐 Dart `_header`；控件样式见 [SingerDetailTriStateCheckBox] / [SingerDetailSelectChip]）。
+ * 返回条：chevron_left 22 +（多选态）全选 / 取消全选 + 多选 / 取消。
+ *
+ * 与专辑详情同款：都是纯文字主色按钮（不用玻璃 chip），多选入口只在「全部歌曲」子页出现。
  */
 @Composable
 private fun SingerDetailHeader(
     selectMode: Boolean,
-    triState: SingerDetailTriState?,
+    selectedAll: Boolean,
     showSelectEntry: Boolean,
     onClose: () -> Unit,
     onToggleSelectAll: () -> Unit,
     onToggleSelectMode: () -> Unit,
+    title: String? = null,
+    titleCount: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -644,57 +723,208 @@ private fun SingerDetailHeader(
         ) {
             SingerDetailChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
         }
-        Spacer(modifier = Modifier.width(AppSpacing.sp8))
-        Text(
-            text = "歌手详情",
-            modifier = Modifier.weight(1f),
-            color = AppColors.textPrimary,
-            fontSize = AppFontSize.lg,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (triState != null) {
-            SingerDetailTriStateCheckBox(
-                state = triState,
-                onToggle = onToggleSelectAll,
+        if (!title.isNullOrEmpty()) {
+            Spacer(modifier = Modifier.width(AppSpacing.sp8))
+            Text(
+                text = title,
+                modifier = Modifier.weight(1f, fill = false),
+                color = AppColors.textPrimary,
+                fontSize = AppFontSize.size17,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(modifier = Modifier.width(AppSpacing.sp4))
+            if (!titleCount.isNullOrEmpty()) {
+                Spacer(modifier = Modifier.width(AppSpacing.sp6))
+                Text(
+                    text = titleCount,
+                    color = AppColors.whiteA40,
+                    fontSize = AppFontSize.size13,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
         }
-        // 专辑分页没有歌曲可选 → 整颗隐藏多选入口（不是只把它显示成「多选」）
+        Spacer(modifier = Modifier.weight(1f))
+        if (showSelectEntry && selectMode) {
+            Box(
+                modifier = Modifier
+                    .clickableRipple(onToggleSelectAll)
+                    .padding(AppSpacing.sp4),
+            ) {
+                Text(
+                    text = if (selectedAll) "取消全选" else "全选",
+                    color = AppColors.primary,
+                    fontSize = AppFontSize.size13,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
         if (showSelectEntry) {
-            SingerDetailSelectChip(
-                selectMode = selectMode,
-                onToggle = onToggleSelectMode,
-            )
+            Box(
+                modifier = Modifier
+                    .clickableRipple(onToggleSelectMode)
+                    .padding(AppSpacing.sp4),
+            ) {
+                Text(
+                    text = if (selectMode) "取消" else "多选",
+                    color = AppColors.primary,
+                    fontSize = AppFontSize.size13,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
         }
     }
 }
 
-/** 歌手头像（100 圆形）+ 名字 20 w700 + 「歌曲 N」13（对齐 Dart `_artistInfo`） */
+/** overview 横向专辑卡尺寸（高 = 宽 + 文字区，与 [SingerDetailAlbums] 网格同比例） */
+private val SingerDetailAlbumCardWidth = 140.dp
+private val SingerDetailAlbumCardHeight = 208.dp
+
+/** overview「最热门」每页显示的行数（横向翻页，一页 5 行） */
+private const val SingerDetailPageRows = 5
+
+/** overview「专辑」段最多展示的专辑数（按发行时间取最近的若干张） */
+private const val SingerDetailOverviewAlbumCount = 10
+
+/**
+ * overview 页：大头像 Hero + 动作行 +「Most popular」前几首 +「Albums」横滑。
+ *
+ * 数据全部来自本页已有的 `st.songs`（第 1 页）与 `st.albums`；
+ * 两个 section 右侧的「全部 ›」把 `st.tab` 切到对应子页。
+ */
 @Composable
-private fun SingerDetailArtistInfo(
+private fun SingerDetailOverview(
+    st: SingerDetailState,
+    data: SingerDetailData,
+    artistName: String,
+    activeSongId: String?,
+    onPlay: (Song) -> Unit,
+    onDownload: (Song) -> Unit,
+    onOpenAlbum: (Album) -> Unit,
+    onSeeAllSongs: () -> Unit,
+    onSeeAllAlbums: () -> Unit,
+) {
+    // 「专辑」段只展示最近的若干张（按 pub 倒序，空值排最后）
+    val recentAlbums = remember(st.albums) {
+        st.albums.sortedByDescending { it.pub }.take(SingerDetailOverviewAlbumCount)
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
+    ) {
+        item {
+            SingerDetailHero(
+                name = artistName,
+                avatarUrl = st.avatarUrl.ifEmpty { data.picture },
+                avatarKey = data.id,
+                bio = st.bio,
+                onPlayAll = { st.songs.firstOrNull()?.let(onPlay) },
+                playEnabled = st.songs.isNotEmpty(),
+            )
+        }
+        item { SingerDetailSectionHeader(title = "最热门", onSeeAll = onSeeAllSongs) }
+        item {
+            // 只展示第 1 页的歌曲（st.songs 就是当前页，进 overview 时固定在第 1 页）；
+            // 每页 [SingerDetailPageRows] 行，左右滑动翻页。
+            val overviewSongs = st.songs.take(ArtistSongsPageSize)
+            val pageCount = (overviewSongs.size + SingerDetailPageRows - 1) / SingerDetailPageRows
+            if (pageCount > 0) {
+                val pagerState = rememberPagerState(pageCount = { pageCount })
+                HorizontalPager(
+                    state = pagerState,
+                    pageSpacing = AppSpacing.sp8,
+                    contentPadding = PaddingValues(horizontal = AppSpacing.sp4),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(AppSize.detailRowHeight * SingerDetailPageRows),
+                ) { page ->
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        for (row in 0 until SingerDetailPageRows) {
+                            val index = page * SingerDetailPageRows + row
+                            if (index >= overviewSongs.size) break
+                            val song = overviewSongs[index]
+                            SingerDetailSongRow(
+                                song = song,
+                                index = index,
+                                isActive = song.id == activeSongId,
+                                isDownloading = false,
+                                selected = false,
+                                selectionMode = false,
+                                onPlay = onPlay,
+                                onDownload = onDownload,
+                                onToggle = {},
+                                onLongSelect = {},
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item { SingerDetailSectionHeader(title = "专辑", onSeeAll = onSeeAllAlbums) }
+        item {
+            if (st.albumLoading && recentAlbums.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(SingerDetailAlbumCardHeight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(AppIconSize.icon24),
+                        color = AppColors.primary,
+                    )
+                }
+            } else {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = AppSpacing.sp16),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.sp10),
+                ) {
+                    items(count = recentAlbums.size) { i ->
+                        val album = recentAlbums[i]
+                        SingerDetailAlbumCard(
+                            album = album,
+                            coverUrl = buildAlbumCoverUrl(album),
+                            modifier = Modifier
+                                .width(SingerDetailAlbumCardWidth)
+                                .height(SingerDetailAlbumCardHeight),
+                            onTap = onOpenAlbum,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** overview 头部：正圆大头像（约 55% 屏宽）+ 居中艺人名 +「Artist」+ 播放胶囊 */
+@Composable
+private fun SingerDetailHero(
     name: String,
-    songTotal: Int,
     avatarUrl: String,
     avatarKey: String,
+    bio: String,
+    onPlayAll: () -> Unit,
+    playEnabled: Boolean,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = AppSpacing.sp20),
+            .padding(horizontal = AppSpacing.sp24, vertical = AppSpacing.sp20),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         var avatarFailed by remember(avatarKey, avatarUrl) { mutableStateOf(false) }
         Box(
             modifier = Modifier
-                .size(AppSize.coverPlaceholder)
+                .fillMaxWidth(0.55f)
+                .aspectRatio(1f)
                 .clip(CircleShape)
                 .background(AppColors.whiteA03),
             contentAlignment = Alignment.Center,
         ) {
             if (avatarUrl.isEmpty() || avatarFailed) {
-                SingerDetailPersonOutline(modifier = Modifier.size(AppIconSize.icon36), tint = AppColors.textDisabled)
+                SingerDetailPersonOutline(
+                    modifier = Modifier.size(AppIconSize.icon48),
+                    tint = AppColors.textDisabled,
+                )
             } else {
                 AsyncImage(
                     model = avatarUrl,
@@ -705,234 +935,106 @@ private fun SingerDetailArtistInfo(
                 )
             }
         }
-        Spacer(modifier = Modifier.height(AppSpacing.sp12))
+        Spacer(modifier = Modifier.height(AppSpacing.sp16))
         Text(
             text = name,
             color = AppColors.textPrimary,
-            fontSize = AppFontSize.size20,
+            fontSize = AppFontSize.size26,
             fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
         Spacer(modifier = Modifier.height(AppSpacing.sp4))
         Text(
-            text = "歌曲 $songTotal",
-            color = AppColors.textTertiary,
+            text = "歌手",
+            color = AppColors.whiteA50,
             fontSize = AppFontSize.size13,
+            textAlign = TextAlign.Center,
         )
+        if (bio.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(AppSpacing.sp8))
+            var bioExpanded by remember(avatarKey) { mutableStateOf(false) }
+            Text(
+                text = bio,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickableRipple { bioExpanded = !bioExpanded },
+                color = AppColors.white70,
+                fontSize = AppFontSize.size13,
+                textAlign = TextAlign.Center,
+                maxLines = if (bioExpanded) Int.MAX_VALUE else 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(AppSpacing.sp2))
+            Text(
+                text = if (bioExpanded) "收起" else "更多",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(percent = 50))
+                    .clickableRipple { bioExpanded = !bioExpanded }
+                    .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp2),
+                color = AppColors.primary,
+                fontSize = AppFontSize.size13,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+        Spacer(modifier = Modifier.height(AppSpacing.sp16))
+        DetailPlayAllPill(onClick = onPlayAll, enabled = playEnabled)
     }
 }
 
-/** 头部全选控件三态：未选 / 部分选中 / 全选。 */
-private enum class SingerDetailTriState { Unchecked, Indeterminate, Checked }
-
-/** 三态复选缩放：未选中静置 0.85（与共享 `DetailCheckBox` 的弹一下反馈同规格）。 */
-private const val SingerDetailCheckRestScale = 0.85f
-
-/** 三态复选缩放：已选（含半选）静置 1.0。 */
-private const val SingerDetailCheckCheckedScale = 1f
-
-/**
- * 头部「多选 / 取消」入口：玻璃描边 chip（自绘图标 + 文案，48dp 命中区）。
- *
- * 视觉：玻璃底（[glassPanel]，无投影）+ 1px [AppColors.primary] 描边 + primary 图标 / 文案
- * —— 与分段选中态同一套「玻璃 + 描边 + 主色文字」语言，不用实心主色块。
- * 未进入多选显示「多选」+ checklist 图标；进入后显示「取消」+ 关闭叉。
- * 交互：点击涟漪（[clickableRipple]）+ 轻触觉（[HapticFeedbackType.TextHandleMove]）。
- */
+/** section 标题行：左侧标题 + 右侧「全部 ›」玻璃 pill */
 @Composable
-private fun SingerDetailSelectChip(
-    selectMode: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val haptics = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(AppRadius.pill)
-    Box(
-        modifier = modifier
-            // 命中区 ≥48dp（与 DetailCheckBox / MultiSelectDownloadBar 同一约定）
-            .minimumInteractiveComponentSize()
-            .clip(shape)
-            .clickableRipple {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onToggle()
-            }
-            .semantics { role = Role.Button },
-        contentAlignment = Alignment.Center,
+private fun SingerDetailSectionHeader(title: String, onSeeAll: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = AppSpacing.sp16, end = AppSpacing.sp16, top = AppSpacing.sp16, bottom = AppSpacing.sp8),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            color = AppColors.textPrimary,
+            fontSize = AppFontSize.size20,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         Row(
             modifier = Modifier
-                .glassPanel(shape = shape, elevated = false)
-                .border(AppBorder.thin, AppColors.primary, shape)
-                .padding(horizontal = AppSpacing.sp10, vertical = AppSpacing.sp6),
+                .clip(RoundedCornerShape(percent = 50))
+                .background(AppColors.whiteA06)
+                .clickableRipple(onSeeAll)
+                .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp6),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (selectMode) {
-                SingerDetailCloseGlyph(modifier = Modifier.size(AppIconSize.icon16), tint = AppColors.primary)
-            } else {
-                SingerDetailMultiSelectGlyph(modifier = Modifier.size(AppIconSize.icon16), tint = AppColors.primary)
-            }
-            Spacer(modifier = Modifier.width(AppSpacing.sp4))
-            Text(
-                text = if (selectMode) "取消" else "多选",
-                color = AppColors.primary,
-                fontSize = AppFontSize.size13,
-                fontWeight = AppFontWeight.medium,
+            Text(text = "全部", color = AppColors.white70, fontSize = AppFontSize.xs)
+            Spacer(modifier = Modifier.width(AppSpacing.sp2))
+            SingerDetailChevronRight(
+                modifier = Modifier.size(AppIconSize.icon13),
+                tint = AppColors.white54,
             )
         }
     }
 }
 
-/**
- * 本页私有三态复选控件（头部全选）：空框 / 半选横杠 / primary 实心对勾。
- *
- * 为什么不复用共享 [DetailCheckBox]：后者只有「未选 / 全选」两态，无法表达部分选中。
- * 按约定不改共享文件，这里以同一视觉规格（18dp 视觉 [AppSize.detailCheckBoxSize]、r4 圆角、
- * 1.5dp 等效描边、primary 实心 + [AppColors.background] 勾 / 横杠、0.85 → 1.0 缩放）实现三态版；
- * 空框与对勾直接复用共享件 [DetailCheckBoxBlank] / [DetailCheckMark]，保证笔重一致。
- *
- * 交互：点击在「全选 ⇄ 清空」间切换（半选视作未全选，点击补齐为全选），
- * 涟漪（[clickableRipple]）+ 轻触觉；命中区由 [minimumInteractiveComponentSize] 预留到 48dp。
- * 无障碍：`contentDescription` 随状态给出（「全选」/「取消全选」），[Role.Checkbox]。
- */
+/** 「Hi-Res」角标（歌曲行用；由 `Song.qualities` 是否含 hires 决定是否渲染） */
 @Composable
-private fun SingerDetailTriStateCheckBox(
-    state: SingerDetailTriState,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val haptics = LocalHapticFeedback.current
-    val checked = state != SingerDetailTriState.Unchecked
-    val scale by animateFloatAsState(
-        targetValue = if (checked) SingerDetailCheckCheckedScale else SingerDetailCheckRestScale,
-        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
-        label = "singerDetailTriStateScale",
-    )
+private fun SingerDetailHiResBadge(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(AppRadius.r8))
-            .clickableRipple {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onToggle()
-            }
-            .semantics {
-                contentDescription = if (state == SingerDetailTriState.Checked) "取消全选" else "全选"
-                role = Role.Checkbox
-            },
+            .clip(RoundedCornerShape(percent = 25))
+            .background(AppColors.primaryA15)
+            .padding(horizontal = AppSpacing.sp4, vertical = 1.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(AppSize.detailCheckBoxSize)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                },
-        ) {
-            when (state) {
-                SingerDetailTriState.Checked -> {
-                    Box(Modifier.fillMaxSize().background(AppColors.primary, RoundedCornerShape(AppRadius.r4)))
-                    DetailCheckMark(modifier = Modifier.fillMaxSize(), tint = AppColors.background)
-                }
-
-                SingerDetailTriState.Indeterminate -> {
-                    Box(Modifier.fillMaxSize().background(AppColors.primary, RoundedCornerShape(AppRadius.r4)))
-                    SingerDetailDashMark(modifier = Modifier.fillMaxSize(), tint = AppColors.background)
-                }
-
-                SingerDetailTriState.Unchecked -> {
-                    DetailCheckBoxBlank(modifier = Modifier.fillMaxSize(), tint = AppColors.textTertiary)
-                }
-            }
-        }
+        Text(text = "Hi-Res", color = AppColors.primary, fontSize = AppFontSize.size10)
     }
 }
 
-/** 「歌曲 / 专辑」分段（对齐 Dart `_tabBar` / `_tabButton`） */
-@Composable
-private fun SingerDetailTabBar(tab: String, onSwitch: (String) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = AppSpacing.sp40, end = AppSpacing.sp40, bottom = AppSpacing.sp10),
-    ) {
-        SingerDetailTabButton(
-            label = "歌曲",
-            active = tab == "song",
-            modifier = Modifier.weight(1f),
-            onTap = { onSwitch("song") },
-        )
-        Spacer(modifier = Modifier.width(AppSpacing.sp8))
-        SingerDetailTabButton(
-            label = "专辑",
-            active = tab == "album",
-            modifier = Modifier.weight(1f),
-            onTap = { onSwitch("album") },
-        )
-    }
-}
-
-/**
- * 分段按钮：选中态 = 玻璃底 + 1px primary 描边 + primary 文字（不再用实心主色块）。
- *
- * 切换动效 260ms（借用 [AppDuration.bottomBarMorph] 的值，与底栏两态切换同规格）：
- * 玻璃层透明度 / 描边色 / 文字色三通道同时过渡；点击有涟漪 + 轻触觉。
- */
-@Composable
-private fun SingerDetailTabButton(
-    label: String,
-    active: Boolean,
-    onTap: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val haptics = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(AppRadius.r8)
-    val glassAlpha by animateFloatAsState(
-        targetValue = if (active) 1f else 0f,
-        animationSpec = tween(durationMillis = AppDuration.bottomBarMorph, easing = AppEasing.easeInOutQuad),
-        label = "singerDetailTabGlass",
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (active) AppColors.primary else Color.Transparent,
-        animationSpec = tween(durationMillis = AppDuration.bottomBarMorph, easing = AppEasing.easeInOutQuad),
-        label = "singerDetailTabBorder",
-    )
-    val labelColor by animateColorAsState(
-        targetValue = if (active) AppColors.primary else AppColors.textTertiary,
-        animationSpec = tween(durationMillis = AppDuration.bottomBarMorph, easing = AppEasing.easeInOutQuad),
-        label = "singerDetailTabLabel",
-    )
-    Box(
-        modifier = modifier
-            .height(34.dp)
-            .clip(shape)
-            .background(AppColors.whiteA04)
-            .clickableRipple {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onTap()
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        // 选中玻璃层：透明度随切换淡入 / 淡出（无投影，避免与背景氛围叠加发糊）
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .graphicsLayer { alpha = glassAlpha }
-                .glassPanel(shape = shape, elevated = false),
-        )
-        // 1px primary 描边：只在选中时出现（颜色透明 → primary 过渡）
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .border(AppBorder.thin, borderColor, shape),
-        )
-        Text(
-            text = label,
-            color = labelColor,
-            fontSize = AppFontSize.size13,
-            fontWeight = FontWeight.SemiBold,
-        )
-    }
-}
+/** 头部全选控件三态：未选 / 部分选中 / 全选。 */
+private enum class SingerDetailTriState { Unchecked, Indeterminate, Checked }
 
 // ================================================================================================
 // 歌曲 Tab
@@ -1107,6 +1209,10 @@ private fun SingerDetailSongRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                if (song.qualities.contains(Quality.hires)) {
+                    Spacer(modifier = Modifier.width(AppSpacing.sp6))
+                    SingerDetailHiResBadge()
                 }
                 if (selected) {
                     Spacer(modifier = Modifier.width(AppSpacing.sp4))
@@ -1309,8 +1415,13 @@ private fun SingerDetailAlbums(
         BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val cardWidth = (maxWidth - AppSpacing.sp16 - AppSpacing.sp10) / 2
             val cardHeight = cardWidth + 68.dp
+            val gridState = rememberLazyGridState()
+            // 网格按 albumid 做 key 锚定滚动位置：切正/倒序后原顶部那张会跑到末尾，
+            // 网格为了保持它可见会一路滚到底 —— 所以排序一变就回到顶部。
+            LaunchedEffect(st.albumSortAsc) { gridState.scrollToItem(0) }
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = AppSpacing.sp8,
@@ -1403,8 +1514,9 @@ private fun SingerDetailAlbumCard(
                         Text(
                             text = album.pub,
                             modifier = Modifier.weight(1f, fill = false),
-                            color = AppColors.whiteA20,
+                            color = AppColors.white70,
                             fontSize = AppFontSize.size10,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -1595,47 +1707,6 @@ private fun SingerDetailMusicNote(modifier: Modifier = Modifier, tint: Color = A
         drawCircle(color = tint, radius = w * 0.20f, center = Offset(w * 0.44f, h * 0.70f))
         // 符尾
         drawLine(tint, Offset(w * 0.64f, h * 0.12f), Offset(w * 0.88f, h * 0.26f), stroke, StrokeCap.Round)
-    }
-}
-
-/** checklist：头部「多选」入口图标（两行「勾 + 线」，本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailMultiSelectGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.primary) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        // 上排：勾 + 线
-        drawLine(tint, Offset(w * 0.08f, h * 0.24f), Offset(w * 0.20f, h * 0.36f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.20f, h * 0.36f), Offset(w * 0.40f, h * 0.12f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.52f, h * 0.26f), Offset(w * 0.92f, h * 0.26f), stroke, StrokeCap.Round)
-        // 下排：勾 + 线
-        drawLine(tint, Offset(w * 0.08f, h * 0.70f), Offset(w * 0.20f, h * 0.82f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.20f, h * 0.82f), Offset(w * 0.40f, h * 0.58f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.52f, h * 0.74f), Offset(w * 0.92f, h * 0.74f), stroke, StrokeCap.Round)
-    }
-}
-
-/** close：头部「取消」态图标（×，本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailCloseGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.primary) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        drawLine(tint, Offset(w * 0.24f, h * 0.24f), Offset(w * 0.76f, h * 0.76f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.76f, h * 0.24f), Offset(w * 0.24f, h * 0.76f), stroke, StrokeCap.Round)
-    }
-}
-
-/** remove：三态半选横杠（本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailDashMark(modifier: Modifier = Modifier, tint: Color = AppColors.background) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        drawLine(tint, Offset(w * 0.26f, h * 0.5f), Offset(w * 0.74f, h * 0.5f), stroke, StrokeCap.Round)
     }
 }
 
