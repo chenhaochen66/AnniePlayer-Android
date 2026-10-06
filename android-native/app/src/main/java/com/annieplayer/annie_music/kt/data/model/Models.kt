@@ -156,6 +156,12 @@ enum class LoopMode {
     }
 }
 
+/** 专辑曲目 + 发行时间（[pub] 取接口给的发行日期，可能为空串） */
+data class AlbumSongsPage(
+    val songs: List<AlbumSong>,
+    val pub: String = "",
+)
+
 /** 歌手单曲每页条数：各源按它请求、详情页按它算页码，两侧必须一致 */
 const val ArtistSongsPageSize = 20
 

@@ -2,6 +2,7 @@ package com.annieplayer.annie_music.kt.data.sources
 
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
+import com.annieplayer.annie_music.kt.data.model.AlbumSongsPage
 import com.annieplayer.annie_music.kt.data.model.Artist
 import com.annieplayer.annie_music.kt.data.model.ArtistSongsPage
 import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
@@ -400,15 +401,16 @@ private fun _mapNeteaseAlbums(raw: Any?): List<Album> {
  * 于是专辑页「只有专辑信息、没有歌曲、点了也放不出来」。v1 接口免登录可用，且歌曲自带
  * `ar[].id`（歌手 id），所以歌手跳转也不必再补别的接口。
  */
-suspend fun getNeteaseAlbumSongs(albumId: String): List<AlbumSong> {
+suspend fun getNeteaseAlbumSongs(albumId: String): AlbumSongsPage {
     return try {
         val data = httpGetJson(
             "https://music.163.com/api/v1/album/$albumId",
             neteaseApiHeaders,
         )
         val album = data["album"]
+        val albumMap = if (album is Map<*, *>) album else null
         // v1 把歌曲放在**顶层 `songs`**（旧结构在 `album.songs`）—— 两者都兼容
-        val songsRaw = data["songs"] ?: if (album is Map<*, *>) album["songs"] else null
+        val songsRaw = data["songs"] ?: albumMap?.get("songs")
         val list = if (songsRaw is List<*>) songsRaw else emptyList<Any?>()
         val out = ArrayList<AlbumSong>()
         for (m in _listOfMaps(list)) {
@@ -422,6 +424,7 @@ suspend fun getNeteaseAlbumSongs(albumId: String): List<AlbumSong> {
             val artistIds = arList
                 .map { (it["id"] ?: "").toString() }
                 .filter { it.isNotEmpty() }
+                .takeIf { it.size == artistNames.size } ?: emptyList()
             val dt = m["dt"] ?: m["duration"]
             val no = m["no"]
             out.add(
@@ -436,9 +439,10 @@ suspend fun getNeteaseAlbumSongs(albumId: String): List<AlbumSong> {
                 ),
             )
         }
-        out
+        // 发行时间在 `album.publishTime`（毫秒时间戳）
+        AlbumSongsPage(out, _isoDate(albumMap?.get("publishTime")))
     } catch (_: Throwable) {
-        emptyList()
+        AlbumSongsPage(emptyList())
     }
 }
 
@@ -480,8 +484,7 @@ private fun _mapNeteaseArtists(raw: Any?): List<Artist> =
         )
     }
 
-/** 网易云歌手头像（`/api/v1/artist/{id}` 的 `artist.picUrl`） */
-suspend fun fetchNeteaseArtistAvatar(artistId: String): String {
+/** 网易云歌手头像（`/api/v1/artist/{id}` 的 `artist.picUrl`） */suspend fun fetchNeteaseArtistAvatar(artistId: String): String {
     return try {
         val data = httpGetJson(
             "https://music.163.com/api/v1/artist/$artistId",
@@ -489,6 +492,20 @@ suspend fun fetchNeteaseArtistAvatar(artistId: String): String {
         )
         val a = data["artist"]
         if (a is Map<*, *>) (a["picUrl"] ?: "").toString() else ""
+    } catch (_: Throwable) {
+        ""
+    }
+}
+
+/** 网易云歌手简介：同一接口的 `artist.briefDesc`（免登录） */
+suspend fun fetchNeteaseArtistBio(artistId: String): String {
+    return try {
+        val data = httpGetJson(
+            "https://music.163.com/api/v1/artist/$artistId",
+            neteaseApiHeaders,
+        )
+        val a = data["artist"]
+        if (a is Map<*, *>) (a["briefDesc"] ?: "").toString().trim() else ""
     } catch (_: Throwable) {
         ""
     }

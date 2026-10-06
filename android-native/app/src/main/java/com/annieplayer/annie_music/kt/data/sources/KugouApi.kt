@@ -3,6 +3,7 @@ package com.annieplayer.annie_music.kt.data.sources
 import android.util.Base64
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
+import com.annieplayer.annie_music.kt.data.model.AlbumSongsPage
 import com.annieplayer.annie_music.kt.data.model.Artist
 import com.annieplayer.annie_music.kt.data.model.ArtistSongsPage
 import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
@@ -99,10 +100,11 @@ data class KugouSongAlbumId(
     val publishDate: String,
 )
 
-/** fetchKugouArtistInfo 返回：avatar / songCount */
+/** fetchKugouArtistInfo 返回：avatar / songCount / intro（歌手简介，可能为空） */
 data class KugouArtistInfo(
     val avatar: String,
     val songCount: Int,
+    val intro: String = "",
 )
 
 /** CDN 补充信息（封面 / 专辑名 / 发行日期） */
@@ -133,7 +135,11 @@ private const val _changqingResolveUrl: String =
 private val _reDigits by lazy { Regex("^\\d+$") }
 private val _reNonDigit by lazy { Regex("[^0-9]") }
 private val _reGcid by lazy { Regex("gcid_([a-z0-9]+)", RegexOption.IGNORE_CASE) }
-private val _reArtistSep by lazy { Regex("[、,/&]") }
+/**
+ * 酷狗多歌手分隔符：**不含 `&`** —— 组合名常自带 `&`（如 "Lucas & Steve"），
+ * 实测酷狗真正的分隔符是「、」（`Bassjackers、Lucas & Steve、Caroline Pennell`）。
+ */
+private val _reArtistSep by lazy { Regex("[、,/]") }
 private val _reExt by lazy { Regex("\\.[^.]+${'$'}") }
 private val _reKrcInline by lazy { Regex("<\\d+,\\d+,\\d+>") }
 private val _reKrcLine by lazy { Regex("^\\[(\\d+),(\\d+)\\]") }
@@ -1098,17 +1104,22 @@ private fun _mapKugouSearchSongs(raw: Any?): List<Song> {
         val cover = _firstNonEmpty(listOf(m["Image"], m["UnionCover"]))
             .replace("{size}", "240")
         // SingerName 用「、」分隔多歌手，SingerId 是按下标配对的 id 数组
-        val artistNames = decodeHtmlEntities(
+        val rawSinger = decodeHtmlEntities(
             _firstNonEmpty(listOf(m["SingerName"], "未知歌手")),
-        ).split(_reArtistSep)
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
+        ).trim()
         val idsRaw = m["SingerId"]
-        val artistIds = if (idsRaw is List<*>) {
+        val ids = if (idsRaw is List<*>) {
             idsRaw.map { it.toString() }.filter { it.isNotEmpty() }
         } else {
             emptyList<String>()
-        }.takeIf { it.size == artistNames.size } ?: emptyList()
+        }
+        // id 只有一个 ⇒ 名字里的 & / 、 都是组合名的一部分（如 "Lucas & Steve"），不要拆
+        val artistNames = if (ids.size <= 1) {
+            listOf(rawSinger)
+        } else {
+            rawSinger.split(_reArtistSep).map { it.trim() }.filter { it.isNotEmpty() }
+        }
+        val artistIds = ids.takeIf { it.size == artistNames.size } ?: emptyList()
 
         out.add(
             Song(
@@ -1247,7 +1258,7 @@ private fun _mapKugouAuthors(raw: Any?): List<KugouAuthor> {
 }
 
 /** 获取酷狗专辑曲目（mobilecdn album/song） */
-suspend fun getKugouAlbumSongs(albumId: String): List<AlbumSong> {
+suspend fun getKugouAlbumSongs(albumId: String): AlbumSongsPage {
     try {
         val url =
             "http://mobilecdn.kugou.com/api/v3/album/song" +
@@ -1289,9 +1300,14 @@ suspend fun getKugouAlbumSongs(albumId: String): List<AlbumSong> {
             val len = m["timelength"]
             // 酷狗的专辑歌曲响应里**没有任何歌手 id 字段**（实测：只有 filename/hash/duration…；
             // 单曲详情 `v3/album_audio/audio` 也只返回 author_name，无 author_id）。
-            // 因此这里只能给出歌手名列表（拆 `A & B`），id 留空 —— UI 层会退回按名字搜索
+            // 因此这里只能给出歌手名列表，id 留空 —— UI 层会退回按名字搜索
             // （该搜索本身有缓存，第二次起就是秒开）。
-            val artistNames = splitArtistNames(decodeHtmlEntities(artist))
+            // 没有 id 可校验，所以只按酷狗真正的多歌手分隔符「、」拆，不拆 `&`
+            // （组合名常含 `&`，如 "Lucas & Steve"，按 & 拆会误变成两个歌手）。
+            val artistNames = decodeHtmlEntities(artist)
+                .split("、")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
             out.add(
                 AlbumSong(
                     id = "kugou:$hash",
@@ -1303,9 +1319,24 @@ suspend fun getKugouAlbumSongs(albumId: String): List<AlbumSong> {
                 ),
             )
         }
-        return out
+        return AlbumSongsPage(out, fetchKugouAlbumPub(albumId))
     } catch (_: Throwable) {
-        return emptyList()
+        return AlbumSongsPage(emptyList())
+    }
+}
+
+/** 酷狗专辑发行时间：`album/song` 不带，需另取 `album/info` 的 `publishtime`（形如 `2013-06-03 00:00:00`） */
+private suspend fun fetchKugouAlbumPub(albumId: String): String {
+    return try {
+        val info = httpGetJson(
+            "http://mobilecdn.kugou.com/api/v3/album/info?albumid=$albumId&version=9108&plat=0",
+            headers = mapOf("User-Agent" to _kugouWebUa),
+        )
+        val d = info["data"]
+        val raw = if (d is Map<*, *>) (d["publishtime"] ?: "").toString() else ""
+        raw.trim().take(10)
+    } catch (_: Throwable) {
+        ""
     }
 }
 
@@ -1383,20 +1414,22 @@ private fun _mapKugouArtists(raw: Any?): List<Artist> {
     return out
 }
 
-/** 酷狗歌手补充信息（头像 + 歌曲数），带 30 分钟缓存 */
+/** 酷狗歌手补充信息（头像 + 歌曲数 + 简介），带 30 分钟缓存 */
 suspend fun fetchKugouArtistInfo(singerId: String): KugouArtistInfo {
-    val cacheKey = "kugou:artist:info:v2:$singerId"
+    val cacheKey = "kugou:artist:info:v3:$singerId"
     val cached = cacheService.get<Map<String, Any?>>(cacheKey)
     if (cached != null) {
         val cnt = cached["songCount"]
         return KugouArtistInfo(
             avatar = (cached["avatar"] ?: "").toString(),
             songCount = if (cnt is Number) cnt.toInt() else 0,
+            intro = (cached["intro"] ?: "").toString(),
         )
     }
 
     var avatar = ""
     var songCount = 0
+    var intro = ""
     try {
         val data = httpGetJson(
             "http://mobilecdn.kugou.com/api/v3/singer/info?singerid=$singerId",
@@ -1408,19 +1441,21 @@ suspend fun fetchKugouArtistInfo(singerId: String): KugouArtistInfo {
             avatar = (d["imgurl"] ?: "").toString().replace("{size}", "240")
             val cnt = d["songcount"]
             songCount = if (cnt is Number) cnt.toInt() else 0
+            // intro 为短简介；长简介在 mix_intro
+            intro = _firstNonEmpty(listOf(d["intro"], d["mix_intro"])).trim()
         }
     } catch (_: Throwable) {
         // 忽略：头像/歌曲数缺失不影响主流程
     }
     // 只在拿到有效数据时缓存：避免把「限流/失败」的空结果缓存 30 分钟
-    if (avatar.isNotEmpty() || songCount > 0) {
+    if (avatar.isNotEmpty() || songCount > 0 || intro.isNotEmpty()) {
         cacheService.set(
             cacheKey,
-            mapOf("avatar" to avatar, "songCount" to songCount),
+            mapOf("avatar" to avatar, "songCount" to songCount, "intro" to intro),
             _artistInfoTtl,
         )
     }
-    return KugouArtistInfo(avatar, songCount)
+    return KugouArtistInfo(avatar, songCount, intro)
 }
 
 /** 酷狗歌手单曲（singer/song） */

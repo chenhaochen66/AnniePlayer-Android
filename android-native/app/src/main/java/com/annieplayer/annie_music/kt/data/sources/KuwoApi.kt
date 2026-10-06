@@ -500,6 +500,34 @@ fun generateReqId(): String {
     return buf.toString()
 }
 
+/**
+ * 酷我歌手简介：走经典 `r.s` 歌手搜索的 `abslist[].desc`。
+ *
+ * 注意：[searchArtist] 走的是 `/api/www/search/searchArtistBykeyWord`，那条响应**不带** `desc`，
+ * 所以简介必须用这个经典接口单独取一次。
+ */
+suspend fun fetchKuwoArtistBio(name: String): String {
+    val q = name.trim()
+    if (q.isEmpty()) return ""
+    return try {
+        val url =
+            "http://search.kuwo.cn/r.s?ft=artist&all=${_encodeComponent(q)}" +
+                "&rn=5&pn=1&rformat=json&encoding=utf8"
+        val text = httpGetText(url, mapOf("User-Agent" to _desktopUa))
+        val list = _parseKuwoList(text, "abslist|list")
+        // 优先精确同名，否则取第一条
+        val hit = list.firstOrNull { _s(it["ARTIST"]) == q } ?: list.firstOrNull()
+        val raw = (hit?.get("desc") ?: "").toString()
+        // 伪 JSON 里换行是转义的 `\n`（可能被多重转义），统一还原成空格并清掉残留下划线
+        raw.replace(Regex("\\\\+n"), " ")
+            .replace(Regex("\\\\+"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    } catch (_: Throwable) {
+        ""
+    }
+}
+
 /** 搜索歌手，返回 [Artist] 列表；失败返回空 */
 suspend fun searchArtist(keyword: String): List<Artist> {
     val cacheKey = "artist:search:v1:$keyword"

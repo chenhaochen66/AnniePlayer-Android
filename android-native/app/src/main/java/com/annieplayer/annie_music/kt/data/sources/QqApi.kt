@@ -3,6 +3,7 @@ package com.annieplayer.annie_music.kt.data.sources
 import android.util.Base64
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
+import com.annieplayer.annie_music.kt.data.model.AlbumSongsPage
 import com.annieplayer.annie_music.kt.data.model.Artist
 import com.annieplayer.annie_music.kt.data.model.ArtistSongsPage
 import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
@@ -559,7 +560,7 @@ private fun _mapQQAlbums(raw: Any?): List<Album> {
 }
 
 /** 获取 QQ 音乐专辑曲目（`fcg_v8_album_info_cp`） */
-suspend fun getQQAlbumSongs(albumMid: String): List<AlbumSong> {
+suspend fun getQQAlbumSongs(albumMid: String): AlbumSongsPage {
     try {
         val url =
             "https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg" +
@@ -567,10 +568,12 @@ suspend fun getQQAlbumSongs(albumMid: String): List<AlbumSong> {
                 "&notice=0&platform=yqq.json&needNewCode=0"
         val text = httpGetText(url, qqHeaders)
         val decoded = jsonElementToAny(json.parseToJsonElement(_stripBom(text)))
-        if (decoded !is Map<*, *>) return emptyList()
+        if (decoded !is Map<*, *>) return AlbumSongsPage(emptyList())
         val data = decoded["data"]
         val listRaw = if (data is Map<*, *>) data["list"] else null
         val list = if (listRaw is List<*>) listRaw else emptyList<Any?>()
+        // 发行时间在 `data.aDate`（形如 2013-06-03；同一响应内，无需额外请求）
+        val pub = if (data is Map<*, *>) _s(data["aDate"]) else ""
         val out = mutableListOf<AlbumSong>()
         for (item in list) {
             val m = _toMap(item) ?: continue
@@ -606,9 +609,9 @@ suspend fun getQQAlbumSongs(albumMid: String): List<AlbumSong> {
                 ),
             )
         }
-        return out
+        return AlbumSongsPage(out, pub)
     } catch (_: Throwable) {
-        return emptyList()
+        return AlbumSongsPage(emptyList())
     }
 }
 
@@ -662,6 +665,34 @@ private fun _mapQQArtists(raw: Any?): List<Artist> {
  * 注意：musicu 的 `get_singer_detail_info` 已不可用（500001）；
  * 单曲搜索走 `DoSearchForQQMusicMobile`（见 [_fetchQQSearchRawPage]）。
  */
+/** QQ 歌手简介：与歌手单曲同一接口的 `data.singer_brief` */
+suspend fun fetchQQArtistBio(singerMid: String): String {
+    return try {
+        val payload: Map<String, Any?> = mapOf(
+            "comm" to mapOf("ct" to 24, "cv" to 0),
+            "singer" to mapOf(
+                "module" to "music.web_singer_info_svr",
+                "method" to "get_singer_detail_info",
+                "param" to mapOf("sort" to 5, "singermid" to singerMid, "begin" to 0, "num" to 1),
+            ),
+        )
+        val data = httpPostJson(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            body = payload,
+            headers = mapOf(
+                "Content-Type" to "application/json",
+                "User-Agent" to _or(qqHeaders["User-Agent"], ""),
+                "Referer" to "https://y.qq.com/",
+            ),
+        )
+        val singer = data["singer"]
+        val d = if (singer is Map<*, *>) singer["data"] else null
+        if (d is Map<*, *>) (d["singer_brief"] ?: "").toString().trim() else ""
+    } catch (_: Throwable) {
+        ""
+    }
+}
+
 /**
  * 获取 QQ 歌手单曲（`musichall.song_list_server` / `GetSingerSongList`，按 `begin`/`num` 真分页）。
  *

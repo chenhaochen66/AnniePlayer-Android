@@ -17,13 +17,16 @@ import com.annieplayer.annie_music.kt.data.sources.fetchKugouArtistInfo
 import com.annieplayer.annie_music.kt.data.sources.fetchKugouLyric
 import com.annieplayer.annie_music.kt.data.sources.fetchKugouMusicUrl
 import com.annieplayer.annie_music.kt.data.sources.fetchKuwoArtistAvatar
+import com.annieplayer.annie_music.kt.data.sources.fetchKuwoArtistBio
 import com.annieplayer.annie_music.kt.data.sources.fetchKuwoDownloadUrl
 import com.annieplayer.annie_music.kt.data.sources.fetchKuwoLyric
 import com.annieplayer.annie_music.kt.data.sources.fetchKuwoPlayUrl
 import com.annieplayer.annie_music.kt.data.sources.fetchNeteaseArtistAvatar
+import com.annieplayer.annie_music.kt.data.sources.fetchNeteaseArtistBio
 import com.annieplayer.annie_music.kt.data.sources.fetchNeteaseDownloadUrl
 import com.annieplayer.annie_music.kt.data.sources.fetchNeteaseLyric
 import com.annieplayer.annie_music.kt.data.sources.fetchNeteasePlayUrl
+import com.annieplayer.annie_music.kt.data.sources.fetchQQArtistBio
 import com.annieplayer.annie_music.kt.data.sources.fetchQQLyric
 import com.annieplayer.annie_music.kt.data.sources.fetchQQMusicUrl
 import com.annieplayer.annie_music.kt.data.sources.getAlbumSongs
@@ -154,9 +157,9 @@ suspend fun fetchAlbumSongsByPlatform(
     platform: MusicPlatform,
     albumId: String,
 ): RepoAlbumSongs = when (platform) {
-    MusicPlatform.netease -> RepoAlbumSongs(getNeteaseAlbumSongs(albumId), "")
-    MusicPlatform.qq -> RepoAlbumSongs(getQQAlbumSongs(albumId), "")
-    MusicPlatform.kugou -> RepoAlbumSongs(getKugouAlbumSongs(albumId), "")
+    MusicPlatform.netease -> getNeteaseAlbumSongs(albumId).let { RepoAlbumSongs(it.songs, it.pub) }
+    MusicPlatform.qq -> getQQAlbumSongs(albumId).let { RepoAlbumSongs(it.songs, it.pub) }
+    MusicPlatform.kugou -> getKugouAlbumSongs(albumId).let { RepoAlbumSongs(it.songs, it.pub) }
     MusicPlatform.qobuz -> {
         val a = getQobuzAlbum(albumId, "")
         RepoAlbumSongs(
@@ -211,6 +214,24 @@ suspend fun fetchArtistAvatarByPlatform(
     MusicPlatform.kuwo -> fetchKuwoArtistAvatar(name)
     MusicPlatform.qobuz -> fetchQobuzArtistPicture(artistId)
     MusicPlatform.kkbox -> ""
+}
+
+/**
+ * 歌手简介（按平台分发）。
+ *
+ * 各平台都能从「歌手详情 / 歌手单曲 / 歌手搜索」这类已有接口里拿到；[name] 仅酷我需要
+ * （它的简介只在经典歌手搜索的 `desc` 里）。
+ */
+suspend fun fetchArtistBioByPlatform(
+    platform: MusicPlatform,
+    artistId: String,
+    name: String = "",
+): String = when (platform) {
+    MusicPlatform.netease -> fetchNeteaseArtistBio(artistId)
+    MusicPlatform.qq -> fetchQQArtistBio(artistId)
+    MusicPlatform.kugou -> fetchKugouArtistInfo(artistId).intro
+    MusicPlatform.kuwo -> fetchKuwoArtistBio(name)
+    MusicPlatform.qobuz, MusicPlatform.kkbox -> ""
 }
 
 /**
