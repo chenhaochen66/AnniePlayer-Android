@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -468,16 +469,7 @@ private fun AlbumDetailHeader(
         ) {
             DetailChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
         }
-        Spacer(modifier = Modifier.width(AppSpacing.sp8))
-        Text(
-            text = "专辑详情",
-            modifier = Modifier.weight(1f),
-            color = AppColors.textPrimary,
-            fontSize = AppFontSize.lg,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Spacer(modifier = Modifier.weight(1f))
         if (selectMode) {
             Box(
                 modifier = Modifier
@@ -559,9 +551,10 @@ private fun AlbumDetailBody(
                     contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
                 ) {
                     item {
-                        AlbumDetailListHeader(
+                        AlbumDetailHero(
                             st = st,
                             data = data,
+                            onPlayAll = { st.songs.firstOrNull()?.let(onPlay) },
                             onBatch = onBatch,
                         )
                     }
@@ -587,96 +580,111 @@ private fun AlbumDetailBody(
 }
 
 /**
- * 列表头：封面 100（圆角 10）+ 名称 17 w700 + 歌手 13 + 曲目数 11；
- * 多选时在其下追加 [MultiSelectDownloadBar] 作为批量下载入口。
+ * 头部 Hero：大封面居中 + 居中标题/歌手/元信息 + 动作行（播放全部 / 下载）。
+ *
+ * 元信息行 =「年份 · N 首」，Qobuz 专辑再追加最高位深·采样率（[AlbumDetailState.qualitySpec]）；
+ * 缺哪项自动省略、不留悬空分隔符。多选时在其下追加 [MultiSelectDownloadBar]（行为与原来一致）。
  */
 @Composable
-private fun AlbumDetailListHeader(
+private fun AlbumDetailHero(
     st: AlbumDetailState,
     data: AlbumDetailData,
+    onPlayAll: () -> Unit,
     onBatch: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(AppSpacing.sp16),
+            .padding(horizontal = AppSpacing.sp24, vertical = AppSpacing.sp20),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.58f)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(AppRadius.panel))
+                .background(Color.Transparent),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(AppSize.coverPlaceholder)
-                    .clip(RoundedCornerShape(AppRadius.r10))
-                    .background(Color.Transparent),
-                contentAlignment = Alignment.Center,
-            ) {
-                var coverFailed by remember(data.id) { mutableStateOf(false) }
-                if (data.cover.isEmpty() || coverFailed) {
-                    MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.textDisabled)
-                } else {
-                    AsyncImage(
-                        model = data.cover,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        onError = { coverFailed = true },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+            var coverFailed by remember(data.id) { mutableStateOf(false) }
+            if (data.cover.isEmpty() || coverFailed) {
+                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon36), tint = AppColors.textDisabled)
+            } else {
+                AsyncImage(
+                    model = data.cover,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onError = { coverFailed = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
-            Spacer(modifier = Modifier.width(AppSpacing.sp14))
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.Start,
-            ) {
-                Text(
-                    text = data.name,
-                    color = AppColors.textPrimary,
-                    fontSize = AppFontSize.size17,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+        }
+        Spacer(modifier = Modifier.height(AppSpacing.sp16))
+        Text(
+            text = data.name,
+            color = AppColors.textPrimary,
+            fontSize = AppFontSize.size20,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(AppSpacing.sp4))
+        Text(
+            text = data.artist,
+            color = AppColors.whiteA50,
+            fontSize = AppFontSize.size15,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        val meta = albumDetailMetaLine(st)
+        if (meta.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(AppSpacing.sp4))
+            Text(
+                text = meta,
+                color = AppColors.whiteA40,
+                fontSize = AppFontSize.size13,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Spacer(modifier = Modifier.height(AppSpacing.sp16))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DetailPlayAllPill(
+                onClick = onPlayAll,
+                enabled = st.songs.isNotEmpty(),
+            )
+            Spacer(modifier = Modifier.width(AppSpacing.sp16))
+            DetailRoundIconButton(
+                onClick = onBatch,
+                enabled = st.selectMode && st.selectedIds.isNotEmpty(),
+            ) { tint ->
+                DownloadIconPlaceholder(
+                    modifier = Modifier.size(AppIconSize.icon20),
+                    tint = tint,
                 )
-                Spacer(modifier = Modifier.height(AppSpacing.sp4))
-                Text(
-                    text = data.artist,
-                    color = AppColors.whiteA50,
-                    fontSize = AppFontSize.size13,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(AppSpacing.sp2))
-                Row {
-                    if (st.qualitySpec.isNotEmpty()) {
-                        Text(
-                            text = st.qualitySpec,
-                            modifier = Modifier.padding(end = AppSpacing.sp8),
-                            color = AppColors.whiteA50,
-                            fontSize = AppFontSize.xs,
-                        )
-                    }
-                    Text(
-                        text = "${st.songs.size} 首歌曲",
-                        color = AppColors.whiteA25,
-                        fontSize = AppFontSize.xs,
-                    )
-                }
             }
         }
         if (st.selectMode) {
-            Spacer(modifier = Modifier.height(AppSpacing.sp12))
-            // 批量下载入口：未选中 = 禁用观感；下载中显示进度文案（下载逻辑与既有完全一致）
-            MultiSelectDownloadBar(
-                selectedCount = st.selectedIds.size,
-                total = st.songs.size,
-                downloading = st.batchDownloading,
-                progressText = st.batchProgress,
-                onDownload = onBatch,
-                modifier = Modifier.align(Alignment.End),
+            Spacer(modifier = Modifier.height(AppSpacing.sp8))
+            Text(
+                text = "已选 ${st.selectedIds.size} 首",
+                color = AppColors.whiteA50,
+                fontSize = AppFontSize.size13,
+                textAlign = TextAlign.Center,
             )
         }
     }
+}
+
+/** Hero 元信息行：「年份 · N 首 · 最高位深/采样率」；缺项自动省略 */
+private fun albumDetailMetaLine(st: AlbumDetailState): String {
+    val parts = mutableListOf<String>()
+    val year = st.releaseDate.trim().take(4)
+    if (year.length == 4 && year.all { it.isDigit() }) parts.add(year)
+    parts.add("${st.songs.size} 首")
+    if (st.qualitySpec.isNotEmpty()) parts.add(st.qualitySpec)
+    return parts.joinToString(" · ")
 }
 
 /** 曲目行：多选框 + 序号 / 播放指示 + 名称 / 歌手 +（任务徽标 | 下载按钮） */

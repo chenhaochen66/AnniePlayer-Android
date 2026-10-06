@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -406,16 +407,7 @@ private fun PlaylistDetailHeader(
         ) {
             DetailChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
         }
-        Spacer(modifier = Modifier.width(AppSpacing.sp8))
-        Text(
-            text = "歌单详情",
-            modifier = Modifier.weight(1f),
-            color = AppColors.textPrimary,
-            fontSize = AppFontSize.lg,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Spacer(modifier = Modifier.weight(1f))
         if (loading) {
             CircularProgressIndicator(
                 modifier = Modifier.size(AppIconSize.icon16),
@@ -503,7 +495,11 @@ private fun PlaylistDetailBody(
                     contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
                 ) {
                     item {
-                        PlaylistDetailListHeader(st = st)
+                        PlaylistDetailHero(
+                            st = st,
+                            onPlayAll = { st.songs.firstOrNull()?.let(onPlay) },
+                            onBatch = { st.batchPickerVisible = true },
+                        )
                     }
                     items(count = st.songs.size) { index ->
                         val song = st.songs[index]
@@ -527,80 +523,94 @@ private fun PlaylistDetailBody(
 }
 
 /**
- * 列表头：封面 100（圆角 10）+ 名称 17 w700 + 创建者 13 + 曲目数 11；
- * 多选时在其下追加 [MultiSelectDownloadBar] 作为批量下载入口
- * （位置与对齐方式对齐专辑详情：列表头内、右端 `Alignment.End`，随列表滚动）。
+ * 头部 Hero：大封面居中 + 居中歌单名/创建者/曲目数 + 动作行（播放全部 / 下载）。
+ *
+ * 歌单没有专辑那样的位深·采样率信息，元信息行只显示曲目数。
+ * 多选时在其下追加 [MultiSelectDownloadBar]（行为与原来一致）。
  */
 @Composable
-private fun PlaylistDetailListHeader(st: PlaylistDetailState) {
+private fun PlaylistDetailHero(
+    st: PlaylistDetailState,
+    onPlayAll: () -> Unit,
+    onBatch: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(AppSpacing.sp16),
+            .padding(horizontal = AppSpacing.sp24, vertical = AppSpacing.sp20),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.58f)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(AppRadius.panel))
+                .background(Color.Transparent),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(AppSize.coverPlaceholder)
-                    .clip(RoundedCornerShape(AppRadius.r10))
-                    .background(Color.Transparent),
-                contentAlignment = Alignment.Center,
-            ) {
-                var coverFailed by remember(st.cover) { mutableStateOf(false) }
-                if (st.cover.isEmpty() || coverFailed) {
-                    MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.textDisabled)
-                } else {
-                    AsyncImage(
-                        model = st.cover,
-                        contentDescription = "歌单封面",
-                        contentScale = ContentScale.Crop,
-                        onError = { coverFailed = true },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+            var coverFailed by remember(st.cover) { mutableStateOf(false) }
+            if (st.cover.isEmpty() || coverFailed) {
+                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon36), tint = AppColors.textDisabled)
+            } else {
+                AsyncImage(
+                    model = st.cover,
+                    contentDescription = "歌单封面",
+                    contentScale = ContentScale.Crop,
+                    onError = { coverFailed = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
-            Spacer(modifier = Modifier.width(AppSpacing.sp14))
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.Start,
-            ) {
-                Text(
-                    text = st.name,
-                    color = AppColors.textPrimary,
-                    fontSize = AppFontSize.size17,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(AppSpacing.sp4))
-                Text(
-                    text = st.creator,
-                    color = AppColors.whiteA50,
-                    fontSize = AppFontSize.size13,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(AppSpacing.sp2))
-                Text(
-                    text = "${st.songs.size} 首歌曲",
-                    color = AppColors.whiteA25,
-                    fontSize = AppFontSize.xs,
+        }
+        Spacer(modifier = Modifier.height(AppSpacing.sp16))
+        Text(
+            text = st.name,
+            color = AppColors.textPrimary,
+            fontSize = AppFontSize.size20,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(AppSpacing.sp4))
+        Text(
+            text = st.creator,
+            color = AppColors.whiteA50,
+            fontSize = AppFontSize.size15,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(AppSpacing.sp4))
+        Text(
+            text = "${st.songs.size} 首",
+            color = AppColors.whiteA40,
+            fontSize = AppFontSize.size13,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(modifier = Modifier.height(AppSpacing.sp16))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DetailPlayAllPill(
+                onClick = onPlayAll,
+                enabled = st.songs.isNotEmpty(),
+            )
+            Spacer(modifier = Modifier.width(AppSpacing.sp16))
+            DetailRoundIconButton(
+                onClick = onBatch,
+                enabled = st.selectMode && st.selectedIds.isNotEmpty(),
+            ) { tint ->
+                DownloadIconPlaceholder(
+                    modifier = Modifier.size(AppIconSize.icon20),
+                    tint = tint,
                 )
             }
         }
         if (st.selectMode) {
-            Spacer(modifier = Modifier.height(AppSpacing.sp12))
-            // 批量下载入口：未选中 = 禁用观感；下载中显示进度文案（下载逻辑与既有完全一致）
-            MultiSelectDownloadBar(
-                selectedCount = st.selectedIds.size,
-                total = st.songs.size,
-                downloading = st.batchDownloading,
-                progressText = st.batchProgress,
-                onDownload = { st.batchPickerVisible = true },
-                modifier = Modifier.align(Alignment.End),
+            Spacer(modifier = Modifier.height(AppSpacing.sp8))
+            Text(
+                text = "已选 ${st.selectedIds.size} 首",
+                color = AppColors.whiteA50,
+                fontSize = AppFontSize.size13,
+                textAlign = TextAlign.Center,
             )
         }
     }
