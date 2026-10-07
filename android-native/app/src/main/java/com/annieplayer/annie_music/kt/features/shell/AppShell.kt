@@ -512,6 +512,9 @@ fun AppShell(
                     onToggleTranslation = {
                         uiViewModel.setShowLyricsTranslation(!uiState.showLyricsTranslation)
                     },
+                    onToggleWordByWord = {
+                        uiViewModel.setShowWordByWord(!uiState.showWordByWord)
+                    },
                     // 歌词高亮行索引回写 UiState（对齐 Flutter `setCurrentLineIndex`）
                     onLineIndexChange = { uiViewModel.setCurrentLineIndex(it) },
                     onCoverChanged = { url ->

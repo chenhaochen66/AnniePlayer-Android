@@ -82,8 +82,8 @@ private fun playerFormatTime(seconds: Double): String {
 
 /**
  * 进度条（1:1 移植 Flutter `PlayerProgressBar`）：
- * 触控区 26dp、轨道 4dp（white 0.08）、已播部分主色 + 主色辉光、白色 15dp 拇指；
- * 左右时间 `11sp`（白 0.3 / 白 0.2）等宽数字。
+ * 触控区 26dp、轨道 4dp（white 0.08）、已播部分白色 + 白色辉光、白色 15dp 拇指；
+ * 左右时间 `12sp`（白 0.7）等宽数字 + 加粗。
  *
  * 交互：水平拖拽中通过 [onDragging] 上报比例；松手通过 [onSeekEnd] 上报比例
  * （宿主据此执行 `setCurrentTime + seekTo + setDragging(false)`）。
@@ -145,7 +145,7 @@ fun PlayerProgressBar(
                             // 轨道底色对齐 Flutter `white @0.08`（此前误用 white10=0.10）
                             .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(AppRadius.r2)),
                     )
-                    // 已播进度（主色 + 辉光）
+                    // 已播进度（白色 + 辉光）
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(progress.toFloat())
@@ -154,10 +154,10 @@ fun PlayerProgressBar(
                                 elevation = AppShadow.blurMd,
                                 shape = RoundedCornerShape(AppRadius.r2),
                                 clip = false,
-                                ambientColor = AppColors.primary,
-                                spotColor = AppColors.primary,
+                                ambientColor = AppColors.white,
+                                spotColor = AppColors.white,
                             )
-                            .background(AppColors.primary, RoundedCornerShape(AppRadius.r2)),
+                            .background(AppColors.white, RoundedCornerShape(AppRadius.r2)),
                     )
                     // 拇指
                     Box(

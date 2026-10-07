@@ -102,6 +102,7 @@ fun PlayerScreen(
     onOpenSongActions: () -> Unit,
     onSetVolume: (Double) -> Unit,
     onToggleTranslation: () -> Unit,
+    onToggleWordByWord: () -> Unit,
     modifier: Modifier = Modifier,
     coverUrl: String = "",
     fallbackCoverUrl: String = "",
@@ -232,6 +233,8 @@ fun PlayerScreen(
                         songId = song.id,
                         lyric = song.lyric,
                         tlyric = song.tlyric,
+                        wordLyric = song.wordLyric,
+                        isPlaying = player.isPlaying,
                         currentTime = player.currentTime,
                         isDragging = ui.isDragging,
                         seekRatio = ui.seekRatio,
@@ -242,6 +245,9 @@ fun PlayerScreen(
                         viewportHeight = screenH,
                         onSeek = onSeek,
                         onOpenFontScale = { fontScaleVisible = true },
+                        onToggleTranslation = onToggleTranslation,
+                        showWordByWord = ui.showWordByWord,
+                        onToggleWordByWord = onToggleWordByWord,
                         onLineIndexChange = onLineIndexChange,
                     )
                 }
@@ -249,7 +255,7 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.height(AppSpacing.sp14))
 
-            // ── 信息行：标题（跑马灯）+ 译开关 + ⋮ ──
+            // ── 信息行：标题（跑马灯）+ ⋮ ──
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.screenPaddingH),
                 verticalAlignment = Alignment.CenterVertically,
@@ -264,27 +270,6 @@ fun PlayerScreen(
                             fontWeight = AppFontWeight.bold,
                         ),
                     )
-                }
-                if (!song.tlyric.isNullOrEmpty()) {
-                    val translationOn = ui.showLyricsTranslation
-                    Box(
-                        modifier = Modifier
-                            .padding(start = AppSpacing.sp10)
-                            .clip(RoundedCornerShape(AppRadius.card))
-                            // 选中底色对齐 Flutter `white @0.18`（无对应 token，whiteA20=0.20 偏亮）
-                            .background(if (translationOn) Color.White.copy(alpha = 0.18f) else AppColors.whiteA06)
-                            .clickableNoRipple { onToggleTranslation() }
-                            // 竖向内边距对齐 Flutter 7（刻度无 sp7，内联）
-                            .padding(horizontal = AppSpacing.sp12, vertical = 7.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "译",
-                            color = if (translationOn) AppColors.white else AppColors.white70,
-                            fontSize = AppFontSize.base,
-                            fontWeight = AppFontWeight.bold,
-                        )
-                    }
                 }
                 Box(
                     modifier = Modifier
@@ -349,7 +334,9 @@ fun PlayerScreen(
         PlayerFontScalePanel(
             visible = fontScaleVisible,
             current = fontScale,
+            showWordByWord = ui.showWordByWord,
             onSelect = { fontScale = it },
+            onToggleWordByWord = onToggleWordByWord,
             onClose = { fontScaleVisible = false },
         )
     }

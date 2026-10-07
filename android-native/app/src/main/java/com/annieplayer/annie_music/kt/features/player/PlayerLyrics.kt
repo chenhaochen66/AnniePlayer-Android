@@ -1,5 +1,6 @@
 package com.annieplayer.annie_music.kt.features.player
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -21,6 +22,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,23 +34,38 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.annieplayer.annie_music.kt.core.util.LyricLine
+import com.annieplayer.annie_music.kt.core.util.LyricWord
 import com.annieplayer.annie_music.kt.core.util.findCurrentLineIndex
 import com.annieplayer.annie_music.kt.core.util.parseLrcWithTranslation
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
@@ -53,6 +73,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppEasing
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
+import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppLineHeight
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppShadow
@@ -98,6 +119,8 @@ fun PlayerLyricsView(
     songId: String,
     lyric: String?,
     tlyric: String?,
+    wordLyric: String? = null,
+    isPlaying: Boolean = true,
     currentTime: Double,
     isDragging: Boolean,
     seekRatio: Double,
@@ -108,11 +131,16 @@ fun PlayerLyricsView(
     viewportHeight: Dp,
     onSeek: (Double) -> Unit,
     onOpenFontScale: () -> Unit,
+    onToggleTranslation: () -> Unit = {},
+    showWordByWord: Boolean = true,
+    onToggleWordByWord: () -> Unit = {},
     /** 当前高亮行索引回写宿主（对齐 Flutter `setCurrentLineIndex`；宿主应接到 `UiViewModel::setCurrentLineIndex`） */
     onLineIndexChange: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val lines = remember(lyric, tlyric) { playerParseLyricLines(lyric, tlyric) }
+    val lines = remember(lyric, tlyric, wordLyric) {
+        playerParseLyricLines(lyric, tlyric, wordLyric)
+    }
 
     if (lines.isEmpty()) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -215,6 +243,24 @@ fun PlayerLyricsView(
         )
     }
 
+    // 逐帧时钟：进度事件约 100ms 才来一次，直接用它上色会「一跳一跳」；
+    // 以最新进度为锚点逐帧外推，重新来事件时再对齐，动画才丝滑。
+    var frameTimeMs by remember { mutableIntStateOf(0) }
+    LaunchedEffect(effectiveTime, isDragging, duration, isPlaying) {
+        val anchorWall = System.nanoTime()
+        val anchorMs = (effectiveTime * 1000).toLong()
+        // 暂停时只对齐、不外推：否则逐帧时钟会一路跑到最后一个字
+        if (!isPlaying) {
+            frameTimeMs = anchorMs.toInt()
+            return@LaunchedEffect
+        }
+        while (true) {
+            withFrameNanos { now ->
+                frameTimeMs = (anchorMs + (now - anchorWall) / 1_000_000L).toInt()
+            }
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -230,6 +276,8 @@ fun PlayerLyricsView(
                     animate = !isDragging,
                     primary = primary,
                     showTranslation = showTranslation,
+                    showWordByWord = showWordByWord,
+                    currentTimeMs = frameTimeMs,
                     fontScale = fontScale,
                     glowBlurPx = glowBlurPx,
                     onSeek = onSeek,
@@ -244,7 +292,7 @@ fun PlayerLyricsView(
             }
         }
 
-        // 字号按钮（Flutter：右上角 32 圆形，white 0.06 底）
+        // 设置按钮（右上角 32 圆形，white 0.06 底）
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -255,12 +303,33 @@ fun PlayerLyricsView(
                 .clickableNoRipple { onOpenFontScale() },
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = "Aa",
-                color = AppColors.white,
-                fontSize = AppFontSize.size13,
-                fontWeight = AppFontWeight.bold,
+            Icon(
+                imageVector = Icons.Filled.Settings,
+                contentDescription = "歌词设置",
+                tint = AppColors.white,
+                modifier = Modifier.size(AppIconSize.icon20),
             )
+        }
+
+        // 翻译开关（与字号按钮同款 32 圆形；仅存在翻译时显示）
+        if (!tlyric.isNullOrEmpty()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = AppSpacing.sp8, end = AppSpacing.sp28)
+                    .size(PlayerSize32)
+                    .clip(CircleShape)
+                    .background(if (showTranslation) Color.White.copy(alpha = 0.18f) else AppColors.whiteA06)
+                    .clickableNoRipple { onToggleTranslation() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "译",
+                    color = AppColors.white,
+                    fontSize = AppFontSize.size13,
+                    fontWeight = AppFontWeight.bold,
+                )
+            }
         }
     }
 }
@@ -286,6 +355,8 @@ private fun PlayerLyricLine(
     animate: Boolean,
     primary: Color,
     showTranslation: Boolean,
+    showWordByWord: Boolean,
+    currentTimeMs: Int,
     fontScale: Float,
     glowBlurPx: Float,
     onSeek: (Double) -> Unit,
@@ -296,7 +367,9 @@ private fun PlayerLyricLine(
         isActive -> 1f
         else -> maxOf(0.12f, 0.45f - (distance - 1) * 0.2f)
     }
-    val fadeDuration = if (animate) AppDuration.lyricLineFade else 0
+    // 变高亮时不淡入：高亮行的暗字层本身是 45% 白，若行透明度再从 0.45 动画到 1，
+    // 两者相乘会瞬间变成 20% 白 —— 真机现象「下一句刚变高亮时暗一下」。
+    val fadeDuration = if (animate && !isActive) AppDuration.lyricLineFade else 0
     val lineOpacity by animateFloatAsState(
         targetValue = targetOpacity,
         animationSpec = tween(durationMillis = fadeDuration, easing = AppEasing.easeInOut),
@@ -309,6 +382,9 @@ private fun PlayerLyricLine(
     )
 
     val glow = if (isActive) Shadow(color = primary, blurRadius = glowBlurPx) else null
+    // 逐字上色（AnnotatedString）：天然跟随自动换行，不像「横向裁切」那样在两行文本上被一刀切。
+    // 只有当前行做，其它行用纯文本，避免无谓开销。
+    val karaoke = showWordByWord && isActive && line.words.isNotEmpty()
     val lineStyle = TextStyle(
         color = AppColors.white,
         fontSize = AppFontSize.size34 * fontScale,
@@ -353,11 +429,22 @@ private fun PlayerLyricLine(
                 .clip(RoundedCornerShape(if (isActive) AppRadius.card else 0.dp))
                 .background(if (isActive) primary.copy(alpha = PlayerLyricActiveBgAlpha) else Color.Transparent),
         ) {
-            Text(
-                text = line.text,
-                style = lineStyle,
-                modifier = Modifier.fillMaxWidth().playerAlphaLocal(lineOpacity),
-            )
+            if (karaoke) {
+                KaraokeText(
+                    text = line.words.joinToString("") { it.text },
+                    words = line.words,
+                    currentTimeMs = currentTimeMs,
+                    style = lineStyle,
+                    dimColor = AppColors.whiteA45,
+                    modifier = Modifier.fillMaxWidth().playerAlphaLocal(lineOpacity),
+                )
+            } else {
+                Text(
+                    text = line.text,
+                    style = lineStyle,
+                    modifier = Modifier.fillMaxWidth().playerAlphaLocal(lineOpacity),
+                )
+            }
             val translation = line.translation
             if (translation != null) {
                 Text(
@@ -369,6 +456,160 @@ private fun PlayerLyricLine(
         }
 
     }
+}
+
+/**
+ * 卡拉OK文字（统一进度条式扫过）。
+ *
+ * 做法：先量出整段的**换行边界**，再把每个视觉行**拆成独立的 Text** 各自渲染。
+ * 这样每行都是「单行文本」，扫过位置就是本行内的 x —— 从根上避免
+ * `getHorizontalPosition` 在换行时的坐标系坑（真机现象：扫到第二行时第一行倒回去重画）。
+ */
+@Composable
+private fun KaraokeText(
+    text: String,
+    words: List<LyricWord>,
+    currentTimeMs: Int,
+    style: TextStyle,
+    dimColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    var fullLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val sungIndex = karaokeSungIndex(words, currentTimeMs)
+    val layout = fullLayout
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (layout == null) {
+            // 第一帧还没有布局：先按普通文本画，并在回调里量出换行边界
+            Text(
+                text = text,
+                style = style.copy(color = dimColor),
+                onTextLayout = { fullLayout = it },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            for (row in 0 until layout.lineCount) {
+                val start = layout.getLineStart(row)
+                val end = layout.getLineEnd(row)
+                if (end <= start) continue
+                val slice = text.substring(start, end)
+                val localSung = (sungIndex - start).coerceIn(0f, slice.length.toFloat())
+                KaraokeRowText(
+                    text = slice,
+                    sungIndex = localSung,
+                    style = style,
+                    dimColor = dimColor,
+                )
+            }
+        }
+    }
+}
+
+/** 单个视觉行的卡拉OK：单行文本 → 扫过位置就是本行内的 x，绝不会串行 */
+@Composable
+private fun KaraokeRowText(
+    text: String,
+    sungIndex: Float,
+    style: TextStyle,
+    dimColor: Color,
+) {
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = text,
+            style = style.copy(color = dimColor),
+            onTextLayout = { layout = it },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (sungIndex > 0f) {
+            Text(
+                text = text,
+                style = style,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // DstIn 的作用目标是「当前图层」：不隔离会把整行背景也擦成黑块
+                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                    .drawWithContent {
+                        val l = layout ?: return@drawWithContent drawContent()
+                        drawContent()
+                        val width = l.size.width.toFloat()
+                        if (width <= 0f || text.isEmpty()) return@drawWithContent
+                        val i = sungIndex.toInt().coerceIn(0, text.length - 1)
+                        val right = if (sungIndex >= text.length) {
+                            width
+                        } else {
+                            val x0 = l.getHorizontalPosition(i, true).toFloat()
+                            val x1 = if (i + 1 <= text.length) {
+                                l.getHorizontalPosition(i + 1, true).toFloat()
+                            } else {
+                                x0
+                            }
+                            x0 + (x1 - x0) * (sungIndex - i)
+                        }
+                        val e = (right / width).coerceIn(0f, 1f)
+                        val fade = (SoftEdgePx / width).coerceIn(0f, 1f)
+                        val brush = when {
+                            e <= 0f -> SolidColor(Color.Transparent)
+                            e >= 1f -> SolidColor(Color.White)
+                            else -> Brush.horizontalGradient(
+                                0f to Color.White,
+                                (e - fade).coerceIn(0f, 1f) to Color.White,
+                                e to Color.Transparent,
+                                1f to Color.Transparent,
+                            )
+                        }
+                        drawRect(
+                            brush = brush,
+                            topLeft = Offset.Zero,
+                            size = Size(width, size.height),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    },
+            )
+        }
+    }
+}
+
+/** 逐字上色版（多行时用）：每个字按自己的时长从暗到亮 */
+private fun perCharWordText(words: List<LyricWord>, currentTimeMs: Int): AnnotatedString =
+    buildAnnotatedString {
+        for (w in words) {
+            val n = w.text.length
+            for (i in 0 until n) {
+                val charStart = w.startMs + if (n > 0) w.durMs * i / n else 0
+                val charDur = if (n > 0) w.durMs.toFloat() / n else 0f
+                val t = if (charDur > 0f) {
+                    ((currentTimeMs - charStart) / charDur).coerceIn(0f, 1f)
+                } else {
+                    1f
+                }
+                withStyle(SpanStyle(color = lerp(AppColors.whiteA45, AppColors.white, t))) {
+                    append(w.text[i])
+                }
+            }
+        }
+    }
+
+/** 卡拉OK扫过的软边带宽（px）：越大越柔和，越小越利落 */
+private const val SoftEdgePx = 50f
+
+/** 已唱到第几个字符（含小数，按词时间线性插值；供卡拉OK定位扫过边界） */
+private fun karaokeSungIndex(words: List<LyricWord>, currentTimeMs: Int): Float {
+    var idx = 0f
+    for (w in words) {
+        val n = w.text.length
+        val end = w.startMs + w.durMs
+        if (currentTimeMs >= end) {
+            idx += n
+            continue
+        }
+        if (currentTimeMs >= w.startMs) {
+            val f = if (w.durMs > 0) (currentTimeMs - w.startMs).toFloat() / w.durMs else 1f
+            idx += n * f.coerceIn(0f, 1f)
+        }
+        break
+    }
+    return idx
 }
 
 /** 轻量透明度修饰（等价 Flutter `Opacity`，避免为每行引入额外 composable 层级） */
@@ -383,10 +624,13 @@ private fun Modifier.playerAlphaLocal(value: Float): Modifier =
 fun PlayerFontScalePanel(
     visible: Boolean,
     current: Float,
+    showWordByWord: Boolean,
     onSelect: (Float) -> Unit,
+    onToggleWordByWord: () -> Unit,
     onClose: () -> Unit,
 ) {
     if (!visible) return
+    BackHandler { onClose() }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -406,7 +650,7 @@ fun PlayerFontScalePanel(
             horizontalAlignment = Alignment.Start,
         ) {
             Text(
-                text = "歌词字号",
+                text = "歌词设置",
                 color = AppColors.white,
                 fontSize = AppFontSize.xl,
                 fontWeight = AppFontWeight.bold,
@@ -436,14 +680,34 @@ fun PlayerFontScalePanel(
                     }
                 }
             }
+            Spacer(modifier = Modifier.height(AppSpacing.sp20))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "逐字歌词",
+                    modifier = Modifier.weight(1f),
+                    color = AppColors.white,
+                    fontSize = AppFontSize.size15,
+                )
+                Switch(
+                    checked = showWordByWord,
+                    onCheckedChange = { onToggleWordByWord() },
+                )
+            }
         }
     }
 }
 
 /** 解析歌词并合并翻译；平台占位「暂无歌词」视为空（对齐 Flutter `_parsedLines`） */
-private fun playerParseLyricLines(lyric: String?, tlyric: String?): List<LyricLine> {
+private fun playerParseLyricLines(
+    lyric: String?,
+    tlyric: String?,
+    wordLyric: String? = null,
+): List<LyricLine> {
     if (lyric.isNullOrEmpty()) return emptyList()
-    val lines = parseLrcWithTranslation(lyric, tlyric)
+    val lines = parseLrcWithTranslation(lyric, tlyric, wordLyric)
     if (lines.size == 1 && lines.first().text == "暂无歌词") return emptyList()
     return lines
 }

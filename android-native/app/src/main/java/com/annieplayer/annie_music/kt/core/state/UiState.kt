@@ -74,6 +74,8 @@ data class UiState(
     val playlistDetailVisible: Boolean = false,
     val playlistDetailData: PlaylistDetailData? = null,
     val showLyricsTranslation: Boolean = true,
+    /** 逐字歌词展示开关（有逐字数据时生效） */
+    val showWordByWord: Boolean = true,
     val currentLineIndex: Int = -1,
 ) {
     /**
@@ -105,6 +107,7 @@ data class UiState(
         playlistDetailVisible: Boolean? = null,
         playlistDetailData: PlaylistDetailData? = null,
         showLyricsTranslation: Boolean? = null,
+        showWordByWord: Boolean? = null,
         currentLineIndex: Int? = null,
     ): UiState = UiState(
         playerOverlayVisible = playerOverlayVisible ?: this.playerOverlayVisible,
@@ -129,6 +132,7 @@ data class UiState(
         playlistDetailVisible = playlistDetailVisible ?: this.playlistDetailVisible,
         playlistDetailData = playlistDetailData ?: this.playlistDetailData,
         showLyricsTranslation = showLyricsTranslation ?: this.showLyricsTranslation,
+        showWordByWord = showWordByWord ?: this.showWordByWord,
         currentLineIndex = currentLineIndex ?: this.currentLineIndex,
     )
 }
@@ -210,6 +214,10 @@ class UiViewModel : ViewModel() {
 
     fun setShowLyricsTranslation(visible: Boolean) {
         _state.value = _state.value.copyWith(showLyricsTranslation = visible)
+    }
+
+    fun setShowWordByWord(visible: Boolean) {
+        _state.value = _state.value.copyWith(showWordByWord = visible)
     }
 
     fun setCurrentLineIndex(index: Int) {
