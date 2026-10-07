@@ -76,40 +76,6 @@ private val HomePendingBadgeSize = 22.dp
 private val HomeForeignTabPadV = 9.dp
 
 /**
- * 「正在下载 xxx...」轻提示（对齐 Dart 首页 build 末尾 `if (_downloadingId != null)` 分支）。
- *
- * 位置：左右各 20、底部 160（座在迷你播放条之上）；底色 surface @95%、圆角 12、主色文字。
- * 作为 [BoxScope] 扩展声明，宿主在根 Stack/Box 内直接调用即可（等价 Dart 的 Positioned）。
- */
-@Composable
-internal fun BoxScope.HomeDownloadingToast(title: String) {
-    Box(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            // 宿主已不再统一内缩 → 自己补导航栏 inset，toast 与底栏的相对位置不变
-            .navigationBarsPadding()
-            .fillMaxWidth()
-            .padding(
-                start = AppSpacing.sp20,
-                end = AppSpacing.sp20,
-                bottom = HomeDownloadToastBottom,
-            )
-            .background(AppColors.surface95, RoundedCornerShape(AppRadius.card))
-            .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp20),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "正在下载 $title...",
-            color = AppColors.primary,
-            fontSize = AppFontSize.base,
-            fontWeight = AppFontWeight.semiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/**
  * 待下载条（对齐 Dart `_PendingDownloadBar`）：
  * 计数圆点 + 「待下载歌曲」→ 查看浮层；「清空」；「下载全部」（下载中置灰）。
  */

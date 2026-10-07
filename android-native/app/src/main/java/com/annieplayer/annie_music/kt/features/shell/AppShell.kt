@@ -60,7 +60,6 @@ import com.annieplayer.annie_music.kt.features.playlist.PlaylistParseScreen
 import com.annieplayer.annie_music.kt.features.playlist.PlaylistParseScreenState
 import com.annieplayer.annie_music.kt.features.player.PlayerScreen
 import com.annieplayer.annie_music.kt.features.qobuz.QobuzDetailScreen
-import com.annieplayer.annie_music.kt.features.search.HomeDownloadingToast
 import com.annieplayer.annie_music.kt.features.search.SearchScreen
 import com.annieplayer.annie_music.kt.features.search.SearchScreenState
 import com.annieplayer.annie_music.kt.ui.theme.Annie
@@ -659,9 +658,12 @@ fun AppShell(
                 onClose = { uiViewModel.setCacheClearVisible(false) },
             )
 
-            // ── 「下载中」轻提示（根级最上层） ──
-            if (toastId != null) {
-                HomeDownloadingToast(title = downloadTasks[toastId]?.title ?: "歌曲")
+            // ── 下载开始提示：安卓原生 Toast（约 2 秒自动消失，不再像以前那样常驻到下载结束） ──
+            LaunchedEffect(toastId) {
+                if (toastId != null) {
+                    val title = downloadTasks[toastId]?.title ?: "歌曲"
+                    Toast.makeText(ctx, "正在下载 $title…", Toast.LENGTH_SHORT).show()
+                }
             }
 
             // ── Qobuz / KKBOX 全屏详情页（首页粘贴链接后进入；置于最上层覆盖全部浮层） ──
