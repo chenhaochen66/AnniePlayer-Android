@@ -1,6 +1,7 @@
 package com.annieplayer.annie_music.kt.data.sources
 
 import android.util.Base64
+import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.AlbumSongsPage
@@ -69,10 +70,11 @@ data class KugouSpecialPage(
     val songs: List<Any?>,
 )
 
-/** fetchKugouLyric 返回：lrc / tlyric */
+/** fetchKugouLyric 返回：lrc / tlyric / 逐字 */
 data class KugouLyricResult(
     val lrc: String,
     val tlyric: String?,
+    val wordLyric: String? = null,
 )
 
 /** enrichKuGouSong 返回：trackNumber / discNumber / releaseDate */
@@ -780,6 +782,30 @@ fun parseKrcTranslation(krcText: String): List<KugouKrcLine> {
     }
 }
 
+/** krc 词块标记：`<offset,duration,0>`（酷狗是相对行首的毫秒，无需酷我那种除数换算） */
+private val _reKrcWord by lazy { Regex("<(-?\\d+),(-?\\d+),\\d+>([^<]*)") }
+
+/** KRC -> 统一逐字格式 `[mm:ss.mmm]<绝对起始ms,时长ms>词…` */
+fun kugouKrcToWordLyric(krcText: String): String? {
+    val out = StringBuilder()
+    for (line in krcText.split("\n")) {
+        val m = _reKrcLine.find(line) ?: continue
+        val startMs = m.groupValues[1].toIntOrNull() ?: continue
+        val marks = _reKrcWord.findAll(line.substring(m.value.length)).toList()
+        if (marks.isEmpty()) continue
+        val text = marks.joinToString("") { it.groupValues[3] }.trim()
+        if (text.isEmpty()) continue
+        out.append(lrcTimeOfMs(startMs)).append(
+            marks.joinToString("") { w ->
+                val off = w.groupValues[1].toIntOrNull() ?: 0
+                val dur = w.groupValues[2].toIntOrNull() ?: 0
+                "<${startMs + off},$dur>${w.groupValues[3]}"
+            },
+        ).append('\n')
+    }
+    return if (out.isEmpty()) null else out.toString().trimEnd('\n')
+}
+
 fun fmtTime(ms: Int): String {
     val sec = ms / 1000.0
     val min = floor(sec / 60).toInt()
@@ -862,7 +888,7 @@ suspend fun fetchKugouLyric(
             null
         }
 
-        return KugouLyricResult(lrc, tlyric)
+        return KugouLyricResult(lrc, tlyric, kugouKrcToWordLyric(krcText))
     } catch (_: Throwable) {
         return KugouLyricResult("[00:00.00]暂无歌词", null)
     }

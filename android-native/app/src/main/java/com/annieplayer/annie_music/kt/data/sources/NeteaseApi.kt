@@ -11,6 +11,7 @@ import com.annieplayer.annie_music.kt.data.model.Playlist
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.network.anyToJsonElement
+import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
 import com.annieplayer.annie_music.kt.data.network.cacheService
 import com.annieplayer.annie_music.kt.data.network.httpGetJson
 import com.annieplayer.annie_music.kt.data.network.httpPostJson
@@ -25,10 +26,11 @@ import com.annieplayer.annie_music.kt.data.network.retryUntilSuccess
 
 // ── 文件内返回结构（对齐 Dart records / 私有类） ──
 
-/** 歌词结果（对齐 Dart `({String lrc, String? tlyric})`） */
+/** 歌词结果（对齐 Dart `({String lrc, String? tlyric})`，另带逐字） */
 data class NeteaseLyric(
     val lrc: String,
     val tlyric: String?,
+    val wordLyric: String? = null,
 )
 
 /** 网易云专辑内单曲（对齐 Dart `NeteaseAlbumSong`） */
@@ -626,11 +628,35 @@ suspend fun fetchNeteaseDownloadUrl(songId: String, quality: Quality): String =
 
 // ── 歌词 ──
 
-/** 获取网易云歌词，返回原始 lrc 与翻译歌词 */
+/** 网易 `yrc` 行：`[行起始ms,行时长ms](词起始ms,词时长ms,0)词…`（词时间是绝对毫秒） */
+private val _reYrcLine by lazy { Regex("^\\[(\\d+),\\d+\\]((?:\\(\\d+,\\d+,\\d+\\)[^(]*)+)") }
+private val _reYrcWord by lazy { Regex("\\((\\d+),(\\d+),(\\d+)\\)([^(]*)") }
+
+/** 网易 `yrc` -> 统一逐字格式 `[mm:ss.mmm]<起始ms,时长ms>词…` */
+private fun _neteaseYrcToWordLyric(yrc: String): String? {
+    if (yrc.isEmpty()) return null
+    val out = StringBuilder()
+    for (line in yrc.split('\n')) {
+        val m = _reYrcLine.find(line.trim()) ?: continue
+        val lineStart = m.groupValues[1].toIntOrNull() ?: continue
+        val sb = StringBuilder()
+        for (w in _reYrcWord.findAll(m.groupValues[2])) {
+            val text = w.groupValues[4]
+            if (text.isEmpty()) continue
+            sb.append('<').append(w.groupValues[1]).append(',').append(w.groupValues[2])
+                .append('>').append(text)
+        }
+        if (sb.isEmpty()) continue
+        out.append(lrcTimeOfMs(lineStart)).append(sb).append('\n')
+    }
+    return if (out.isEmpty()) null else out.toString().trimEnd('\n')
+}
+
+/** 获取网易云歌词，返回原始 lrc、翻译歌词与逐字歌词 */
 suspend fun fetchNeteaseLyric(songId: String): NeteaseLyric {
     val rawId = _rawId(songId)
     val body = _query(
-        listOf("id" to rawId, "lv" to "1", "kv" to "0", "tv" to "1"),
+        listOf("id" to rawId, "lv" to "-1", "kv" to "0", "tv" to "-1", "yv" to "-1"),
     )
 
     val data = httpPostJson(
@@ -643,12 +669,15 @@ suspend fun fetchNeteaseLyric(songId: String): NeteaseLyric {
 
     val lrcRaw = data["lrc"]
     val tlRaw = data["tlyric"]
+    val yrcRaw = data["yrc"]
     val lrc = (if (lrcRaw is Map<*, *>) lrcRaw["lyric"] else null)?.toString() ?: ""
     val tl = (if (tlRaw is Map<*, *>) tlRaw["lyric"] else null)?.toString() ?: ""
+    val yrc = (if (yrcRaw is Map<*, *>) yrcRaw["lyric"] else null)?.toString() ?: ""
 
     return NeteaseLyric(
         lrc = if (lrc.isEmpty()) "[00:00.00]暂无歌词" else lrc,
         tlyric = if (tl.isEmpty()) null else tl,
+        wordLyric = _neteaseYrcToWordLyric(yrc),
     )
 }
 

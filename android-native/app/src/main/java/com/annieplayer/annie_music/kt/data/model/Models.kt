@@ -86,6 +86,8 @@ data class Song(
     val playUrl: String = "",
     val lyric: String? = null,
     val tlyric: String? = null,
+    /** 逐字歌词（统一格式：`[mm:ss.mmm]<绝对起始ms,时长ms>词…`；无逐字数据时为 null） */
+    val wordLyric: String? = null,
     val qualities: List<Quality> = emptyList(),
     val albumArtist: String? = null,
     val trackNumber: String? = null,
@@ -97,15 +99,16 @@ data class Song(
     val artistIds: List<String> = emptyList(),
 ) {
     /**
-     * 局部更新（对齐 Dart `Song.copyWith`：仅这 4 个字段可改，其余原样拷贝）。
+     * 局部更新（对齐 Dart `Song.copyWith`：仅这 5 个字段可改，其余原样拷贝）。
      *
-     * 注意：与 Dart 语义一致，传 `null` **不会**清空 `lyric` / `tlyric`，
+     * 注意：与 Dart 语义一致，传 `null` **不会**清空 `lyric` / `tlyric` / `wordLyric`，
      * 因为原实现使用 `?? this.xxx` 回退（非幂等 setter）。
      */
     fun copyWith(
         playUrl: String? = null,
         lyric: String? = null,
         tlyric: String? = null,
+        wordLyric: String? = null,
         qualities: List<Quality>? = null,
     ): Song = Song(
         id = id,
@@ -119,6 +122,7 @@ data class Song(
         playUrl = playUrl ?: this.playUrl,
         lyric = lyric ?: this.lyric,
         tlyric = tlyric ?: this.tlyric,
+        wordLyric = wordLyric ?: this.wordLyric,
         qualities = qualities ?: this.qualities,
         albumArtist = albumArtist,
         trackNumber = trackNumber,

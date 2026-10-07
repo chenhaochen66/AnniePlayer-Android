@@ -74,10 +74,11 @@ import com.annieplayer.annie_music.kt.data.sources.searchQQArtist
 /** 歌词缓存 TTL（对齐 RN `LYRIC_CACHE_TTL` = 60 分钟） */
 private const val _lyricCacheTtl: Long = 60 * 60 * 1000L
 
-/** 歌词结果（对齐 Dart `LyricResult`） */
+/** 歌词结果（对齐 Dart `LyricResult`，另带逐字） */
 data class LyricResult(
     val lrc: String,
     val tlyric: String?,
+    val wordLyric: String? = null,
 )
 
 /** 专辑曲目结果（对齐 Dart `({List<AlbumSong> songs, String pub})`） */
@@ -336,7 +337,7 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
         return LyricResult(lrc = r.lrc, tlyric = r.tlyric)
     }
 
-    val cacheKey = "lyric:${song.id}"
+    val cacheKey = "lyric:v2:${song.id}"
     val cached = cacheService.get<String>(cacheKey)
     if (cached != null) {
         try {
@@ -345,6 +346,7 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
                 return LyricResult(
                     lrc = parsed["lrc"] as String,
                     tlyric = parsed["tlyric"] as String?,
+                    wordLyric = parsed["wordLyric"] as String?,
                 )
             }
         } catch (_: Throwable) {
@@ -355,21 +357,25 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
     return try {
         val result: LyricResult = if (song.id.startsWith("netease:")) {
             val r = fetchNeteaseLyric(song.id)
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric)
+            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
         } else if (song.id.startsWith("qq:")) {
             val r = fetchQQLyric(song.id)
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric)
+            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
         } else if (song.id.startsWith("kugou:")) {
             val r = fetchKugouLyric(song.id, "${song.title} ${song.artist}")
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric)
+            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
         } else {
             val r = fetchKuwoLyric(song.id, song.title, song.artist)
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric)
+            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
         }
         cacheService.set(
             cacheKey,
             anyToJsonElement(
-                mapOf<String, Any?>("lrc" to result.lrc, "tlyric" to result.tlyric),
+                mapOf<String, Any?>(
+                    "lrc" to result.lrc,
+                    "tlyric" to result.tlyric,
+                    "wordLyric" to result.wordLyric,
+                ),
             ).toString(),
             _lyricCacheTtl,
         )

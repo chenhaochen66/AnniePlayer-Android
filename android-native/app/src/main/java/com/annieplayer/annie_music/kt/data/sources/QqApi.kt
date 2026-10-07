@@ -1,6 +1,8 @@
 package com.annieplayer.annie_music.kt.data.sources
 
 import android.util.Base64
+import com.annieplayer.annie_music.kt.core.util.QrcDes
+import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.AlbumSongsPage
@@ -16,9 +18,13 @@ import com.annieplayer.annie_music.kt.data.network.httpGetText
 import com.annieplayer.annie_music.kt.data.network.httpPostJson
 import com.annieplayer.annie_music.kt.data.network.json
 import com.annieplayer.annie_music.kt.data.network.jsonElementToAny
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
+import java.util.zip.Inflater
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * QQ 音乐 API（1:1 移植 Flutter `lib/data/sources/qq_api.dart`）。
@@ -47,10 +53,11 @@ data class QqPage(
     val cover: String,
 )
 
-/** 歌词结果（对齐 Dart `({String lrc, String? tlyric})`） */
+/** 歌词结果（对齐 Dart `({String lrc, String? tlyric})`，另带逐字） */
 data class QqLyric(
     val lrc: String,
     val tlyric: String?,
+    val wordLyric: String? = null,
 )
 
 /** 单曲补充信息结果（对齐 Dart `({String? trackNumber, String? discNumber, String? releaseDate})`） */
@@ -325,16 +332,62 @@ private fun _decodeQQBase64(b64: String): String {
     return decoder.decode(ByteBuffer.wrap(bytes)).toString()
 }
 
-/** 获取 QQ 歌词，返回原始 lrc 与翻译歌词；失败返回占位歌词 */
+/** QRC 行：`[起始ms,时长ms]词(起始ms,时长ms)词…`（词起始小于行首时按相对值处理） */
+private val _reQrcLine by lazy { Regex("^\\[(\\d+),(\\d+)\\](.+)$") }
+private val _reQrcWord by lazy { Regex("\\((\\d+),(\\d+)\\)([^(]*)") }
+
+/** QRC -> 行级 lrc + 统一逐字格式 */
+private fun _qrcToLrcAndWords(qrc: String): Pair<String, String?> {
+    val lrc = StringBuilder()
+    val wl = StringBuilder()
+    for (line in qrc.split('\n')) {
+        val m = _reQrcLine.find(line.trim()) ?: continue
+        val lineStart = m.groupValues[1].toIntOrNull() ?: continue
+        val body = m.groupValues[3]
+        // QRC 行形如「首字(起始,时长)字(起始,时长)…」：首个标记**之前**还有一段文本（首字/首词），
+        // 只取标记之后的文本会丢掉每行第一个字（真机现象：QQ 每行歌词第一个字不显示）。
+        val lead = body.substringBefore('(').trim()
+        val marks = _reQrcWord.findAll(body).toList()
+        if (lead.isEmpty() && marks.isEmpty()) continue
+        val text = (lead + marks.joinToString("") { it.groupValues[3] }).trim()
+        if (text.isEmpty()) continue
+        val ts = lrcTimeOfMs(lineStart)
+        lrc.append(ts).append(text).append('\n')
+        val wordsSb = StringBuilder()
+        if (lead.isNotEmpty()) wordsSb.append('<').append(lineStart).append(",0>").append(lead)
+        for (w in marks) {
+            val rawStart = w.groupValues[1].toIntOrNull() ?: 0
+            val dur = w.groupValues[2].toIntOrNull() ?: 0
+            val abs = if (rawStart < lineStart) lineStart + rawStart else rawStart
+            wordsSb.append('<').append(abs).append(',').append(dur).append('>').append(w.groupValues[3])
+        }
+        wl.append(ts).append(wordsSb).append('\n')
+    }
+    return lrc.toString().trimEnd('\n') to (if (wl.isEmpty()) null else wl.toString().trimEnd('\n'))
+}
+
+/** QQ `trans` 字段（base64 翻译歌词） */
+private fun _qqTrans(d: Map<*, *>?): String? {
+    if (d == null || !_truthy(d["trans"])) return null
+    val b64 = if (d["trans"] is String) d["trans"] as String else return null
+    return try {
+        _decodeQQBase64(b64)
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+/** 获取 QQ 歌词，返回原始 lrc、翻译歌词与逐字歌词；失败返回占位歌词 */
 suspend fun fetchQQLyric(songId: String): QqLyric {
     val fallback = QqLyric("[00:00.00]暂无歌词", null)
     val songMid = _rawId(songId)
-    try {
+
+    suspend fun requestLyric(qrc: Int): Map<*, *>? = try {
         val payload: Map<String, Any?> = mapOf(
             "request" to mapOf(
                 "module" to "music.musichallSong.PlayLyricInfo",
                 "method" to "GetPlayLyricInfo",
-                "param" to mapOf("songMID" to songMid, "crypt" to 0, "qrc" to 0, "trans" to 1),
+                "param" to mapOf("songMID" to songMid, "crypt" to 0, "qrc" to qrc, "trans" to 1),
             ),
         )
         val data = httpPostJson(
@@ -346,26 +399,30 @@ suspend fun fetchQQLyric(songId: String): QqLyric {
                 "Cookie" to "tmeLoginType=-1;",
             ),
         )
-
         val reqRaw = data["request"]
-        val dRaw = if (reqRaw is Map<*, *>) reqRaw["data"] else null
-        val d = _toMap(dRaw)
-        if (d == null || !_truthy(d["lyric"])) return fallback
-
-        try {
-            val lrcB64 = if (d["lyric"] is String) d["lyric"] as String else ""
-            val lrc = _decodeQQBase64(lrcB64)
-            var tlyric: String? = null
-            if (_truthy(d["trans"])) {
-                val transB64 = if (d["trans"] is String) d["trans"] as String else ""
-                tlyric = _decodeQQBase64(transB64)
-            }
-            return QqLyric(lrc = lrc, tlyric = tlyric)
-        } catch (_: Throwable) {
-            return fallback
-        }
+        _toMap(if (reqRaw is Map<*, *>) reqRaw["data"] else null)
     } catch (_: Throwable) {
-        return fallback
+        null
+    }
+
+    val dQrc = requestLyric(1)
+    val lyricQrc = if (dQrc?.get("lyric") is String) dQrc["lyric"] as String else ""
+    val decrypted = QrcDes.decryptToQrc(lyricQrc)
+    if (decrypted != null) {
+        val parsed = _qrcToLrcAndWords(decrypted)
+        if (parsed.first.isNotEmpty()) {
+            return QqLyric(lrc = parsed.first, tlyric = _qqTrans(dQrc), wordLyric = parsed.second)
+        }
+    }
+
+    // QRC 解密失败或该曲无 QRC：退回普通 LRC 再请求一次（保证歌词一定能显示）
+    val dPlain = requestLyric(0)
+    val lyricPlain = if (dPlain?.get("lyric") is String) dPlain["lyric"] as String else ""
+    if (lyricPlain.isEmpty()) return fallback
+    return try {
+        QqLyric(lrc = _decodeQQBase64(lyricPlain), tlyric = _qqTrans(dPlain), wordLyric = null)
+    } catch (_: Throwable) {
+        fallback
     }
 }
 

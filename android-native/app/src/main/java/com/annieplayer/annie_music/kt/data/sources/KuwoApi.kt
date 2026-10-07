@@ -7,12 +7,18 @@ import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Playlist
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
+import android.util.Base64
+import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
 import com.annieplayer.annie_music.kt.data.network.cacheService
+import com.annieplayer.annie_music.kt.data.network.httpGetBytes
 import com.annieplayer.annie_music.kt.data.network.httpGetJson
 import com.annieplayer.annie_music.kt.data.network.httpGetText
 import com.annieplayer.annie_music.kt.data.network.json
 import com.annieplayer.annie_music.kt.data.network.jsonElementToAny
 import com.annieplayer.annie_music.kt.data.network.retryUntilSuccess
+import java.io.ByteArrayOutputStream
+import java.nio.charset.Charset
+import java.util.zip.Inflater
 import kotlin.random.Random
 
 /**
@@ -36,10 +42,11 @@ data class KuwoAlbumSongs(
     val pub: String,
 )
 
-/** 歌词结果（对齐 Dart `({String lrc, String? tlyric})`） */
+/** 歌词结果（对齐 Dart `({String lrc, String? tlyric})`，另带逐字） */
 data class KuwoLyric(
     val lrc: String,
     val tlyric: String?,
+    val wordLyric: String? = null,
 )
 
 /** 单曲补充信息结果（对齐 Dart `({String? trackNumber, String? releaseDate})`） */
@@ -891,90 +898,155 @@ suspend fun searchKuwoMusicId(title: String, artist: String): String {
     return _s(list.first()["MUSICRID"]).replaceFirst("MUSIC_", "")
 }
 
-/** 获取酷我歌词，返回原始 lrc 与翻译歌词（对齐 RN fetchKuwoLyric） */
+/** LRCX 头里的 `[kuwo:NNN]`（八进制）：十位/个位分别作为词起止时间的除数 */
+private val _reKuwoOffset by lazy { Regex("\\[kuwo:(\\d+)\\]") }
+
+/** LRCX 行：`[mm:ss.mmm]<o,d>字<o,d>字…` */
+private val _reKuwoLrcxLine by lazy {
+    Regex("^\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\]((?:<-?\\d+,-?\\d+>[^<]*)+)")
+}
+private val _reKuwoWord by lazy { Regex("<(-?\\d+),(-?\\d+)>([^<]*)") }
+
+/** 密钥 "yeelion" 逐字节 XOR（请求参数与 LRCX 正文都用这套） */
+private fun _kuwoXor(data: ByteArray): ByteArray {
+    val key = "yeelion".toByteArray(Charsets.UTF_8)
+    val out = ByteArray(data.size)
+    for (i in data.indices) out[i] = (data[i].toInt() xor key[i % key.size].toInt()).toByte()
+    return out
+}
+
+/**
+ * 请求酷我 PC 端歌词接口（LRCX 逐字 / 普通 LRC 同一接口，用 `lrcx` 参数切换）。
+ *
+ * 响应是「文本头 `tp=content` + CRLFCRLF + zlib 二进制」的混合体，故走 [httpGetBytes]。
+ */
+private suspend fun _fetchKuwoPcLyric(musicId: String, isLrcx: Boolean): String? = try {
+    val params = "user=12345,web,web,web&requester=localhost&req=1&rid=MUSIC_$musicId" +
+        if (isLrcx) "&lrcx=1" else ""
+    val b64 = Base64.encodeToString(_kuwoXor(params.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+    val raw = httpGetBytes(
+        "http://newlyric.kuwo.cn/newlyric.lrc?$b64",
+        mapOf("User-Agent" to _mobileUa),
+    )
+    _decodeKuwoPcLyric(raw, isLrcx)
+} catch (_: Throwable) {
+    null
+}
+
+/** 解响应：校验 `tp=content` 头 -> 取 CRLFCRLF 之后的 zlib -> inflate；LRCX 再 base64+XOR+GB18030 */
+private fun _decodeKuwoPcLyric(raw: ByteArray, isLrcx: Boolean): String? {
+    val head = "tp=content"
+    if (raw.size < head.length + 4) return null
+    if (String(raw, 0, head.length, Charsets.UTF_8) != head) return null
+    var sep = -1
+    for (i in 0 until raw.size - 3) {
+        if (raw[i] == 13.toByte() && raw[i + 1] == 10.toByte() &&
+            raw[i + 2] == 13.toByte() && raw[i + 3] == 10.toByte()
+        ) {
+            sep = i + 4
+            break
+        }
+    }
+    if (sep < 0) return null
+    val inflater = Inflater()
+    inflater.setInput(raw, sep, raw.size - sep)
+    val out = ByteArrayOutputStream()
+    val buf = ByteArray(8192)
+    try {
+        while (!inflater.finished()) {
+            val n = inflater.inflate(buf)
+            if (n <= 0) break
+            out.write(buf, 0, n)
+        }
+    } catch (_: Throwable) {
+        return null
+    } finally {
+        inflater.end()
+    }
+    val inflated = out.toByteArray()
+    val bytes = if (isLrcx) {
+        _kuwoXor(Base64.decode(String(inflated, Charsets.US_ASCII).trim(), Base64.DEFAULT))
+    } else {
+        inflated
+    }
+    return String(bytes, Charset.forName("GB18030"))
+}
+
+/**
+ * LRCX -> 行级 lrc + 翻译 tlyric + 统一逐字格式。
+ *
+ * 翻译行判据：所有词标记都是 `<0,0>` 且含中文（原文行一定有非零标记）。
+ * 翻译行用**上一句原文的时间戳**输出，保证与 lrc 行的时间戳 key 一致
+ * （播放页合并与下载写标签都按这个 key 对齐）。
+ */
+private fun _parseKuwoLrcx(lrcx: String): KuwoLyric {
+    val tag = _reKuwoOffset.find(lrcx)?.groupValues?.get(1)?.toIntOrNull(8) ?: 11
+    val d1 = (tag / 10).coerceAtLeast(1)
+    val d2 = (tag % 10).coerceAtLeast(1)
+    val lrc = StringBuilder()
+    val tl = StringBuilder()
+    val wl = StringBuilder()
+    var lastMs = 0
+    var lastText: String? = null
+    var lastWords = ""
+
+    fun flush() {
+        val text = lastText ?: return
+        val ts = lrcTimeOfMs(lastMs)
+        lrc.append(ts).append(text).append('\n')
+        if (lastWords.isNotEmpty()) wl.append(ts).append(lastWords).append('\n')
+        lastText = null
+        lastWords = ""
+    }
+
+    for (line in lrcx.split('\n')) {
+        val m = _reKuwoLrcxLine.find(line.trim()) ?: continue
+        val ms = m.groupValues[1].toInt() * 60000 +
+            m.groupValues[2].toInt() * 1000 +
+            m.groupValues[3].toInt()
+        val marks = _reKuwoWord.findAll(m.groupValues[4]).toList()
+        if (marks.isEmpty()) continue
+        val text = marks.joinToString("") { it.groupValues[3] }.trim()
+        if (text.isEmpty()) continue
+        val allZero = marks.all { it.groupValues[1] == "0" && it.groupValues[2] == "0" }
+        if (allZero && _reCjk.containsMatchIn(text)) {
+            if (lastText != null) tl.append(lrcTimeOfMs(lastMs)).append(text).append('\n')
+            continue
+        }
+        flush()
+        lastMs = ms
+        lastText = text
+        lastWords = marks.joinToString("") { w ->
+            val o = w.groupValues[1].toInt()
+            val d = w.groupValues[2].toInt()
+            val start = ms + kotlin.math.abs(o + d) / (d1 * 2)
+            val dur = kotlin.math.abs(o - d) / (d2 * 2)
+            "<$start,$dur>${w.groupValues[3]}"
+        }
+    }
+    flush()
+    return KuwoLyric(
+        lrc = if (lrc.isEmpty()) "[00:00.00]暂无歌词" else lrc.toString().trimEnd('\n'),
+        tlyric = if (tl.isEmpty()) null else tl.toString().trimEnd('\n'),
+        wordLyric = if (wl.isEmpty()) null else wl.toString().trimEnd('\n'),
+    )
+}
+
+/** 获取酷我歌词：PC 端接口（优先 LRCX 逐字；该曲无 LRCX 时退同一接口的普通 LRC） */
 suspend fun fetchKuwoLyric(songId: String, title: String, artist: String): KuwoLyric {
     val musicId = if (songId.startsWith("qobuz:") || songId.startsWith("kkbox:")) {
         searchKuwoMusicId(title, artist)
     } else {
         songId
     }
-
-    val data = httpGetJson(
-        "https://www.kuwo.cn/openapi/v1/www/lyric/getlyric?musicId=$musicId" +
-            "&httpsStatus=1&plat=web_www&from=",
-        mapOf(
-            "User-Agent" to _mobileUa,
-            "Accept" to "application/json, text/plain, */*",
-            "Referer" to "https://www.kuwo.cn/play_detail/$musicId",
-        ),
-    )
-    if (!_truthy(data["success"])) throw IllegalStateException("kuwo lyric api failed")
-
-    val dataField = data["data"]
-    val lrclistRaw = if (dataField is Map<*, *>) dataField["lrclist"] else null
-    val lrclist = if (lrclistRaw is List<*>) lrclistRaw else emptyList<Any?>()
-    if (lrclist.isEmpty()) return KuwoLyric("[00:00.00]暂无歌词", null)
-
-    val lines = lrclist.filterIsInstance<Map<*, *>>()
-        .map { e -> e.entries.associate { (k, value) -> k.toString() to value } }
-
-    fun fmtTime(sec: String): String {
-        val s = sec.toDoubleOrNull() ?: 0.0
-        val m = (s / 60).toInt()
-        val secs = (s % 60).toInt()
-        val ms = ((s % 1) * 100).toInt()
-        val mm = m.toString().padStart(2, '0')
-        val ss = secs.toString().padStart(2, '0')
-        val mss = ms.toString().padStart(2, '0')
-        return "[$mm:$ss.$mss]"
+    val lrcx = _fetchKuwoPcLyric(musicId, true)
+    if (!lrcx.isNullOrEmpty()) {
+        val parsed = _parseKuwoLrcx(lrcx)
+        if (parsed.lrc != "[00:00.00]暂无歌词") return parsed
     }
-
-    fun hasCjk(t: String): Boolean = _reCjk.containsMatchIn(t)
-    fun hasKana(t: String): Boolean = _reKana.containsMatchIn(t)
-    fun isTranslation(t: String): Boolean = hasCjk(t) && !hasKana(t)
-    fun isOriginal(t: String): Boolean = !hasCjk(t) || hasKana(t)
-
-    val lrcLines = ArrayList<String>()
-    val tlyricLines = ArrayList<String>()
-
-    // 注意：必须用 while（原文与翻译相邻时一次消费两行）
-    var i = 0
-    while (i < lines.size) {
-        val text = _s(lines[i]["lineLyric"]).trim()
-        if (text.isEmpty()) {
-            i++
-            continue
-        }
-        if (i + 1 < lines.size) {
-            val nextText = _s(lines[i + 1]["lineLyric"]).trim()
-            val curTime = _s(lines[i]["time"]).toDoubleOrNull() ?: -1.0
-            val nextTime = _s(lines[i + 1]["time"]).toDoubleOrNull() ?: -2.0
-            val afterTime = if (i + 2 < lines.size) {
-                _s(lines[i + 2]["time"]).toDoubleOrNull() ?: -3.0
-            } else {
-                -4.0
-            }
-            // 酷我翻译行的两种排布：①与原文同时间戳；②紧跟在原文后、沿用「下一句原文」的时间戳
-            // （Adele《Hello》：原文 6.59 → 翻译 12.08 → 下一句原文 12.08）。中英混杂的歌里相邻的
-            // 英文句与中文句两者都不满足（《来自天堂的魔鬼》52.1 → 59.2 → 66.0），不会被误吞。
-            val aligned = kotlin.math.abs(nextTime - curTime) <= 0.1 ||
-                kotlin.math.abs(nextTime - afterTime) <= 0.1
-            if (nextText.isNotEmpty() && aligned && isOriginal(text) && isTranslation(nextText)) {
-                val t = fmtTime(_s(lines[i]["time"]))
-                lrcLines.add("$t$text")
-                tlyricLines.add("$t$nextText")
-                i += 2
-                continue
-            }
-        }
-        lrcLines.add("${fmtTime(_s(lines[i]["time"]))}$text")
-        i++
-    }
-
-    return KuwoLyric(
-        lrc = if (lrcLines.isNotEmpty()) lrcLines.joinToString("\n") else "[00:00.00]暂无歌词",
-        tlyric = if (tlyricLines.isNotEmpty()) tlyricLines.joinToString("\n") else null,
-    )
+    val plain = _fetchKuwoPcLyric(musicId, false)
+    if (!plain.isNullOrEmpty()) return KuwoLyric(plain.trim(), null, null)
+    return KuwoLyric("[00:00.00]暂无歌词", null, null)
 }
 
 // ── Kuwo secret 生成（由 Python 脚本移植，逐字节对齐） ──

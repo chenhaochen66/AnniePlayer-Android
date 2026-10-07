@@ -93,6 +93,16 @@ suspend fun httpGetText(url: String, headers: Map<String, String>? = null): Stri
         }
     }
 
+/** 简单 GET 返回原始字节（酷我 PC 歌词是「文本头 + zlib 二进制体」的混合响应） */
+suspend fun httpGetBytes(url: String, headers: Map<String, String>? = null): ByteArray =
+    withContext(Dispatchers.IO) {
+        val resp = globalOkHttp.newCall(buildRequest(url, headers)).execute()
+        resp.use {
+            if (!it.isSuccessful) throw IOException("HTTP ${it.code} for $url")
+            it.body?.bytes() ?: ByteArray(0)
+        }
+    }
+
 /** 简单 POST 返回 Map（JSON） */
 suspend fun httpPostJson(
     url: String,
