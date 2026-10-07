@@ -82,9 +82,6 @@ import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** 字号档位（Flutter `_fontScaleLevels`：0.5 / 0.625 / 0.75 / 0.875 / 1.0） */
-private val PlayerFontScaleLevels = listOf(0.5f, 0.625f, 0.75f, 0.875f, 1.0f)
-
 /** 当前行左上角定位系数（Flutter：顶部留白 18% 屏高、当前行停在 -2% 屏高处） */
 private const val PlayerLyricTopInsetFraction = 0.18f
 private const val PlayerLyricTargetFraction = 0.02f
@@ -97,10 +94,6 @@ private const val PlayerLyricActiveBgAlpha = 18f / 255f
 
 /** 行高变化重定位的触发阈值（px）：低于该值不再校正，避免测量-滚动互相触发 */
 private const val PlayerLyricRescrollThresholdPx = 8f
-
-/** 字号面板示例字号的基数 / 步进（Flutter：`fontSize: 10 + lv * 14`） */
-private const val PlayerFontSampleBaseSp = 10f
-private const val PlayerFontSampleStepSp = 14f
 
 /**
  * 歌词滚动视图（1:1 移植 Flutter `LyricsView`）。
@@ -213,8 +206,21 @@ fun PlayerLyricsView(
         onLineIndexChange(targetIndex)
     }
 
+    // 预滚动：下一行在 scrollLeadMs 内就要开始时，**提前**把滚动启动。
+    // 这样它「开始唱」的那一刻刚好滚到位 —— 高亮仍按真实时间立即点亮（不再出现
+    // 「滚到高亮位时前几个字已经唱完」），滚动也依旧是平滑动画、不僵硬。
+    val scrollIndex = if (
+        targetIndex >= 0 &&
+        targetIndex + 1 < lines.size &&
+        (lines[targetIndex + 1].time - effectiveTime) * 1000.0 <= LyricScrollLeadMs
+    ) {
+        targetIndex + 1
+    } else {
+        targetIndex
+    }
+
     // 高亮行变化 / 行高测量变化 → 定位（用户拖拽期间及松手后均不自动滚动）
-    LaunchedEffect(targetIndex, heightsVersion, lines) {
+    LaunchedEffect(scrollIndex, heightsVersion, lines) {
         if (lines.isEmpty()) return@LaunchedEffect
         // 拖拽中：不滚动，并持续锚定最新高亮行（对齐 Flutter 拖拽中仍更新 _currentLineIndex）
         if (isUserDragging) {
@@ -227,7 +233,7 @@ fun PlayerLyricsView(
             if (targetIndex == suppressAnchorIndex) return@LaunchedEffect
             suppressFollow = false
         }
-        val index = if (targetIndex < 0) 0 else targetIndex
+        val index = if (scrollIndex < 0) 0 else scrollIndex
         if (index >= lines.size) return@LaunchedEffect
         val targetPx = topInsetPx + sumBefore(index) - targetInsetPx
         if (needsInitialJump) {
@@ -334,11 +340,8 @@ fun PlayerLyricsView(
     }
 }
 
-/** 32dp（Flutter `Container(width: 32, height: 32)`）：歌词页字号按钮 */
+/** 32dp（Flutter `Container(width: 32, height: 32)`）：歌词页设置按钮 */
 private val PlayerSize32 = 32.dp
-
-/** 44dp（Flutter `_FontScalePanel` 档位按钮 `Container(width: 44, height: 44)`） */
-private val PlayerScalePanelButtonSize = 44.dp
 
 /**
  * 单行歌词：当前行高亮（底色 + 左竖线 + 主色辉光）、翻译淡入、点击跳转。
@@ -367,9 +370,7 @@ private fun PlayerLyricLine(
         isActive -> 1f
         else -> maxOf(0.12f, 0.45f - (distance - 1) * 0.2f)
     }
-    // 变高亮时不淡入：高亮行的暗字层本身是 45% 白，若行透明度再从 0.45 动画到 1，
-    // 两者相乘会瞬间变成 20% 白 —— 真机现象「下一句刚变高亮时暗一下」。
-    val fadeDuration = if (animate && !isActive) AppDuration.lyricLineFade else 0
+    val fadeDuration = if (animate) AppDuration.lyricLineFade else 0
     val lineOpacity by animateFloatAsState(
         targetValue = targetOpacity,
         animationSpec = tween(durationMillis = fadeDuration, easing = AppEasing.easeInOut),
@@ -381,7 +382,6 @@ private fun PlayerLyricLine(
         label = "playerLyricTranslationFade",
     )
 
-    val glow = if (isActive) Shadow(color = primary, blurRadius = glowBlurPx) else null
     // 逐字上色（AnnotatedString）：天然跟随自动换行，不像「横向裁切」那样在两行文本上被一刀切。
     // 只有当前行做，其它行用纯文本，避免无谓开销。
     val karaoke = showWordByWord && isActive && line.words.isNotEmpty()
@@ -390,14 +390,12 @@ private fun PlayerLyricLine(
         fontSize = AppFontSize.size34 * fontScale,
         lineHeight = AppLineHeight.lyric40 * fontScale,
         fontWeight = if (isActive) AppFontWeight.extraBold else AppFontWeight.medium,
-        shadow = glow,
     )
     val translationStyle = TextStyle(
         color = AppColors.white,
         fontSize = AppFontSize.size17 * fontScale,
         lineHeight = AppLineHeight.lyric28 * fontScale,
         fontWeight = if (isActive) AppFontWeight.extraBold else AppFontWeight.medium,
-        shadow = glow,
     )
 
     Box(
@@ -425,17 +423,18 @@ private fun PlayerLyricLine(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = AppSpacing.sp40, vertical = AppSpacing.sp10)
-                .clip(RoundedCornerShape(if (isActive) AppRadius.card else 0.dp))
-                .background(if (isActive) primary.copy(alpha = PlayerLyricActiveBgAlpha) else Color.Transparent),
+                .padding(horizontal = AppSpacing.sp40, vertical = AppSpacing.sp10),
         ) {
             if (karaoke) {
+                // 未唱部分要恒为「45% 白」：行透明度还在 0.45→1 淡入时，若不补偿，
+                // 0.45 × 0.45 会瞬间暗到 20%（真机：刚变高亮时暗一下）。
+                val dimAlpha = (0.45f / lineOpacity.coerceAtLeast(0.45f)).coerceIn(0f, 1f)
                 KaraokeText(
                     text = line.words.joinToString("") { it.text },
                     words = line.words,
                     currentTimeMs = currentTimeMs,
                     style = lineStyle,
-                    dimColor = AppColors.whiteA45,
+                    dimColor = AppColors.white.copy(alpha = dimAlpha),
                     modifier = Modifier.fillMaxWidth().playerAlphaLocal(lineOpacity),
                 )
             } else {
@@ -590,6 +589,9 @@ private fun perCharWordText(words: List<LyricWord>, currentTimeMs: Int): Annotat
         }
     }
 
+/** 预滚动的提前量（毫秒）：下一行还有这么久要开始时就把滚动启动 */
+private const val LyricScrollLeadMs = 200
+
 /** 卡拉OK扫过的软边带宽（px）：越大越柔和，越小越利落 */
 private const val SoftEdgePx = 50f
 
@@ -615,90 +617,6 @@ private fun karaokeSungIndex(words: List<LyricWord>, currentTimeMs: Int): Float 
 /** 轻量透明度修饰（等价 Flutter `Opacity`，避免为每行引入额外 composable 层级） */
 private fun Modifier.playerAlphaLocal(value: Float): Modifier =
     this.graphicsLayer { alpha = value.coerceIn(0f, 1f) }
-
-/**
- * 歌词字号面板（1:1 移植 Flutter `_FontScalePanel`）：
- * 全屏 black54 遮罩 + 底部 surface 面板（顶部圆角 20），5 档字号，选中档主色高亮。
- */
-@Composable
-fun PlayerFontScalePanel(
-    visible: Boolean,
-    current: Float,
-    showWordByWord: Boolean,
-    onSelect: (Float) -> Unit,
-    onToggleWordByWord: () -> Unit,
-    onClose: () -> Unit,
-) {
-    if (!visible) return
-    BackHandler { onClose() }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(AppColors.black54)
-                .clickableNoRipple { onClose() },
-        )
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = AppRadius.r20, topEnd = AppRadius.r20))
-                .background(AppColors.surface)
-                .padding(start = AppSpacing.sp20, top = AppSpacing.sp20, end = AppSpacing.sp20, bottom = AppSpacing.sp32),
-            horizontalAlignment = Alignment.Start,
-        ) {
-            Text(
-                text = "歌词设置",
-                color = AppColors.white,
-                fontSize = AppFontSize.xl,
-                fontWeight = AppFontWeight.bold,
-            )
-            Spacer(modifier = Modifier.height(AppSpacing.sp20))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                PlayerFontScaleLevels.forEach { level ->
-                    val selected = level == current
-                    Box(
-                        modifier = Modifier
-                            .size(PlayerScalePanelButtonSize)
-                            .clip(RoundedCornerShape(AppRadius.r10))
-                            .background(
-                                if (selected) AppColors.primary.copy(alpha = 0.2f) else AppColors.whiteA05,
-                            )
-                            .clickableNoRipple { onSelect(level) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "Aa",
-                            color = if (selected) AppColors.primary else AppColors.white70,
-                            fontSize = (PlayerFontSampleBaseSp + level * PlayerFontSampleStepSp).sp,
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(AppSpacing.sp20))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "逐字歌词",
-                    modifier = Modifier.weight(1f),
-                    color = AppColors.white,
-                    fontSize = AppFontSize.size15,
-                )
-                Switch(
-                    checked = showWordByWord,
-                    onCheckedChange = { onToggleWordByWord() },
-                )
-            }
-        }
-    }
-}
 
 /** 解析歌词并合并翻译；平台占位「暂无歌词」视为空（对齐 Flutter `_parsedLines`） */
 private fun playerParseLyricLines(
