@@ -131,8 +131,10 @@ private fun _toBackendItem(song: Song): Map<String, String> {
     m["artist"] = song.artist
     m["cover"] = song.cover
     m["album"] = song.album ?: ""
+    // 只有 qobuz 需要把直链带进队列（详情页/搜索拿到的直链是唯一来源）。
+    // 其余平台一律留空 → 交给引擎按平台解析，否则 Song 上任何残留的旧直链都会
+    // 让引擎「直接用、不请求播放接口」（真机抓包：网易/QQ 完全没发请求）。
     if (song.platform == MusicPlatform.qobuz && any.playUrl.isNotEmpty()) m["url"] = any.playUrl
-    if (any.playUrl.isNotEmpty()) m["url"] = any.playUrl
     return m
 }
 
@@ -316,7 +318,7 @@ class PlayerViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val r = fetchLyric(song, kkboxSid)
-                if (!_disposed) updateSongLyric(song.id, r.lrc, r.tlyric)
+                if (!_disposed) updateSongLyric(song.id, r.lrc, r.tlyric, r.wordLyric)
             } catch (_: Throwable) {
                 // 歌词拉取失败静默忽略（保留「暂无歌词」）
             } finally {
@@ -433,13 +435,17 @@ class PlayerViewModel : ViewModel() {
         )
     }
 
-    fun updateSongLyric(id: String, lrc: String, tlyric: String? = null) {
+    fun updateSongLyric(id: String, lrc: String, tlyric: String? = null, wordLyric: String? = null) {
         val cs = _state.value.currentSong
         _state.value = _state.value.copyWith(
             queue = _state.value.queue.map { s ->
-                if (s.id == id) s.copyWith(lyric = lrc, tlyric = tlyric) else s
+                if (s.id == id) s.copyWith(lyric = lrc, tlyric = tlyric, wordLyric = wordLyric) else s
             },
-            currentSong = if (cs != null && cs.id == id) cs.copyWith(lyric = lrc, tlyric = tlyric) else cs,
+            currentSong = if (cs != null && cs.id == id) {
+                cs.copyWith(lyric = lrc, tlyric = tlyric, wordLyric = wordLyric)
+            } else {
+                cs
+            },
         )
     }
 

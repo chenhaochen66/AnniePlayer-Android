@@ -189,7 +189,7 @@ private fun PlaylistDetailContent(
             val url = fetchPlayUrlBySong(song)
             val lyric = fetchLyric(song)
             playerViewModel.updateSongPlayUrl(song.id, url)
-            playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric)
+            playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric, lyric.wordLyric)
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
         }

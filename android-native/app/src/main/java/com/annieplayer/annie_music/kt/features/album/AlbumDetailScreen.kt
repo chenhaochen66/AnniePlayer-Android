@@ -189,7 +189,7 @@ fun AlbumDetailScreen(
                 val url = fetchPlayUrlBySong(converted[idx])
                 val lyric = fetchLyric(converted[idx])
                 playerViewModel.updateSongPlayUrl(target.id, url)
-                playerViewModel.updateSongLyric(target.id, lyric.lrc, lyric.tlyric)
+                playerViewModel.updateSongLyric(target.id, lyric.lrc, lyric.tlyric, lyric.wordLyric)
             } catch (_: Exception) {
                 // 对齐 Dart：播放链接获取失败静默
             }

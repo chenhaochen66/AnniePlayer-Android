@@ -256,7 +256,7 @@ private fun AlbumDetailContent(
             val url = fetchPlayUrlBySong(converted[idx])
             val lyric = fetchLyric(converted[idx])
             playerViewModel.updateSongPlayUrl(target.id, url)
-            playerViewModel.updateSongLyric(target.id, lyric.lrc, lyric.tlyric)
+                playerViewModel.updateSongLyric(target.id, lyric.lrc, lyric.tlyric, lyric.wordLyric)
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
         }
