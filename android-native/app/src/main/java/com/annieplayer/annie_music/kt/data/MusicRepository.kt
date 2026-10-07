@@ -337,7 +337,7 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
         return LyricResult(lrc = r.lrc, tlyric = r.tlyric)
     }
 
-    val cacheKey = "lyric:v2:${song.id}"
+    val cacheKey = "lyric:v3:${song.id}"
     val cached = cacheService.get<String>(cacheKey)
     if (cached != null) {
         try {

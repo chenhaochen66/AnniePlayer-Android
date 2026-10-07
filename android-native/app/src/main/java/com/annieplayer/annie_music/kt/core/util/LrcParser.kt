@@ -75,6 +75,23 @@ private val _wordLineRegex by lazy {
  */
 private val _wordRegex by lazy { Regex("<(\\d+),(\\d+)>([^<\\n]*)") }
 
+/** 翻译行时间戳的匹配容差（毫秒）：各平台行起点与翻译时间戳的精度不同（厘秒 / 毫秒） */
+private const val TlyricToleranceMs = 80
+
+/** 取时间上最接近 [key] 的翻译（超出容差返回 null） */
+private fun _nearestTrans(map: Map<Int, String>, key: Int): String? {
+    var bestKey: Int? = null
+    var bestDiff = Int.MAX_VALUE
+    for (k in map.keys) {
+        val d = kotlin.math.abs(k - key)
+        if (d < bestDiff) {
+            bestDiff = d
+            bestKey = k
+        }
+    }
+    return if (bestKey != null && bestDiff <= TlyricToleranceMs) map[bestKey] else null
+}
+
 /** 一行逐字数据（时间轴可能与该平台的普通 lrc 不同，见 [parseLrcWithTranslation]） */
 private data class WordLine(val timeMs: Int, val words: List<LyricWord>)
 
@@ -139,7 +156,9 @@ fun parseLrcWithTranslation(
     for (i in lines.indices) {
         val line = lines[i]
         val key = (line.time * 1000).roundToInt()
-        val trans = tmap[key]
+        // 精确查不到就取最近的一条（容差见 [TlyricToleranceMs]）：QQ 的 QRC 行起点不是整厘秒，
+        // 而 trans 只精确到厘秒，直接精确查表会整句丢翻译（实测 13065ms vs 13060ms）。
+        val trans = tmap[key] ?: _nearestTrans(tmap, key)
         var words: List<LyricWord> = emptyList()
         if (wordLines.isNotEmpty()) {
             while (cursor + 1 < wordLines.size && wordLines[cursor + 1].timeMs <= key) cursor++

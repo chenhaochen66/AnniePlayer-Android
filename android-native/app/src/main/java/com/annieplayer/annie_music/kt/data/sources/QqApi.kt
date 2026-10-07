@@ -334,7 +334,8 @@ private fun _decodeQQBase64(b64: String): String {
 
 /** QRC 行：`[起始ms,时长ms]词(起始ms,时长ms)词…`（词起始小于行首时按相对值处理） */
 private val _reQrcLine by lazy { Regex("^\\[(\\d+),(\\d+)\\](.+)$") }
-private val _reQrcWord by lazy { Regex("\\((\\d+),(\\d+)\\)([^(]*)") }
+/** 词块文本必须**遇换行即停**：`[^(]*` 会跨行吞掉下一行的 `[start,dur]`，拼接后就少了空格 */
+private val _reQrcWord by lazy { Regex("\\((\\d+),(\\d+)\\)([^(\\n]*)") }
 
 /** QRC -> 行级 lrc + 统一逐字格式 */
 private fun _qrcToLrcAndWords(qrc: String): Pair<String, String?> {
@@ -346,19 +347,24 @@ private fun _qrcToLrcAndWords(qrc: String): Pair<String, String?> {
         val body = m.groupValues[3]
         // QRC 行形如「首字(起始,时长)字(起始,时长)…」：首个标记**之前**还有一段文本（首字/首词），
         // 只取标记之后的文本会丢掉每行第一个字（真机现象：QQ 每行歌词第一个字不显示）。
-        val lead = body.substringBefore('(').trim()
+        // 首个标记之前的文本（首词）**不要 trim**：QRC 里首词与第二个词之间的空格在 `(` 之前，
+        // trim 掉就会变成「Helloit's me」（真机 + 下载标签都复现过）。
+        val lead = body.substringBefore('(')
         val marks = _reQrcWord.findAll(body).toList()
-        if (lead.isEmpty() && marks.isEmpty()) continue
+        if (lead.isBlank() && marks.isEmpty()) continue
         val text = (lead + marks.joinToString("") { it.groupValues[3] }).trim()
         if (text.isEmpty()) continue
         val ts = lrcTimeOfMs(lineStart)
         lrc.append(ts).append(text).append('\n')
         val wordsSb = StringBuilder()
-        if (lead.isNotEmpty()) wordsSb.append('<').append(lineStart).append(",0>").append(lead)
+        if (lead.isNotBlank()) wordsSb.append('<').append(lineStart).append(",0>").append(lead)
+        // QRC 的词时间是**相对行首**的（实测 Kill Bill：0/465/930…）；按整行判断，
+        // 不要逐词判断「小于行首就当相对」，行首较小时会误判成绝对值。
+        val allRelative = marks.all { (it.groupValues[1].toIntOrNull() ?: 0) < lineStart }
         for (w in marks) {
             val rawStart = w.groupValues[1].toIntOrNull() ?: 0
             val dur = w.groupValues[2].toIntOrNull() ?: 0
-            val abs = if (rawStart < lineStart) lineStart + rawStart else rawStart
+            val abs = if (allRelative) lineStart + rawStart else rawStart
             wordsSb.append('<').append(abs).append(',').append(dur).append('>').append(w.groupValues[3])
         }
         wl.append(ts).append(wordsSb).append('\n')

@@ -1,6 +1,7 @@
 package com.annieplayer.annie_music.kt.data.sources
 
 import android.util.Base64
+import com.annieplayer.annie_music.kt.core.util.KrcDes
 import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
@@ -48,12 +49,6 @@ const val kugouKeyA: String = "OIlwieks28dk2k092lksi2UIkp"
 
 /** 酷狗签名密钥 B（歌单接口） */
 const val kugouKeyB: String = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
-
-/** KRC 解密 XOR key（16 字节，逐字节一致） */
-val krcXorKey: IntArray = intArrayOf(
-    0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47,
-    0x51, 0x36, 0x31, 0x2d, 0xce, 0xd2, 0x6e, 0x69,
-)
 
 // ── 结果类型（对齐 Dart records / 私有类） ──
 
@@ -715,26 +710,6 @@ private fun _inflate(data: ByteArray): ByteArray {
     return out.toByteArray()
 }
 
-/** KRC 解密：base64 → 去前 4 字节 → 16 字节 XOR → zlib inflate → UTF-8 */
-fun decodeKrc(contentB64: String): String {
-    val cleaned = contentB64.replace("\r", "").replace("\n", "")
-    val raw = Base64.decode(cleaned, Base64.DEFAULT)
-    val sliced = raw.copyOfRange(4, raw.size)
-    for (i in sliced.indices) {
-        sliced[i] = (sliced[i].toInt() xor krcXorKey[i % 16]).toByte()
-    }
-    val decompressed = _inflate(sliced)
-    return try {
-        Charsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT)
-            .decode(ByteBuffer.wrap(decompressed))
-            .toString()
-    } catch (_: Throwable) {
-        String(decompressed, Charsets.ISO_8859_1)
-    }
-}
-
 fun parseKrcLines(krcText: String): List<KugouKrcLine> {
     val result = ArrayList<KugouKrcLine>()
     for (line in krcText.split("\n")) {
@@ -872,7 +847,7 @@ suspend fun fetchKugouLyric(
             )
             return KugouLyricResult(decoded, null)
         }
-        val krcText = decodeKrc(content)
+        val krcText = KrcDes.decrypt(content)
         val lyricLines = parseKrcLines(krcText)
         val transLines = parseKrcTranslation(krcText)
 

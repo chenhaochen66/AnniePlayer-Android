@@ -8,6 +8,7 @@ import com.annieplayer.annie_music.kt.data.model.Playlist
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import android.util.Base64
+import com.annieplayer.annie_music.kt.core.util.LrcxDes
 import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
 import com.annieplayer.annie_music.kt.data.network.cacheService
 import com.annieplayer.annie_music.kt.data.network.httpGetBytes
@@ -907,14 +908,6 @@ private val _reKuwoLrcxLine by lazy {
 }
 private val _reKuwoWord by lazy { Regex("<(-?\\d+),(-?\\d+)>([^<]*)") }
 
-/** 密钥 "yeelion" 逐字节 XOR（请求参数与 LRCX 正文都用这套） */
-private fun _kuwoXor(data: ByteArray): ByteArray {
-    val key = "yeelion".toByteArray(Charsets.UTF_8)
-    val out = ByteArray(data.size)
-    for (i in data.indices) out[i] = (data[i].toInt() xor key[i % key.size].toInt()).toByte()
-    return out
-}
-
 /**
  * 请求酷我 PC 端歌词接口（LRCX 逐字 / 普通 LRC 同一接口，用 `lrcx` 参数切换）。
  *
@@ -923,53 +916,13 @@ private fun _kuwoXor(data: ByteArray): ByteArray {
 private suspend fun _fetchKuwoPcLyric(musicId: String, isLrcx: Boolean): String? = try {
     val params = "user=12345,web,web,web&requester=localhost&req=1&rid=MUSIC_$musicId" +
         if (isLrcx) "&lrcx=1" else ""
-    val b64 = Base64.encodeToString(_kuwoXor(params.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
     val raw = httpGetBytes(
-        "http://newlyric.kuwo.cn/newlyric.lrc?$b64",
+        "http://newlyric.kuwo.cn/newlyric.lrc?" + LrcxDes.xorBase64(params),
         mapOf("User-Agent" to _mobileUa),
     )
-    _decodeKuwoPcLyric(raw, isLrcx)
+    LrcxDes.decryptResponse(raw, isLrcx)
 } catch (_: Throwable) {
     null
-}
-
-/** 解响应：校验 `tp=content` 头 -> 取 CRLFCRLF 之后的 zlib -> inflate；LRCX 再 base64+XOR+GB18030 */
-private fun _decodeKuwoPcLyric(raw: ByteArray, isLrcx: Boolean): String? {
-    val head = "tp=content"
-    if (raw.size < head.length + 4) return null
-    if (String(raw, 0, head.length, Charsets.UTF_8) != head) return null
-    var sep = -1
-    for (i in 0 until raw.size - 3) {
-        if (raw[i] == 13.toByte() && raw[i + 1] == 10.toByte() &&
-            raw[i + 2] == 13.toByte() && raw[i + 3] == 10.toByte()
-        ) {
-            sep = i + 4
-            break
-        }
-    }
-    if (sep < 0) return null
-    val inflater = Inflater()
-    inflater.setInput(raw, sep, raw.size - sep)
-    val out = ByteArrayOutputStream()
-    val buf = ByteArray(8192)
-    try {
-        while (!inflater.finished()) {
-            val n = inflater.inflate(buf)
-            if (n <= 0) break
-            out.write(buf, 0, n)
-        }
-    } catch (_: Throwable) {
-        return null
-    } finally {
-        inflater.end()
-    }
-    val inflated = out.toByteArray()
-    val bytes = if (isLrcx) {
-        _kuwoXor(Base64.decode(String(inflated, Charsets.US_ASCII).trim(), Base64.DEFAULT))
-    } else {
-        inflated
-    }
-    return String(bytes, Charset.forName("GB18030"))
 }
 
 /**
