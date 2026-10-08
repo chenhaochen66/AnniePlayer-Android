@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -119,6 +120,11 @@ fun PlayerLyricsView(
     seekRatio: Double,
     duration: Double,
     showTranslation: Boolean,
+    /** 可用译文语言（接口给的 translation_langs；为空则不显示语言箭头） */
+    translateLangs: List<String> = emptyList(),
+    /** 当前选中的译文语言 */
+    translateLang: String? = null,
+    onSelectTranslateLang: (String) -> Unit = {},
     fontScale: Float,
     primary: Color,
     viewportHeight: Dp,
@@ -317,24 +323,39 @@ fun PlayerLyricsView(
             )
         }
 
-        // 翻译开关（与字号按钮同款 32 圆形；仅存在翻译时显示）
-        if (!tlyric.isNullOrEmpty()) {
-            Box(
+        // 翻译：圆形开关 + 右侧语言箭头（仅当接口确实给出译文语言时才显示箭头）
+        if (!tlyric.isNullOrEmpty() || translateLangs.isNotEmpty()) {
+            Row(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = AppSpacing.sp8, end = AppSpacing.sp28)
-                    .size(PlayerSize32)
-                    .clip(CircleShape)
-                    .background(if (showTranslation) Color.White.copy(alpha = 0.18f) else AppColors.whiteA06)
-                    .clickableNoRipple { onToggleTranslation() },
-                contentAlignment = Alignment.Center,
+                    .padding(bottom = AppSpacing.sp8, end = AppSpacing.sp16),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "译",
-                    color = AppColors.white,
-                    fontSize = AppFontSize.size13,
-                    fontWeight = AppFontWeight.bold,
-                )
+                Box(
+                    modifier = Modifier
+                        .size(PlayerSize32)
+                        .clip(CircleShape)
+                        .background(
+                            if (showTranslation) Color.White.copy(alpha = 0.18f) else AppColors.whiteA06,
+                        )
+                        .clickableNoRipple { onToggleTranslation() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "译",
+                        color = AppColors.white,
+                        fontSize = AppFontSize.size13,
+                        fontWeight = AppFontWeight.bold,
+                    )
+                }
+                if (translateLangs.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(AppSpacing.sp6))
+                    PlayerTranslateLangDropdown(
+                        langs = translateLangs,
+                        current = translateLang,
+                        onSelect = onSelectTranslateLang,
+                    )
+                }
             }
         }
     }

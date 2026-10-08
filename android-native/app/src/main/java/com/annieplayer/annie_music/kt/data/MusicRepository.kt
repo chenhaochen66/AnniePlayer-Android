@@ -45,6 +45,7 @@ import com.annieplayer.annie_music.kt.data.sources.getQobuzAlbum
 import com.annieplayer.annie_music.kt.data.sources.getQobuzArtistPage
 import com.annieplayer.annie_music.kt.data.sources.getTrack
 import com.annieplayer.annie_music.kt.data.sources.fetchQobuzArtistPicture
+import com.annieplayer.annie_music.kt.data.sources.fetchQobuzLyrics
 import com.annieplayer.annie_music.kt.data.sources.getFileUrl
 import com.annieplayer.annie_music.kt.data.sources.qobuzHiresFormatId
 import com.annieplayer.annie_music.kt.data.sources.qobuzQualityFormatId
@@ -74,11 +75,15 @@ import com.annieplayer.annie_music.kt.data.sources.searchQQArtist
 /** 歌词缓存 TTL（对齐 RN `LYRIC_CACHE_TTL` = 60 分钟） */
 private const val _lyricCacheTtl: Long = 60 * 60 * 1000L
 
-/** 歌词结果（对齐 Dart `LyricResult`，另带逐字） */
+/** 歌词结果（对齐 Dart `LyricResult`，另带逐字与可用译文语言） */
 data class LyricResult(
     val lrc: String,
     val tlyric: String?,
     val wordLyric: String? = null,
+    /** 可用的译文语言（当前只有 Qobuz 官方歌词提供；其它平台为空） */
+    val translateLangs: List<String> = emptyList(),
+    /** 本次实际取到的译文语言（null = 未取译文） */
+    val translateLang: String? = null,
 )
 
 /** 专辑曲目结果（对齐 Dart `({List<AlbumSong> songs, String pub})`） */
@@ -326,7 +331,11 @@ suspend fun fetchArtistAlbumsByPlatform(
  * [kkboxSid] 为 KKBOX 活跃账号会话 sid：仅当 platform 为 kkbox 时使用，
  * 有 sid 调 `getSongLyrics` 拉真实歌词，无则返回占位。
  */
-suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
+suspend fun fetchLyric(
+    song: Song,
+    kkboxSid: String? = null,
+    autoPickTranslate: Boolean = false,
+): LyricResult {
     // KKBOX 歌词依赖会话，不进入通用歌词缓存（对齐 RN AudioContext 单独处理）
     if (song.platform == MusicPlatform.kkbox) {
         if (kkboxSid.isNullOrEmpty()) {
@@ -337,7 +346,10 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
         return LyricResult(lrc = r.lrc, tlyric = r.tlyric)
     }
 
-    val cacheKey = "lyric:v3:${song.id}"
+    // 译文语言要进 key：同一首歌换语言是不同结果，共用 key 会一直命中旧译文；
+    // autoPickTranslate 也进 key，否则「自动取第一个译文」的缓存会被「只要原文」的下载分支命中。
+    val cacheKey = "lyric:v4:${song.id}:${song.lyricTranslateLang.orEmpty()}:" +
+        (if (autoPickTranslate) "auto" else "raw")
     val cached = cacheService.get<String>(cacheKey)
     if (cached != null) {
         try {
@@ -347,6 +359,10 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
                     lrc = parsed["lrc"] as String,
                     tlyric = parsed["tlyric"] as String?,
                     wordLyric = parsed["wordLyric"] as String?,
+                    translateLangs = (parsed["translateLangs"] as? List<*>)
+                        ?.mapNotNull { it as? String }
+                        .orEmpty(),
+                    translateLang = parsed["translateLang"] as String?,
                 )
             }
         } catch (_: Throwable) {
@@ -364,6 +380,25 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
         } else if (song.id.startsWith("kugou:")) {
             val r = fetchKugouLyric(song.id, "${song.title} ${song.artist}")
             LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
+        } else if (song.id.startsWith("qobuz:")) {
+            val token = qobuzTokenProvider().orEmpty()
+            if (token.isEmpty()) {
+                val r = fetchKuwoLyric(song.id, song.title, song.artist)
+                LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
+            } else {
+                val r = fetchQobuzLyrics(
+                    song.id.removePrefix("qobuz:"),
+                    token,
+                    song.lyricTranslateLang,
+                    autoPickTranslate,
+                )
+                LyricResult(
+                    lrc = r.lrc,
+                    tlyric = r.tlyric,
+                    translateLangs = r.translateLangs,
+                    translateLang = r.translateLang,
+                )
+            }
         } else {
             val r = fetchKuwoLyric(song.id, song.title, song.artist)
             LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
@@ -375,6 +410,8 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
                     "lrc" to result.lrc,
                     "tlyric" to result.tlyric,
                     "wordLyric" to result.wordLyric,
+                    "translateLangs" to result.translateLangs,
+                    "translateLang" to result.translateLang,
                 ),
             ).toString(),
             _lyricCacheTtl,
@@ -392,6 +429,26 @@ suspend fun fetchLyric(song: Song, kkboxSid: String? = null): LyricResult {
         )
         fallback
     }
+}
+
+/**
+ * 解析「下载要写进文件」的歌词。
+ *
+ * 非 Qobuz 歌直接返回常规歌词；Qobuz 歌在 [writeTranslation] 打开时用 [pickTranslate]
+ * 让用户选译文语言（批量下载可传 `{ it.firstOrNull() }` 直接取接口返回的第一个可用语言），
+ * 再按该语言取译文；用户取消则只写原文。
+ */
+suspend fun resolveDownloadLyric(
+    song: Song,
+    writeTranslation: Boolean,
+    pickTranslate: suspend (List<String>) -> String?,
+): LyricResult {
+    if (song.platform != MusicPlatform.qobuz) return fetchLyric(song)
+    // 下载分支只要原文：清掉播放页选中的语言，避免把「当前显示的语言」也写进文件
+    val base = fetchLyric(song.copy(lyricTranslateLang = null))
+    if (!writeTranslation || base.translateLangs.isEmpty()) return base
+    val chosen = pickTranslate(base.translateLangs) ?: return base
+    return base.copy(tlyric = fetchLyric(song.copy(lyricTranslateLang = chosen)).tlyric)
 }
 
 /** 补充 metadata（kuwo/kugou/qq 下载前 enrich） */

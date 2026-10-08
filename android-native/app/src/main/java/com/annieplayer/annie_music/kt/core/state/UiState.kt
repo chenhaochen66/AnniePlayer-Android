@@ -69,6 +69,8 @@ data class UiState(
     val singerDetailVisible: Boolean = false,
     val singerDetailData: SingerDetailData? = null,
     val downloadQueueVisible: Boolean = false,
+    /** 「更多设置」整页是否可见 */
+    val moreSettingsVisible: Boolean = false,
     val qobuzTokenVisible: Boolean = false,
     val kkboxAccountVisible: Boolean = false,
     val playlistDetailVisible: Boolean = false,
@@ -102,6 +104,7 @@ data class UiState(
         singerDetailVisible: Boolean? = null,
         singerDetailData: SingerDetailData? = null,
         downloadQueueVisible: Boolean? = null,
+        moreSettingsVisible: Boolean? = null,
         qobuzTokenVisible: Boolean? = null,
         kkboxAccountVisible: Boolean? = null,
         playlistDetailVisible: Boolean? = null,
@@ -127,6 +130,7 @@ data class UiState(
         singerDetailVisible = singerDetailVisible ?: this.singerDetailVisible,
         singerDetailData = singerDetailData ?: this.singerDetailData,
         downloadQueueVisible = downloadQueueVisible ?: this.downloadQueueVisible,
+        moreSettingsVisible = moreSettingsVisible ?: this.moreSettingsVisible,
         qobuzTokenVisible = qobuzTokenVisible ?: this.qobuzTokenVisible,
         kkboxAccountVisible = kkboxAccountVisible ?: this.kkboxAccountVisible,
         playlistDetailVisible = playlistDetailVisible ?: this.playlistDetailVisible,
@@ -195,6 +199,10 @@ class UiViewModel : ViewModel() {
 
     fun setDownloadQueueVisible(visible: Boolean) {
         _state.value = _state.value.copyWith(downloadQueueVisible = visible)
+    }
+
+    fun setMoreSettingsVisible(visible: Boolean) {
+        _state.value = _state.value.copyWith(moreSettingsVisible = visible)
     }
 
     fun setQobuzTokenVisible(visible: Boolean) {

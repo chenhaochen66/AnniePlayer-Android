@@ -88,6 +88,10 @@ data class Song(
     val tlyric: String? = null,
     /** 逐字歌词（统一格式：`[mm:ss.mmm]<绝对起始ms,时长ms>词…`；无逐字数据时为 null） */
     val wordLyric: String? = null,
+    /** 可用的歌词译文语言（Qobuz 官方接口的 translation_langs；其它平台为空） */
+    val lyricTranslateLangs: List<String> = emptyList(),
+    /** 当前选中的译文语言（null = 未选；仅 Qobuz 官方歌词用） */
+    val lyricTranslateLang: String? = null,
     val qualities: List<Quality> = emptyList(),
     val albumArtist: String? = null,
     val trackNumber: String? = null,
@@ -99,7 +103,7 @@ data class Song(
     val artistIds: List<String> = emptyList(),
 ) {
     /**
-     * 局部更新（对齐 Dart `Song.copyWith`：仅这 5 个字段可改，其余原样拷贝）。
+     * 局部更新（对齐 Dart `Song.copyWith`：仅这几个字段可改，其余原样拷贝）。
      *
      * 注意：与 Dart 语义一致，传 `null` **不会**清空 `lyric` / `tlyric` / `wordLyric`，
      * 因为原实现使用 `?? this.xxx` 回退（非幂等 setter）。
@@ -110,6 +114,8 @@ data class Song(
         tlyric: String? = null,
         wordLyric: String? = null,
         qualities: List<Quality>? = null,
+        lyricTranslateLangs: List<String>? = null,
+        lyricTranslateLang: String? = null,
     ): Song = Song(
         id = id,
         title = title,
@@ -124,6 +130,8 @@ data class Song(
         tlyric = tlyric ?: this.tlyric,
         wordLyric = wordLyric ?: this.wordLyric,
         qualities = qualities ?: this.qualities,
+        lyricTranslateLangs = lyricTranslateLangs ?: this.lyricTranslateLangs,
+        lyricTranslateLang = lyricTranslateLang ?: this.lyricTranslateLang,
         albumArtist = albumArtist,
         trackNumber = trackNumber,
         discNumber = discNumber,

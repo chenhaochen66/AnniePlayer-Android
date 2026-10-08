@@ -19,6 +19,7 @@ import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
 import com.annieplayer.annie_music.kt.core.platform.StoragePermissionDialog
 import com.annieplayer.annie_music.kt.core.platform.isManageStorageGranted
 import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.QobuzViewModel
 import com.annieplayer.annie_music.kt.data.AssetCache
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
         PlayerViewModel.init(applicationContext)
         KkboxViewModel.init(applicationContext)
         QobuzViewModel.init(applicationContext)
+        MoreSettings.init(applicationContext)
 
         // Android 13+ 媒体通知需要 POST_NOTIFICATIONS
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

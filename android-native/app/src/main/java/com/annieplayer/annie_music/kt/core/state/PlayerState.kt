@@ -317,8 +317,10 @@ class PlayerViewModel : ViewModel() {
         val kkboxSid = if (song.platform == MusicPlatform.kkbox) kkboxSidProvider?.invoke() else null
         viewModelScope.launch {
             try {
-                val r = fetchLyric(song, kkboxSid)
-                if (!_disposed) updateSongLyric(song.id, r.lrc, r.tlyric, r.wordLyric)
+                val r = fetchLyric(song, kkboxSid, autoPickTranslate = true)
+                if (!_disposed) {
+                    updateSongLyric(song.id, r.lrc, r.tlyric, r.wordLyric, r.translateLangs, r.translateLang)
+                }
             } catch (_: Throwable) {
                 // 歌词拉取失败静默忽略（保留「暂无歌词」）
             } finally {
@@ -435,18 +437,53 @@ class PlayerViewModel : ViewModel() {
         )
     }
 
-    fun updateSongLyric(id: String, lrc: String, tlyric: String? = null, wordLyric: String? = null) {
+    /**
+     * 写入歌词。[tlyric] / [wordLyric] **覆盖式**写入（可清空）；[translateLangs] 为 null 时保留原值。
+     *
+     * 不动 [Song.lyricTranslateLang]（切换译文语言走 [setSongTranslateLang]）。
+     */
+    fun updateSongLyric(
+        id: String,
+        lrc: String,
+        tlyric: String? = null,
+        wordLyric: String? = null,
+        translateLangs: List<String>? = null,
+        translateLang: String? = null,
+    ) {
+        fun apply(s: Song): Song = s.copy(
+            lyric = lrc,
+            tlyric = tlyric,
+            wordLyric = wordLyric,
+            lyricTranslateLangs = translateLangs ?: s.lyricTranslateLangs,
+            lyricTranslateLang = translateLang ?: s.lyricTranslateLang,
+        )
         val cs = _state.value.currentSong
         _state.value = _state.value.copyWith(
-            queue = _state.value.queue.map { s ->
-                if (s.id == id) s.copyWith(lyric = lrc, tlyric = tlyric, wordLyric = wordLyric) else s
-            },
-            currentSong = if (cs != null && cs.id == id) {
-                cs.copyWith(lyric = lrc, tlyric = tlyric, wordLyric = wordLyric)
-            } else {
-                cs
-            },
+            queue = _state.value.queue.map { if (it.id == id) apply(it) else it },
+            currentSong = if (cs != null && cs.id == id) apply(cs) else cs,
         )
+    }
+
+    /** 切换当前曲目的译文语言并按新语言重取歌词（译文随语言变化，必须重取） */
+    fun setSongTranslateLang(lang: String) {
+        val song = _state.value.currentSong ?: return
+        val tagged = song.copy(lyricTranslateLang = lang, tlyric = null)
+        val cs = _state.value.currentSong
+        _state.value = _state.value.copyWith(
+            queue = _state.value.queue.map { if (it.id == song.id) tagged else it },
+            currentSong = if (cs != null && cs.id == song.id) tagged else cs,
+        )
+        viewModelScope.launch {
+            try {
+                val sid = if (tagged.platform == MusicPlatform.kkbox) kkboxSidProvider?.invoke() else null
+                val r = fetchLyric(tagged, sid, autoPickTranslate = true)
+                if (!_disposed) {
+                    updateSongLyric(tagged.id, r.lrc, r.tlyric, r.wordLyric, r.translateLangs, r.translateLang)
+                }
+            } catch (_: Throwable) {
+                // 重取失败：保留已有原文歌词
+            }
+        }
     }
 
     fun setCurrentTime(t: Double) {
