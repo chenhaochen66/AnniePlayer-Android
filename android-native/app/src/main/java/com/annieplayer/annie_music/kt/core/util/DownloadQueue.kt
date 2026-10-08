@@ -50,7 +50,20 @@ fun enqueueDownload(songId: String, task: QueueTask) {
     }
 }
 
+/**
+ * 批量下载中「单首取消」的标记。
+ *
+ * 批量下载是**一个批次一个队列任务**（key 是 batchId），单曲 id 在 `_taskMap` 里查不到，
+ * 所以 `cancelPending(songId)` 曾经是空操作 —— 表现为「下载列表里删掉那一首，它照样下完」。
+ * 这里按曲 id 记标记，下载循环每首开始前取走标记并跳过。
+ */
+private val _cancelledSongs = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
 /** 取消待执行任务 */
 fun cancelPending(songId: String) {
     _taskMap.remove(songId)
+    _cancelledSongs.add(songId)
 }
+
+/** 取走并清除该曲的取消标记；返回 true 表示这一首应被跳过 */
+fun consumeCancelledSong(songId: String): Boolean = _cancelledSongs.remove(songId)

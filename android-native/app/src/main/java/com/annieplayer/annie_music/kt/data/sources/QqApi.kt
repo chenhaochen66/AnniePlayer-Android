@@ -666,6 +666,19 @@ suspend fun getQQAlbumSongs(albumMid: String): AlbumSongsPage {
                     artistName = decodeHtmlEntities(artistName),
                     duration = if (interval is Number) interval.toInt() else 0,
                     track = if (idx is Number) idx.toInt() else null,
+                    // 带上真实音质（与搜索映射同款判定：新旧字段并存，平铺 / file.* 都认）
+                    qualities = buildList {
+                        if (_truthy(_firstTruthy(listOf(m["sizeflac"], _deep(m, "file", "size_flac"))))) {
+                            add(Quality.flac)
+                        }
+                        if (_truthy(_firstTruthy(listOf(m["size320"], _deep(m, "file", "size_320mp3"))))) {
+                            add(Quality.k320k)
+                        }
+                        if (_truthy(_firstTruthy(listOf(m["size128"], _deep(m, "file", "size_128mp3"))))) {
+                            add(Quality.k128k)
+                        }
+                        if (isEmpty()) add(Quality.k128k)
+                    },
                     artistNames = artistNames,
                     // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
                     artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),

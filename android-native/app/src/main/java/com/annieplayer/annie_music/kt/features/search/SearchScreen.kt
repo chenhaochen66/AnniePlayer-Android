@@ -27,6 +27,7 @@ import com.annieplayer.annie_music.kt.core.state.SelectionState
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
+import com.annieplayer.annie_music.kt.features.downloads.DownloadOrchestrator
 import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
@@ -62,6 +63,7 @@ private val HomeHeaderAvatarSize = 40.dp
 fun SearchScreen(
     modifier: Modifier = Modifier,
     st: SearchScreenState,
+    dl: DownloadOrchestrator,
     uiViewModel: UiViewModel,
     selectionViewModel: SearchSelectionViewModel,
     uiState: UiState,
@@ -132,10 +134,10 @@ fun SearchScreen(
                     if (mode == ModeDropdownMode.song && selection.selectedSongs.isNotEmpty()) {
                         HomePendingDownloadBar(
                             count = selection.selectedSongs.size,
-                            batchDownloading = batchDownloading,
+                            batchDownloading = dl.batchDownloading,
                             onView = { selectionViewModel.setOverlayVisible(true) },
                             onClear = { selectionViewModel.clearAll() },
-                            onBatch = { batchPickerVisible = true },
+                            onBatch = { dl.openBatchPicker() },
                         )
                     }
                     // 搜索栏（国外解析模式隐藏）
@@ -155,7 +157,7 @@ fun SearchScreen(
                                 // 每次提交搜索 / 换源分组自增：同词同源重搜也能重置分页状态（修复旧分页串页）
                                 searchToken = songGeneration,
                                 onPlay = { song, songs -> handlePlaySong(song, songs) },
-                                onDownload = { handleDownload(it) },
+                                onDownload = { dl.openActions(it) },
                                 onToggleSelect = { handleToggleSelect(it) },
                                 onLoadMore = { source, page -> searchBySource(source, songSubmitted, page) },
                                 activeSongId = currentSong?.id,

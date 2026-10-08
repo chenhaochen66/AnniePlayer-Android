@@ -430,7 +430,7 @@ fun parseSongDuration(durRaw: Any?): Int {
     return 0
 }
 
-fun getKuGouQualities(s: Map<String, Any?>): List<Quality> {
+fun getKuGouQualities(s: Map<*, *>): List<Quality> {
     val q = ArrayList<Quality>()
     if (_truthy(s["sqhash"]) || _truthy(s["hash_sq"])) q.add(Quality.flac)
     if (_truthy(s["320hash"]) || _truthy(s["hash_320"])) q.add(Quality.k320k)
@@ -1316,6 +1316,8 @@ suspend fun getKugouAlbumSongs(albumId: String): AlbumSongsPage {
                     artistName = decodeHtmlEntities(artist),
                     duration = if (len is Number) len.toInt() / 1000 else 0,
                     track = track,
+                    // 带上真实音质：专辑 item 本身就带 sqhash/320hash（本函数上面取 hash 时就读它）
+                    qualities = getKuGouQualities(m),
                     artistNames = artistNames,
                 ),
             )

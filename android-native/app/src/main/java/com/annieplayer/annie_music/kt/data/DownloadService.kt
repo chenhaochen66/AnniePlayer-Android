@@ -213,8 +213,10 @@ object DownloadService {
         }
         val safeTitle = decodeHtmlEntities(title)
         val safeArtist = decodeHtmlEntities(artist)
-        val e = _ext(quality)
-        val safeName = "$safeTitle - $safeArtist$e".replace(Regex("[/\\\\?%*:|\"<>]"), "_")
+        var e = _ext(quality)
+        // 先不算最终文件名：真实格式要等拿到字节才能定（见下方嗅探）。
+        // 否则「请求 flac 但平台只给 mp3」会把 mp3 内容写成 .flac 扩展名 + FLAC 标签。
+        val safeBaseName = "$safeTitle - $safeArtist".replace(Regex("[/\\\\?%*:|\"<>]"), "_")
 
         // 目标目录：优先用户自定义下载目录，否则私有 downloads/（对齐 Dart）
         val customDir = DownloadDirService.getDownloadDirPath()
@@ -231,8 +233,8 @@ object DownloadService {
         if (!dir.exists()) dir.mkdirs()
 
         val safeSongId = songId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
-        val tempPath = downloadDir + "tmp_$safeSongId" + e
-        val tmpFile = File(tempPath)
+        var tempPath = downloadDir + "tmp_$safeSongId" + e
+        var tmpFile = File(tempPath)
         if (tmpFile.exists()) tmpFile.delete()
 
         val request = Request.Builder().url(downloadUrl).header("User-Agent", _chromeUa).build()
@@ -260,6 +262,18 @@ object DownloadService {
             }
         }
         if (!tmpFile.exists()) throw IllegalStateException("Download failed")
+
+        // 以**实际字节**为准修正扩展名（同时决定后面按 FLAC 还是 MP3 写标签）
+        val realExt = _sniffAudioExt(tempPath)
+        if (realExt != null && realExt != e) {
+            val renamed = File(downloadDir + "tmp_$safeSongId" + realExt)
+            if (tmpFile.renameTo(renamed)) {
+                Log.i(TAG, "[download] format fixed: requested $e but got $realExt ($songId)")
+                e = realExt
+                tempPath = renamed.absolutePath
+                tmpFile = renamed
+            }
+        }
         onProgress(0.5)
 
         val coverPath = _downloadCover(coverUrl, songId)
@@ -319,7 +333,7 @@ object DownloadService {
             }
         }
 
-        val finalPath = downloadDir + safeName
+        val finalPath = downloadDir + safeBaseName + e
         if (tempPath != finalPath) {
             withContext(Dispatchers.IO) {
                 val src = File(tempPath)
@@ -372,6 +386,30 @@ object DownloadService {
     /** 扩展名：flac/hires 用 `.flac`，其余 `.mp3`（对齐 Dart `_ext`）。 */
     private fun _ext(q: Quality): String =
         if (q == Quality.flac || q == Quality.hires) ".flac" else ".mp3"
+
+    /**
+     * 嗅探真实音频格式（读文件头 4 字节）。
+     *
+     * 为什么必须嗅探：请求档位 ≠ 实际拿到的格式 —— 该曲没有无损时平台回的是 mp3，
+     * 若沿用请求档位定扩展名与打标分支，就会产出「扩展名 flac、内容 mp3」的假无损文件。
+     */
+    private fun _sniffAudioExt(path: String): String? {
+        return try {
+            val head = ByteArray(4)
+            FileInputStream(path).use { if (it.read(head) < 4) return null }
+            val b0 = head[0].toInt() and 0xFF
+            val b1 = head[1].toInt() and 0xFF
+            when {
+                b0 == 0x66 && b1 == 0x4C && head[2].toInt() == 0x61 && head[3].toInt() == 0x43 -> ".flac"
+                b0 == 0x49 && b1 == 0x44 && head[2].toInt() == 0x33 -> ".mp3"
+                b0 == 0xFF && (b1 and 0xE0) == 0xE0 -> ".mp3"
+                b0 == 0x66 && b1 == 0x74 && head[2].toInt() == 0x79 && head[3].toInt() == 0x70 -> ".m4a"
+                else -> null
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
 
     /** 流式下载到 [tmpFile]，按 `received / total` 回调进度（对齐 dio onReceiveProgress）。 */
     private fun _streamToFile(call: Call, tmpFile: File, onProgress: (Double) -> Unit) {

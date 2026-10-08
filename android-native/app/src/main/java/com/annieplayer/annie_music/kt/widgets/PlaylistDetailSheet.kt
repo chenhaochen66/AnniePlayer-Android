@@ -56,6 +56,11 @@ import com.annieplayer.annie_music.kt.core.routing.OverlayVisibilityFlags
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
+import com.annieplayer.annie_music.kt.core.util.enqueueDownload
+import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
+import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
+import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.PlaylistDetailData
 import com.annieplayer.annie_music.kt.core.state.UiState
@@ -189,7 +194,7 @@ private fun PlaylistDetailContent(
             val url = fetchPlayUrlBySong(song)
             val lyric = fetchLyric(song)
             playerViewModel.updateSongPlayUrl(song.id, url)
-            playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric, lyric.wordLyric)
+                    playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric, lyric.wordLyric, lyric.translateLangs)
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
         }
@@ -224,33 +229,13 @@ private fun PlaylistDetailContent(
             index++
             st.batchProgress = "$index/${songs.size} ${song.title}"
             val actual = bestQuality(quality, song.qualities)
-            try {
-                val url = fetchDownloadUrlBySong(song, actual)
-                val lyric = fetchLyric(song)
-                val extra = enrichSong(song)
-                val filePath = detailDownloadSong(
-                    context = context,
-                    songId = song.id,
-                    title = song.title,
-                    artist = song.artist,
-                    coverUrl = song.cover,
-                    album = song.album,
-                    downloadUrl = url,
-                    quality = actual,
-                    onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
-                    lyric = lyric.lrc,
-                    tlyric = lyric.tlyric,
-                    albumArtist = song.albumArtist,
-                    trackNumber = song.trackNumber ?: extra["trackNumber"] as? String,
-                    discNumber = song.discNumber ?: extra["discNumber"] as? String,
-                    releaseDate = song.releaseDate ?: extra["releaseDate"] as? String,
-                )
-                downloadViewModel.completeTask(song.id, filePath)
-                playerViewModel.addDownloadedId(song.id)
-                playerViewModel.addToQueue(song)
-            } catch (_: Exception) {
-                downloadViewModel.failTask(song.id)
-            }
+            downloadOneAndRegister(
+                downloadViewModel = downloadViewModel,
+                playerViewModel = playerViewModel,
+                song = song,
+                quality = actual,
+                onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
+            )
         }
         st.batchDownloading = false
         st.batchProgress = ""
@@ -361,8 +346,11 @@ private fun PlaylistDetailContent(
             // 批量（固定三档）
             QualityPickerSheet(
                 visible = st.batchPickerVisible,
-                qualities = listOf(Quality.flac, Quality.k320k, Quality.k128k),
-                onSelect = { q -> scope.launch { batchDownload(q) } },
+                qualities = batchDownloadQualities(st.songs.filter { st.selectedIds.contains(it.id) }),
+                    onSelect = { q ->
+                        // 跑在全局串行队列上（同 AlbumDetailSheet）：弹窗一关作用域就作废
+                        enqueueDownload("playlistSheet_batch_" + System.currentTimeMillis()) { batchDownload(q) }
+                    },
                 onCancel = { st.batchPickerVisible = false },
             )
         }

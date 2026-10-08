@@ -559,8 +559,8 @@ private fun KkboxDetailBody(
                     MultiSelectDownloadBar(
                         selectedCount = st.selectedIds.size,
                         total = st.tracks.size,
-                        downloading = st.batchDownloading,
-                        progressText = st.batchProgress,
+                            downloading = false,
+                            progressText = "",
                         onDownload = onBatch,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)

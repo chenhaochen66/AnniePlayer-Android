@@ -85,6 +85,12 @@ import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
+import com.annieplayer.annie_music.kt.core.util.enqueueDownload
+import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
+import com.annieplayer.annie_music.kt.features.downloads.DownloadMeta
+import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
+import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
 import com.annieplayer.annie_music.kt.core.state.UiState
@@ -332,7 +338,7 @@ private fun SingerDetailContent(
             val url = fetchPlayUrlBySong(song)
             val lyric = fetchLyric(song)
             playerViewModel.updateSongPlayUrl(song.id, url)
-            playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric, lyric.wordLyric)
+                    playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric, lyric.wordLyric, lyric.translateLangs)
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
         }
@@ -353,39 +359,21 @@ private fun SingerDetailContent(
 
     suspend fun batchDownload(quality: Quality) {
         st.batchPickerVisible = false
-        st.batchDownloading = true
+        // 不再置 batchDownloading：详情页不展示下载进度，也不把「下载全部」按钮变灰/禁用。
+        // （字段保留只为兼容既有引用；按钮任何时候都可点，同一首也可反复下载。）
         val songs = st.selectedSongs.toList()
         for (s in songs) downloadViewModel.addTask(s, quality)
         for ((i, song) in songs.withIndex()) {
             // 只补 UI 进度文案（下载流程本身与原来一致）
             st.batchProgress = "${i + 1}/${songs.size} ${song.title}"
-            try {
-                val url = fetchDownloadUrlBySong(song, quality)
-                val lyric = fetchLyric(song)
-                val extra = enrichSong(song)
-                val filePath = detailDownloadSong(
-                    context = context,
-                    songId = song.id,
-                    title = song.title,
-                    artist = song.artist,
-                    coverUrl = song.cover,
-                    album = song.album,
-                    downloadUrl = url,
-                    quality = quality,
-                    onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
-                    lyric = lyric.lrc,
-                    tlyric = lyric.tlyric,
-                    albumArtist = song.albumArtist ?: artistName,
-                    trackNumber = song.trackNumber ?: extra["trackNumber"] as? String,
-                    discNumber = song.discNumber,
-                    releaseDate = song.releaseDate ?: extra["releaseDate"] as? String,
-                )
-                downloadViewModel.completeTask(song.id, filePath)
-                playerViewModel.addDownloadedId(song.id)
-                playerViewModel.addToQueue(song)
-            } catch (_: Exception) {
-                downloadViewModel.failTask(song.id)
-            }
+            downloadOneAndRegister(
+                downloadViewModel = downloadViewModel,
+                playerViewModel = playerViewModel,
+                song = song,
+                quality = quality,
+                meta = DownloadMeta(albumArtist = song.albumArtist ?: artistName),
+                onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
+            )
         }
         st.batchDownloading = false
         st.batchProgress = ""
@@ -620,15 +608,14 @@ private fun SingerDetailContent(
         val pickerPanel: @Composable () -> Unit = {
             QualityPickerSheet(
                 visible = st.batchPickerVisible,
-                qualities = if (data.platform == MusicPlatform.qobuz) {
-                    listOf(Quality.hires, Quality.flac, Quality.k320k)
-                } else {
-                    listOf(Quality.flac, Quality.k320k, Quality.k128k)
-                },
+                qualities = batchDownloadQualities(st.selectedSongs.toList()),
                 labelOf = { q ->
                     if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
                 },
-                onSelect = { q -> scope.launch { batchDownload(q) } },
+                    onSelect = { q ->
+                        // 跑在全局串行队列上（同 AlbumDetailSheet）：弹窗一关作用域就作废
+                        enqueueDownload("singerSheet_batch_" + System.currentTimeMillis()) { batchDownload(q) }
+                    },
                 onCancel = { st.batchPickerVisible = false },
             )
         }

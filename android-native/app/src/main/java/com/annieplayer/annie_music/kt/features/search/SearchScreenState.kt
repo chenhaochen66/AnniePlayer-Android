@@ -12,16 +12,9 @@ import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SearchSelectionViewModel
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
-import com.annieplayer.annie_music.kt.core.util.enqueueDownload
-import com.annieplayer.annie_music.kt.data.DownloadService
-import com.annieplayer.annie_music.kt.data.LyricResult
-import com.annieplayer.annie_music.kt.data.enrichSong
-import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
-import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.Artist
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
-import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.resolveArtist
 import com.annieplayer.annie_music.kt.data.searchAlbumByPlatform
@@ -88,9 +81,6 @@ class SearchScreenState(
 
     // ── 浮层 / 下载 / 路由等本地状态 ──
     var sourcePickerVisible by mutableStateOf(false)
-    var batchPickerVisible by mutableStateOf(false)
-    var batchDownloading by mutableStateOf(false)
-    var downloadingId by mutableStateOf<String?>(null)
     var saveDirPath by mutableStateOf<String?>(null)
 
     /** Qobuz / KKBOX 详情页路由参数 `type to id`（对齐 Flutter `context.push('/xxx-detail?…')`） */
@@ -269,97 +259,8 @@ class SearchScreenState(
         playerViewModel.setQueue(songs, startIndex = if (index < 0) 0 else index)
     }
 
-    fun handleDownload(song: Song) {
-        uiViewModel.setSongActionsVisible(true, song)
-    }
-
     fun handleToggleSelect(song: Song) {
         selectionViewModel.toggleSong(song)
-    }
-
-    fun handleDownloadWithQuality(quality: Quality) {
-        val song = uiViewModel.state.value.pickerSong ?: return
-        uiViewModel.setPicker(false)
-        downloadViewModel.addTask(song, quality)
-        val songId = song.id
-        downloadingId = songId
-        enqueueDownload(songId) {
-            try {
-                val url = fetchDownloadUrlBySong(song, quality)
-                val lyricResult = if (song.lyric != null && song.tlyric != null) {
-                    LyricResult(lrc = song.lyric, tlyric = song.tlyric)
-                } else {
-                    fetchLyric(song)
-                }
-                val extra = enrichSong(song)
-                DownloadService.downloadSong(
-                    songId = songId,
-                    title = song.title,
-                    artist = song.artist,
-                    coverUrl = song.cover,
-                    album = song.album,
-                    downloadUrl = url,
-                    quality = quality,
-                    onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
-                    lyric = lyricResult.lrc,
-                    tlyric = lyricResult.tlyric,
-                    albumArtist = song.albumArtist ?: extra["albumArtist"]?.toString(),
-                    trackNumber = song.trackNumber ?: extra["trackNumber"]?.toString(),
-                    discNumber = song.discNumber,
-                    releaseDate = song.releaseDate ?: extra["releaseDate"]?.toString(),
-                )
-                downloadViewModel.completeTask(songId)
-                playerViewModel.addDownloadedId(songId)
-                playerViewModel.addToQueue(song)
-            } catch (_: Exception) {
-                downloadViewModel.failTask(songId)
-            }
-            downloadingId = null
-        }
-    }
-
-    fun handleBatchDownload(quality: Quality) {
-        batchPickerVisible = false
-        val songs = selectionViewModel.state.value.selectedSongs
-        if (songs.isEmpty()) return
-        batchDownloading = true
-        for (song in songs) {
-            downloadViewModel.addTask(song, quality)
-        }
-        val batchId = "search_batch_" + System.currentTimeMillis()
-        enqueueDownload(batchId) {
-            for (song in songs) {
-                downloadViewModel.updateProgress(song.id, 0.0)
-                try {
-                    val url = fetchDownloadUrlBySong(song, quality)
-                    val lyricResult = fetchLyric(song)
-                    val extra = enrichSong(song)
-                    DownloadService.downloadSong(
-                        songId = song.id,
-                        title = song.title,
-                        artist = song.artist,
-                        coverUrl = song.cover,
-                        album = song.album,
-                        downloadUrl = url,
-                        quality = quality,
-                        onProgress = { p -> downloadViewModel.updateProgress(song.id, p * 100) },
-                        lyric = lyricResult.lrc,
-                        tlyric = lyricResult.tlyric,
-                        albumArtist = song.albumArtist ?: extra["albumArtist"]?.toString(),
-                        trackNumber = song.trackNumber ?: extra["trackNumber"]?.toString(),
-                        discNumber = song.discNumber,
-                        releaseDate = song.releaseDate ?: extra["releaseDate"]?.toString(),
-                    )
-                    downloadViewModel.completeTask(song.id)
-                    playerViewModel.addDownloadedId(song.id)
-                    playerViewModel.addToQueue(song)
-                } catch (_: Exception) {
-                    downloadViewModel.failTask(song.id)
-                }
-            }
-            selectionViewModel.clearAll()
-            batchDownloading = false
-        }
     }
 
     // ── 链接解析 ──

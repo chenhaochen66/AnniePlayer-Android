@@ -436,6 +436,9 @@ suspend fun getNeteaseAlbumSongs(albumId: String): AlbumSongsPage {
                     artistName = if (artistNames.isEmpty()) "" else artistNames.joinToString(" / "),
                     duration = _msToSec(dt),
                     track = if (no is Number) no.toInt() else null,
+                    // 专辑接口是按每首歌给音质标记的（hr/sq/h/l），必须带上 ——
+                    // 不带的话详情页下载候选永远回退到 flac/320/128，Hi-Res 就丢了。
+                    qualities = parseNeteaseQualities(m),
                     artistNames = artistNames,
                     artistIds = artistIds,
                 ),

@@ -27,7 +27,8 @@ class DownloadViewModel : ViewModel() {
 
     /** 新增任务；同 songId 已存在则不重复（对齐 Dart） */
     fun addTask(song: Song, quality: Quality) {
-        if (_state.value.containsKey(song.id)) return
+        // 允许同一首歌被反复下载：不再"已有任务就 return"，
+        // 重复点下载直接复用同一行（key 仍是 song.id），行状态重置为 downloading。
         _state.value = _state.value + (
             song.id to DownloadTask(
                 songId = song.id,

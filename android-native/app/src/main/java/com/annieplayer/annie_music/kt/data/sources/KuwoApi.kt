@@ -783,6 +783,12 @@ suspend fun getAlbumSongs(albumId: String): KuwoAlbumSongs {
             name = decodeHtmlEntities(_strOr(item["name"], "未知歌曲")),
             artistName = artistNameRaw,
             duration = _toInt(item["duration"]),
+            // 带上真实音质：不带的话专辑弹窗的下载候选永远回退 flac/320/128（与本文件专辑路径同款判定）
+            qualities = buildList {
+                add(Quality.k320k)
+                add(Quality.k128k)
+                if (_truthy(item["hasLossless"])) add(0, Quality.flac)
+            },
             track = if (_truthy(item["track"])) {
                 _s(item["track"]).toDoubleOrNull()?.toInt()
             } else {

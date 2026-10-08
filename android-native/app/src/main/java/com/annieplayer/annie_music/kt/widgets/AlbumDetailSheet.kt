@@ -59,6 +59,12 @@ import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
+import com.annieplayer.annie_music.kt.core.util.enqueueDownload
+import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
+import com.annieplayer.annie_music.kt.features.downloads.DownloadMeta
+import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
+import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
@@ -222,11 +228,8 @@ private fun AlbumDetailContent(
         albumId = data.id,
         duration = s.duration,
         platform = data.platform,
-                qualities = if (data.platform == MusicPlatform.qobuz) {
-                    listOf(Quality.hires, Quality.flac, Quality.k320k)
-                } else {
-                    listOf(Quality.k128k, Quality.k320k, Quality.flac)
-                },
+        // 必须带上专辑接口给的真实音质（否则详情页下载候选永远回退 flac/320/128，Hi-Res 丢失）
+        qualities = s.qualities.ifEmpty { listOf(Quality.flac, Quality.k320k, Quality.k128k) },
         albumArtist = data.artist,
         artistNames = if (s.artistNames.isNotEmpty()) s.artistNames else listOf(s.artistName),
         artistIds = s.artistIds,
@@ -256,7 +259,7 @@ private fun AlbumDetailContent(
             val url = fetchPlayUrlBySong(converted[idx])
             val lyric = fetchLyric(converted[idx])
             playerViewModel.updateSongPlayUrl(target.id, url)
-                playerViewModel.updateSongLyric(target.id, lyric.lrc, lyric.tlyric, lyric.wordLyric)
+                    playerViewModel.updateSongLyric(target.id, lyric.lrc, lyric.tlyric, lyric.wordLyric, lyric.translateLangs)
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
         }
@@ -291,33 +294,21 @@ private fun AlbumDetailContent(
             val song = toSong(s)
             st.batchProgress = "${i + 1}/${selected.size} ${s.name}"
             downloadViewModel.updateProgress(s.id, 0.0)
-            try {
-                val url = fetchDownloadUrlBySong(song, quality)
-                val lyric = fetchLyric(song)
-                val track = if (s.track != null) s.track.toString() else "${i + 1}"
-                val filePath = detailDownloadSong(
-                    context = context,
-                    songId = s.id,
-                    title = s.name,
-                    artist = s.artistName,
+            val ok = downloadOneAndRegister(
+                downloadViewModel = downloadViewModel,
+                playerViewModel = playerViewModel,
+                song = song,
+                quality = quality,
+                meta = DownloadMeta(
                     coverUrl = data.cover,
                     album = data.name,
-                    downloadUrl = url,
-                    quality = quality,
-                    onProgress = { p -> downloadViewModel.updateProgress(s.id, (p * 100).coerceIn(0.0, 100.0)) },
-                    lyric = lyric.lrc,
-                    tlyric = lyric.tlyric,
                     albumArtist = data.artist,
-                    trackNumber = track,
+                    trackNumber = if (s.track != null) s.track.toString() else "${i + 1}",
                     releaseDate = st.releaseDate.ifEmpty { null },
-                )
-                downloadViewModel.completeTask(s.id, filePath)
-                playerViewModel.addDownloadedId(s.id)
-                playerViewModel.addToQueue(song)
-                success++
-            } catch (_: Exception) {
-                downloadViewModel.failTask(s.id)
-            }
+                ),
+                onProgress = { p -> downloadViewModel.updateProgress(s.id, (p * 100).coerceIn(0.0, 100.0)) },
+            )
+            if (ok) success++
         }
         st.batchDownloading = false
         st.batchProgress = "下载完成 $success/${selected.size}"
@@ -420,15 +411,17 @@ private fun AlbumDetailContent(
             QualityPickerSheet(
                 visible = st.pickerVisible,
                 // 与曲目实际可用音质一致（Qobuz 专辑含 Hi-Res，其余三档）
-                qualities = if (data.platform == MusicPlatform.qobuz) {
-                    listOf(Quality.hires, Quality.flac, Quality.k320k)
-                } else {
-                    listOf(Quality.flac, Quality.k320k, Quality.k128k)
-                },
+                qualities = batchDownloadQualities(
+                    st.songs.filter { st.selectedIds.contains(it.id) }.map { toSong(it) },
+                ),
                 labelOf = { q ->
                     if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
                 },
-                onSelect = { q -> scope.launch { batchDownload(q) } },
+                    onSelect = { q ->
+                        // 跑在全局串行队列上：本弹窗的作用域一关就作废，
+                        // 若用 scope.launch，弹窗一关剩下的歌会全部抛 ForgottenCoroutineScopeException
+                        enqueueDownload("albumSheet_batch_" + System.currentTimeMillis()) { batchDownload(q) }
+                    },
                 onCancel = { st.pickerVisible = false },
             )
         }

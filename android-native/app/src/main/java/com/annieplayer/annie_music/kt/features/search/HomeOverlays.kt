@@ -129,7 +129,7 @@ internal fun HomePendingDownloadBar(
         // 下载全部（Dart: onTap 在下载中为 null → 这里在 lambda 内门控）
         Box(
             modifier = Modifier
-                .clickableRipple { if (!batchDownloading) onBatch() }
+                .clickableRipple { onBatch() }
                 .background(AppColors.primary, RoundedCornerShape(AppRadius.r10))
                 .padding(horizontal = AppSpacing.sp16, vertical = AppSpacing.sp8),
             contentAlignment = Alignment.Center,

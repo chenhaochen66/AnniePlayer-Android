@@ -45,6 +45,10 @@ import coil.compose.AsyncImage
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
+import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
+import com.annieplayer.annie_music.kt.features.downloads.DownloadMeta
+import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.state.QobuzViewModel
@@ -284,25 +288,25 @@ fun QobuzDetailScreen(
                 val song = qobuzDetailToSong(t)
                 withContext(Dispatchers.Main) { st.batchProgress = "${i + 1}/${selected.size} ${t.title}" }
                 downloadViewModel.updateProgress(songId, 0.0)
-                try {
-                    val filePath = qobuzDetailDownloadTrack(
-                        context = context,
-                        track = t,
-                        songId = songId,
-                        token = token.token,
-                        pageArtist = st.artist,
-                        updateProgress = { v ->
-                            downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
-                        },
-                        quality = quality,
-                    )
-                    downloadViewModel.completeTask(songId, filePath)
-                    playerViewModel.addDownloadedId(songId)
-                    playerViewModel.addToQueue(song)
-                    success++
-                } catch (_: Exception) {
-                    downloadViewModel.failTask(songId)
-                }
+                val ok = downloadOneAndRegister(
+                    downloadViewModel = downloadViewModel,
+                    playerViewModel = playerViewModel,
+                    song = song,
+                    quality = quality,
+                    meta = DownloadMeta(
+                        coverUrl = t.cover,
+                        album = t.album,
+                        albumArtist = t.albumArtist ?: st.artist,
+                        trackNumber = if (t.trackNumber > 0) t.trackNumber.toString() else null,
+                        discNumber = t.discNumber?.toString(),
+                        releaseDate = t.releaseDateOriginal
+                            ?: if (t.year > 0) t.year.toString() else null,
+                    ),
+                    onProgress = { p ->
+                        downloadViewModel.updateProgress(songId, (p * 100).coerceIn(0.0, 100.0))
+                    },
+                )
+                if (ok) success++
             }
             withContext(Dispatchers.Main) {
                 st.batchDownloading = false
@@ -387,8 +391,8 @@ fun QobuzDetailScreen(
             MultiSelectDownloadBar(
                 selectedCount = st.selectedIds.size,
                 total = st.tracks.size,
-                downloading = st.batchDownloading,
-                progressText = st.batchProgress,
+                            downloading = false,
+                            progressText = "",
                 onDownload = { st.batchPickerVisible = true },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -728,39 +732,6 @@ private fun QobuzDetailTrackRow(
             }
         }
     }
-}
-
-/** 下载单曲（[quality] 决定 format_id），返回最终文件路径 */
-private suspend fun qobuzDetailDownloadTrack(
-    context: Context,
-    track: QobuzTrack,
-    songId: String,
-    token: String,
-    pageArtist: String,
-    updateProgress: (Double) -> Unit,
-    quality: Quality = Quality.flac,
-): String {
-    val info = getFileUrl(track.id, token, qualityId = qobuzQualityFormatId(quality))
-    val songObj = qobuzDetailToSong(track)
-    val lyricResult = fetchLyric(songObj)
-    return detailDownloadSong(
-        context = context,
-        songId = songId,
-        title = track.title,
-        artist = track.artist,
-        coverUrl = track.cover,
-        album = track.album,
-        downloadUrl = info.url,
-        quality = quality,
-        onProgress = { p -> updateProgress(p * 100.0) },
-        lyric = lyricResult.lrc,
-        tlyric = lyricResult.tlyric,
-        albumArtist = track.albumArtist ?: pageArtist,
-        trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
-        discNumber = track.discNumber?.toString(),
-        releaseDate = track.releaseDateOriginal
-            ?: if (track.year > 0) track.year.toString() else null,
-    )
 }
 
 /** 去掉 `Exception: ` 前缀的错误文案（对齐 Dart `_errText`） */

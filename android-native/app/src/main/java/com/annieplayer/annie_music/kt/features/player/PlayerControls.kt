@@ -450,7 +450,7 @@ fun PlayerPendingDownloadBar(
             modifier = Modifier
                 .clip(RoundedCornerShape(AppRadius.r10))
                 .background(AppColors.primary)
-                .clickableNoRipple { if (!batchDownloading) onBatch() }
+                .clickableNoRipple { onBatch() }
                 .padding(horizontal = AppSpacing.sp16, vertical = AppSpacing.sp8),
             contentAlignment = Alignment.Center,
         ) {
