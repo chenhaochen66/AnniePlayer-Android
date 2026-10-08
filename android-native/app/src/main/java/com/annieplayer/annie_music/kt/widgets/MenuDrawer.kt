@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -86,6 +87,7 @@ fun MenuDrawer(
     onDownloadQueue: () -> Unit,
     cacheSize: MenuDrawerCacheSize,
     onClearCache: () -> Unit,
+    onMoreSettings: () -> Unit,
     /** null = 检查中；与 Flutter `_ManageStorageRow._granted` 同义 */
     storageGranted: Boolean?,
     onRequestStorage: () -> Unit,
@@ -184,7 +186,6 @@ fun MenuDrawer(
             MenuDrawerRow(
                 label = "Qobuz Token 管理",
                 onTap = {
-                    onClose()
                     onQobuzToken()
                 },
                 icon = { MenuDrawerKeyIcon(tint = AppColors.white54) },
@@ -192,7 +193,6 @@ fun MenuDrawer(
             MenuDrawerRow(
                 label = "KKBOX 账号管理",
                 onTap = {
-                    onClose()
                     onKkboxAccount()
                 },
                 icon = { MenuDrawerKeyIcon(tint = AppColors.white54) },
@@ -204,7 +204,6 @@ fun MenuDrawer(
             MenuDrawerRow(
                 label = "下载任务",
                 onTap = {
-                    onClose()
                     onDownloadQueue()
                 },
                 icon = {
@@ -229,11 +228,31 @@ fun MenuDrawer(
             MenuDrawerRow(
                 label = "清除缓存",
                 onTap = {
-                    onClose()
                     onClearCache()
                 },
                 subtitle = menuDrawerCacheSubtitle(cacheSize),
                 icon = { MenuDrawerDeleteOutlineIcon(tint = AppColors.white54) },
+            )
+            Spacer(modifier = Modifier.height(AppSpacing.sp8))
+
+            Spacer(modifier = Modifier.height(AppSpacing.sp8))
+
+            // ── 设置 ──
+            MenuDrawerSectionLabel(text = "设置")
+            MenuDrawerRow(
+                label = "更多设置",
+                onTap = {
+                    onMoreSettings()
+                },
+                subtitle = null,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = null,
+                        tint = AppColors.white54,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                },
             )
             Spacer(modifier = Modifier.height(AppSpacing.sp8))
 

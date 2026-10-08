@@ -63,13 +63,6 @@ sealed interface AppRoute {
         override val screen: String = "DownloadsScreen"
     }
 
-    /** 专辑详情页 `/album-detail`（Flutter `AlbumDetailScreen`）。 */
-    data object AlbumDetail : AppRoute {
-        override val path: String = AppRoutes.albumDetail
-        override val name: String = "album-detail"
-        override val screen: String = "AlbumDetailScreen"
-    }
-
     /** KKBOX 详情页 `/kkbox-detail`（Flutter `KkboxDetailScreen`）。 */
     data object KkboxDetail : AppRoute {
         override val path: String = AppRoutes.kkboxDetail
@@ -90,7 +83,6 @@ sealed interface AppRoute {
             Home,
             Player,
             Downloads,
-            AlbumDetail,
             KkboxDetail,
             QobuzDetail,
         )

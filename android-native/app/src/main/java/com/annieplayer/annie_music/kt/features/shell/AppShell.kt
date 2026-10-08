@@ -38,9 +38,11 @@ import com.annieplayer.annie_music.kt.features.library.LocalLibraryScreen
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.QobuzViewModel
 import com.annieplayer.annie_music.kt.core.state.SearchSelectionViewModel
+import com.annieplayer.annie_music.kt.core.state.TranslatePicker
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.util.cancelPending
 import com.annieplayer.annie_music.kt.core.util.extractPaletteFromCover
@@ -77,7 +79,12 @@ import com.annieplayer.annie_music.kt.widgets.MenuDrawerCacheSize
 import com.annieplayer.annie_music.kt.widgets.PlayerOverlay
 import com.annieplayer.annie_music.kt.widgets.PlaylistDetailSheet
 import com.annieplayer.annie_music.kt.widgets.QobuzTokenSheet
+import com.annieplayer.annie_music.kt.features.downloads.DownloadOrchestrator
+import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
+import com.annieplayer.annie_music.kt.features.settings.MoreSettingsScreen
+import com.annieplayer.annie_music.kt.features.settings.moreSettingsGroups
 import com.annieplayer.annie_music.kt.widgets.QualityPickerSheet
+import com.annieplayer.annie_music.kt.widgets.TranslatePickerSheet
 import com.annieplayer.annie_music.kt.widgets.QueueSheet
 import com.annieplayer.annie_music.kt.widgets.SearchSelectionOverlay
 import com.annieplayer.annie_music.kt.widgets.SingerDetailSheet
@@ -143,6 +150,10 @@ fun AppShell(
     val playerState by playerViewModel.state.collectAsState()
     val downloadTasks by downloadViewModel.state.collectAsState()
     val selection by selectionViewModel.state.collectAsState()
+val writeQobuzDownloadTranslation by MoreSettings.writeQobuzDownloadTranslation.collectAsState()
+val translatePickerVisible by TranslatePicker.visible.collectAsState()
+val translatePickerLangs by TranslatePicker.langs.collectAsState()
+val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
     val colorState by colorViewModel.state.collectAsState()
     // 动态色板取「取色结果本身」（ColorViewModel 的 state），**不是** `Annie.palette`：
     // MainActivity 目前是 `AnnieTheme { }`（用默认 palette = fallback），CompositionLocal 里那个
@@ -166,6 +177,16 @@ fun AppShell(
             downloadViewModel = downloadViewModel,
             selectionViewModel = selectionViewModel,
             snackbarHostState = snackbarHostState,
+        )
+    }
+
+    // 下载编排（⋮ 入口 / 单曲 / 批量）—— 从 SearchScreenState 搬出（见 DownloadOrchestrator 注释）
+    val dl = remember(scope) {
+        DownloadOrchestrator(
+            scope = scope,
+            uiViewModel = uiViewModel,
+            playerViewModel = playerViewModel,
+            downloadViewModel = downloadViewModel,
         )
     }
 
@@ -272,13 +293,13 @@ fun AppShell(
         uiState.contactVisible ||
         uiState.cacheClearVisible ||
         st.sourcePickerVisible ||
-        st.batchPickerVisible
+                dl.batchPickerVisible
     LaunchedEffect(anyOverlayVisible) {
         if (anyOverlayVisible) focusManager.clearFocus()
     }
 
     val currentSong = playerState.currentSong
-    val toastId = st.downloadingId
+                val toastId = dl.downloadingId
 
     // 系统导航 / 手势条底部 inset。注意：直接读取的 WindowInsets 不会被父级 padding
     // 「消费」清零（`asPaddingValues()` 不感知 ModifierLocalConsumedWindowInsets，已对
@@ -322,6 +343,7 @@ fun AppShell(
                 AppTab.Search -> SearchScreen(
                     modifier = Modifier.fillMaxSize(),
                     st = st,
+                    dl = dl,
                     uiViewModel = uiViewModel,
                     selectionViewModel = selectionViewModel,
                     uiState = uiState,
@@ -348,28 +370,6 @@ fun AppShell(
             // AppBottomBar 之后统一渲染（见下方槽位），保证面板盖在迷你播放条之上。
             CompositionLocalProvider(LocalDetailQualityPickerHost provides detailPickerHost) {
             GlobalOverlays(
-                downloadQueueSheet = {
-                    DownloadQueueSheet(
-                        visible = uiState.downloadQueueVisible,
-                        tasks = downloadTasks,
-                        onClose = { uiViewModel.setDownloadQueueVisible(false) },
-                        onPause = { id ->
-                            downloadViewModel.pauseTask(id)
-                            DownloadService.pauseDownload(id)
-                        },
-                        onCancel = { id ->
-                            // 对齐 Flutter `_remove`：cancelDownload + cancelPending + removeTask
-                            DownloadService.cancelDownload(id)
-                            cancelPending(id)
-                            downloadViewModel.removeTask(id)
-                        },
-                        onRemove = { id ->
-                            DownloadService.cancelDownload(id)
-                            cancelPending(id)
-                            downloadViewModel.removeTask(id)
-                        },
-                    )
-                },
                 searchSelectionOverlay = {
                     SearchSelectionOverlay(
                         visible = selection.overlayVisible,
@@ -411,8 +411,8 @@ fun AppShell(
                 onQobuzToken = { uiViewModel.setQobuzTokenVisible(true) },
                 onKkboxAccount = { uiViewModel.setKkboxAccountVisible(true) },
                 onDownloadQueue = { uiViewModel.setDownloadQueueVisible(true) },
-                cacheSize = cacheSize,
-                onClearCache = {
+                onMoreSettings = { uiViewModel.setMoreSettingsVisible(true) },
+                cacheSize = cacheSize,                onClearCache = {
                     // 不再直接清空：先弹窗列出各类缓存体积，由用户勾选后清理
                     uiViewModel.setDrawerVisible(false)
                     uiViewModel.setCacheClearVisible(true)
@@ -441,6 +441,28 @@ fun AppShell(
                 onContact = { uiViewModel.setContactVisible(true) },
             )
 
+            // ── 下载任务整页（声明在抽屉之后 → 盖住抽屉；抽屉不收，返回先关本页、再关抽屉） ──
+            DownloadQueueSheet(
+                visible = uiState.downloadQueueVisible,
+                tasks = downloadTasks,
+                onClose = { uiViewModel.setDownloadQueueVisible(false) },
+                onPause = { id ->
+                    downloadViewModel.pauseTask(id)
+                    DownloadService.pauseDownload(id)
+                },
+                onCancel = { id ->
+                    // 对齐 Flutter `_remove`：cancelDownload + cancelPending + removeTask
+                    DownloadService.cancelDownload(id)
+                    cancelPending(id)
+                    downloadViewModel.removeTask(id)
+                },
+                onRemove = { id ->
+                    // 仅移除任务行（失败态）—— 不能打"取消"标记，
+                    // 否则以后重新下载同一首会被 consumeCancelledSong 永久跳过
+                    downloadViewModel.removeTask(id)
+                },
+            )
+
             // ── Qobuz Token / KKBOX 账号管理浮层（抽屉入口；之前仅置位布尔、未挂载） ──
             QobuzTokenSheet(
                 visible = uiState.qobuzTokenVisible,
@@ -451,6 +473,18 @@ fun AppShell(
                 visible = uiState.kkboxAccountVisible,
                 kkboxViewModel = kkboxViewModel,
                 onClose = { uiViewModel.setKkboxAccountVisible(false) },
+            )
+
+            // ── 更多设置整页（抽屉入口；打开关闭交互与下载任务页一致） ──
+            MoreSettingsScreen(
+                visible = uiState.moreSettingsVisible,
+                groups = moreSettingsGroups(
+                    writeQobuzDownloadTranslation = writeQobuzDownloadTranslation,
+                    onToggleWriteQobuzDownloadTranslation = {
+                        MoreSettings.setWriteQobuzDownloadTranslation(it)
+                    },
+                ),
+                onClose = { uiViewModel.setMoreSettingsVisible(false) },
             )
 
             // ── 底栏槽位（旧 MiniPlayerBar 原位：MenuDrawer 之后、PlayerOverlay 之前）──
@@ -511,6 +545,10 @@ fun AppShell(
                     onToggleTranslation = {
                         uiViewModel.setShowLyricsTranslation(!uiState.showLyricsTranslation)
                     },
+                    onSelectTranslateLang = { lang ->
+                        uiViewModel.setShowLyricsTranslation(true)
+                        playerViewModel.setSongTranslateLang(lang)
+                    },
                     onToggleWordByWord = {
                         uiViewModel.setShowWordByWord(!uiState.showWordByWord)
                     },
@@ -561,20 +599,17 @@ fun AppShell(
                                 q.label
                             }
                         },
-                onSelect = { quality -> handleDownloadWithQuality(quality) },
+                onSelect = { quality ->
+                    uiViewModel.setPicker(false)
+                    uiState.pickerSong?.let { dl.downloadSingle(it, quality) }
+                },
                 onCancel = { uiViewModel.setPicker(false) },
             )
 
             // ── 下载音质选择（批量） ──
             QualityPickerSheet(
-                visible = batchPickerVisible,
-                        qualities = if (selection.selectedSongs.isNotEmpty() &&
-                            selection.selectedSongs.all { it.platform == MusicPlatform.qobuz }
-                        ) {
-                            listOf(Quality.hires, Quality.flac, Quality.k320k)
-                        } else {
-                            listOf(Quality.flac, Quality.k320k, Quality.k128k)
-                        },
+                        visible = dl.batchPickerVisible,
+                        qualities = batchDownloadQualities(selection.selectedSongs),
                         labelOf = { q ->
                             if (selection.selectedSongs.isNotEmpty() &&
                                 selection.selectedSongs.all { it.platform == MusicPlatform.qobuz }
@@ -584,8 +619,10 @@ fun AppShell(
                                 q.label
                             }
                         },
-                onSelect = { quality -> handleBatchDownload(quality) },
-                onCancel = { batchPickerVisible = false },
+                onSelect = { quality ->
+                    dl.downloadBatch(selection.selectedSongs, quality) { selectionViewModel.clearAll() }
+                },
+                onCancel = { dl.closeBatchPicker() },
             )
 
             // ── 详情页音质选择（专辑 / 歌手 / 歌单 sheet 提供内容） ──
@@ -692,6 +729,17 @@ fun AppShell(
                     )
                 }
             }
+            // ── 下载译文语言选择（Qobuz 单曲下载第二步） ──
+            // 【必须声明在最上层】：下载可能从播放页 / ⋮ 面板 / 详情页发起，
+            // 若被这些浮层盖住，用户看到的仍是下层界面，点到的是本层看不见的遮罩 →
+            // 触发「不写入翻译」并让下载继续，表现为「没选就把流程跑完了」。
+            TranslatePickerSheet(
+                visible = translatePickerVisible,
+                langs = translatePickerLangs,
+                songTitle = translatePickerSongTitle,
+                onSelect = { TranslatePicker.resolve(it) },
+                onCancel = { TranslatePicker.resolve(null) },
+            )
         }
     }
     }

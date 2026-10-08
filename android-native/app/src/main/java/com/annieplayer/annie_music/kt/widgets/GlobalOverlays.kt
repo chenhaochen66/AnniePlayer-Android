@@ -12,20 +12,19 @@ import androidx.compose.ui.Modifier
  * 与 RN / Flutter 的挂载方式一致。**渲染顺序即叠放顺序**：靠后者后绘制 → 在上层。
  *
  * 顺序（数组靠后者在上层）：
- * QobuzTokenSheet → KkboxAccountSheet → DownloadQueueSheet → SearchSelectionOverlay →
+ * QobuzTokenSheet → KkboxAccountSheet → SearchSelectionOverlay →
  * PlaylistDetailSheet → SingerDetailSheet → AlbumDetailSheet。
  *
  * 关键约束（载荷相关，不得重排）：
  * - `albumDetailSheet` **必须排在** `singerDetailSheet` / `playlistDetailSheet` 之后，
  *   否则从歌手页 / 歌单页点击专辑时，专辑浮层会被压在下面，看起来像「点击没反应」。
+ * - **下载任务页（DownloadQueueSheet）不在本挂载器内**：它需要盖住侧边抽屉且抽屉不关闭，
+ *   由宿主声明在 `MenuDrawer` 之后（见 `Overlay.RENDER_ORDER` 的 [Overlay.DOWNLOAD_QUEUE]）。
  * - **音质选择（[QualityPickerSheet]）不在这里**：它需要在全屏播放页之上才能点选，
  *   由宿主在更上层单独挂载（对齐 Dart `global_overlays.dart` 的注释约定）。
  * - 对应 `core/routing/OverlayStack.kt` 的 `Overlay.RENDER_ORDER`：本挂载器整体即
  *   `GLOBAL_OVERLAYS` 这一层，位于 `COLUMN`（基础内容）之上、`MENU_DRAWER` 之下。
  *
- * 未移植的浮层（QobuzTokenSheet / KkboxAccountSheet / SearchSelectionOverlay /
- * PlaylistDetailSheet / SingerDetailSheet / AlbumDetailSheet）以插槽参数暴露，
- * 默认空实现；宿主按同名 `@Composable` 逐一传入即可，**不必改动本文件**。
  * 迁移完成前保留插槽，是为了不引用尚未存在的 Composable 而破坏构建。
  */
 @Composable
@@ -33,7 +32,6 @@ fun GlobalOverlays(
     modifier: Modifier = Modifier,
     qobuzTokenSheet: @Composable () -> Unit = {},
     kkboxAccountSheet: @Composable () -> Unit = {},
-    downloadQueueSheet: @Composable () -> Unit = {},
     searchSelectionOverlay: @Composable () -> Unit = {},
     playlistDetailSheet: @Composable () -> Unit = {},
     singerDetailSheet: @Composable () -> Unit = {},
@@ -42,7 +40,6 @@ fun GlobalOverlays(
     Box(modifier = modifier.fillMaxSize()) {
         qobuzTokenSheet()
         kkboxAccountSheet()
-        downloadQueueSheet()
         searchSelectionOverlay()
         playlistDetailSheet()
         singerDetailSheet()

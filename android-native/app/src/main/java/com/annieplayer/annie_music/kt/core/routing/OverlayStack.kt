@@ -25,6 +25,9 @@ enum class Overlay(
     /** 侧边菜单抽屉（MenuDrawer）。 */
     MENU_DRAWER("menuDrawer"),
 
+    /** 下载任务整页（DownloadQueueSheet）。 */
+    DOWNLOAD_QUEUE("downloadQueue"),
+
     /** 迷你播放条（MiniPlayer）。 */
     MINI_PLAYER("miniPlayer"),
 
@@ -61,11 +64,17 @@ enum class Overlay(
          * Column, GlobalOverlays, MenuDrawer, MiniPlayer, PlayerOverlay,
          * SongActionsSheet, ArtistPickerSheet, QualityPicker(download),
          * QualityPicker(batch), QueueSheet, ContactModal, 下载中 toast。
+         *
+         * **Kotlin 侧唯一调整**：下载任务页由 Flutter 的 GlobalOverlays 内部
+         * 提到 [MENU_DRAWER] 之上（[DOWNLOAD_QUEUE]）。原因是抽屉入口不该关闭抽屉：
+         * 提到抽屉之上后子页自然盖住抽屉，返回时先关子页再关抽屉 —— 与 [BACK_PRIORITY]
+         * 中 `downloadQueue` 高于 `menuDrawer` 的既定次序一致。
          */
         val RENDER_ORDER: List<Overlay> = listOf(
             COLUMN,
             GLOBAL_OVERLAYS,
             MENU_DRAWER,
+            DOWNLOAD_QUEUE,
             MINI_PLAYER,
             PLAYER_OVERLAY,
             SONG_ACTIONS_SHEET,
