@@ -12,6 +12,7 @@ import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.network.anyToJsonElement
 import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
+import com.annieplayer.annie_music.kt.core.util.mmssOfMs
 import com.annieplayer.annie_music.kt.data.network.cacheService
 import com.annieplayer.annie_music.kt.data.network.httpGetJson
 import com.annieplayer.annie_music.kt.data.network.httpPostJson
@@ -25,6 +26,13 @@ import com.annieplayer.annie_music.kt.data.network.retryUntilSuccess
  */
 
 // ── 文件内返回结构（对齐 Dart records / 私有类） ──
+
+/** 网易云封面统一 800x800（`?param=800y800`）；空串原样返回 */
+private fun _cover800(url: Any?): String {
+    val s = url?.toString() ?: ""
+    if (s.isEmpty()) return ""
+    return if (s.contains("?")) "$s&param=800y800" else "$s?param=800y800"
+}
 
 /** 歌词结果（对齐 Dart `({String lrc, String? tlyric})`，另带逐字） */
 data class NeteaseLyric(
@@ -237,8 +245,35 @@ fun parseNeteaseQualities(song: Map<String, Any?>): List<Quality> {
     return result
 }
 
-// ── 搜索 ──
+/** 各档位字节数（网易的 `hr`/`sq`/`h`/`l` 是对象，里面的 `size` 就是字节数） */
+fun parseNeteaseQualitySizes(song: Map<String, Any?>): Map<Quality, Long> {
+    val out = HashMap<Quality, Long>()
 
+    fun put(q: Quality, vararg keys: String) {
+        for (k in keys) {
+            val v = song[k] ?: continue
+            val size = when (v) {
+                is Number -> v.toLong()
+                is String -> v.trim().toLongOrNull()
+                is Map<*, *> -> (v["size"] as? Number)?.toLong()
+                    ?: (v["size"] as? String)?.trim()?.toLongOrNull()
+                else -> null
+            }
+            if (size != null && size > 0L) {
+                out[q] = size
+                return
+            }
+        }
+    }
+
+    put(Quality.hires, "hr", "hrMusic")
+    put(Quality.flac, "sq", "sqMusic")
+    put(Quality.k320k, "h", "hMusic")
+    put(Quality.k128k, "l", "m", "lMusic", "mMusic")
+    return out
+}
+
+// ── 搜索 ──
 /**
  * 搜索网易云歌曲，返回统一 [Song]（platform: netease）。
  *
@@ -249,10 +284,6 @@ suspend fun searchNeteaseMusic(
     page: Int = 1,
     pageSize: Int = 100,
 ): List<Song> {
-    val cacheKey = "netease:search:v2:$query:$page:$pageSize"
-    val cached = cacheService.get<List<Any?>>(cacheKey)
-    if (cached != null) return _mapSearchSongs(cached)
-
     val body = _query(
         listOf(
             "s" to query,
@@ -271,8 +302,6 @@ suspend fun searchNeteaseMusic(
     val result = data["result"]
     val rawList = if (result is Map<*, *>) result["songs"] else null
     val list = if (rawList is List<*>) rawList else emptyList<Any?>()
-    // 缓存原始条目列表（JSON 可序列化），命中时按同一映射重建 Song
-    cacheService.set(cacheKey, list, _searchCacheTtl)
     return _mapSearchSongs(list)
 }
 
@@ -306,7 +335,7 @@ private fun _mapSearchSong(item: Map<String, Any?>): Song? {
         id = "netease:$numericId",
         title = decodeHtmlEntities((item["name"] ?: "未知歌曲").toString()),
         artist = artist,
-        cover = (al["picUrl"] ?: "").toString(),
+        cover = _cover800(al["picUrl"]),
         album = decodeHtmlEntities((al["name"] ?: "").toString()),
         albumId = if (_truthy(al["id"])) al["id"].toString() else null,
         duration = _msToSec(dt),
@@ -314,6 +343,7 @@ private fun _mapSearchSong(item: Map<String, Any?>): Song? {
         playUrl = "",
         lyric = null,
         qualities = parseNeteaseQualities(item),
+        qualitySizes = parseNeteaseQualitySizes(item),
         albumArtist = if (_truthy(firstArName)) {
             decodeHtmlEntities(firstArName.toString())
         } else {
@@ -335,10 +365,6 @@ suspend fun searchNeteaseAlbum(
     page: Int = 1,
     pageSize: Int = 30,
 ): List<Album> {
-    val cacheKey = "netease:album:v1:$query:$page:$pageSize"
-    val cached = cacheService.get<List<Any?>>(cacheKey)
-    if (cached != null) return _mapNeteaseAlbums(cached)
-
     val body = _query(
         listOf(
             "s" to query,
@@ -356,7 +382,6 @@ suspend fun searchNeteaseAlbum(
     val result = data["result"]
     val rawList = if (result is Map<*, *>) result["albums"] else null
     val list = if (rawList is List<*>) rawList else emptyList<Any?>()
-    cacheService.set(cacheKey, list, _searchCacheTtl)
     return _mapNeteaseAlbums(list)
 }
 
@@ -388,7 +413,7 @@ private fun _mapNeteaseAlbums(raw: Any?): List<Album> {
                 } else {
                     ""
                 },
-                pic = (m["picUrl"] ?: m["blurPicUrl"] ?: "").toString(),
+                pic = _cover800(m["picUrl"] ?: m["blurPicUrl"]),
                 company = (m["company"] ?: "").toString(),
             ),
         )
@@ -414,6 +439,17 @@ suspend fun getNeteaseAlbumSongs(albumId: String): AlbumSongsPage {
         // v1 把歌曲放在**顶层 `songs`**（旧结构在 `album.songs`）—— 两者都兼容
         val songsRaw = data["songs"] ?: albumMap?.get("songs")
         val list = if (songsRaw is List<*>) songsRaw else emptyList<Any?>()
+        val albumArtistName = run {
+            val a = albumMap?.get("artist")
+            val name = if (a is Map<*, *>) (a["name"] ?: "").toString() else ""
+            if (name.isNotEmpty()) {
+                decodeHtmlEntities(name)
+            } else {
+                val arr = albumMap?.get("artists")
+                val first = if (arr is List<*>) arr.firstOrNull() else null
+                if (first is Map<*, *>) decodeHtmlEntities((first["name"] ?: "").toString()) else ""
+            }
+        }
         val out = ArrayList<AlbumSong>()
         for (m in _listOfMaps(list)) {
             // 注意：`/api/album/{id}` 是旧接口 —— 歌手字段是 `artists`（不是 `ar`）、
@@ -429,6 +465,7 @@ suspend fun getNeteaseAlbumSongs(albumId: String): AlbumSongsPage {
                 .takeIf { it.size == artistNames.size } ?: emptyList()
             val dt = m["dt"] ?: m["duration"]
             val no = m["no"]
+            val cd = m["cd"] ?: m["disc"]
             out.add(
                 AlbumSong(
                     id = "netease:${m["id"]}",
@@ -436,9 +473,12 @@ suspend fun getNeteaseAlbumSongs(albumId: String): AlbumSongsPage {
                     artistName = if (artistNames.isEmpty()) "" else artistNames.joinToString(" / "),
                     duration = _msToSec(dt),
                     track = if (no is Number) no.toInt() else null,
+                    discNumber = if (cd is Number) cd.toInt() else cd?.toString()?.toIntOrNull(),
+                    albumArtist = albumArtistName.ifEmpty { null },
                     // 专辑接口是按每首歌给音质标记的（hr/sq/h/l），必须带上 ——
                     // 不带的话详情页下载候选永远回退到 flac/320/128，Hi-Res 就丢了。
                     qualities = parseNeteaseQualities(m),
+                    qualitySizes = parseNeteaseQualitySizes(m),
                     artistNames = artistNames,
                     artistIds = artistIds,
                 ),
@@ -458,10 +498,6 @@ suspend fun searchNeteaseArtist(query: String): List<Artist> {
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
 
-    val cacheKey = "netease:artist:v1:$q"
-    val cached = cacheService.get<List<Any?>>(cacheKey)
-    if (cached != null) return _mapNeteaseArtists(cached)
-
     val body = _query(
         listOf("s" to q, "type" to "100", "limit" to "30", "offset" to "0"),
     )
@@ -473,7 +509,6 @@ suspend fun searchNeteaseArtist(query: String): List<Artist> {
     val result = data["result"]
     val rawList = if (result is Map<*, *>) result["artists"] else null
     val list = if (rawList is List<*>) rawList else emptyList<Any?>()
-    cacheService.set(cacheKey, list, _searchCacheTtl)
     return _mapNeteaseArtists(list)
 }
 
@@ -559,12 +594,13 @@ private fun _mapNeteaseArtistSong(m: Map<String, Any?>): Song {
         id = "netease:${m["id"]}",
         title = decodeHtmlEntities((m["name"] ?: "").toString()),
         artist = decodeHtmlEntities(artistName),
-        cover = (alMap["picUrl"] ?: "").toString(),
+        cover = _cover800(alMap["picUrl"]),
         album = decodeHtmlEntities((alMap["name"] ?: "").toString()),
         albumId = (alMap["id"] ?: "").toString(),
         duration = _msToSec(dt),
         platform = MusicPlatform.netease,
         qualities = qualities,
+        qualitySizes = parseNeteaseQualitySizes(m),
         albumArtist = decodeHtmlEntities(artistName),
         artistNames = artistNames,
         artistIds = artistIds,
@@ -573,16 +609,24 @@ private fun _mapNeteaseArtistSong(m: Map<String, Any?>): Song {
 
 /** 网易云歌手专辑（`/api/artist/albums/{id}`） */
 suspend fun getNeteaseArtistAlbums(artistId: String): List<Album> {
+    val out = mutableListOf<Album>()
     return try {
-        val data = httpGetJson(
-            "https://music.163.com/api/artist/albums/$artistId?limit=100&offset=0",
-            neteaseApiHeaders,
-        )
-        val raw = data["hotAlbums"]
-        val list = if (raw is List<*>) raw else emptyList<Any?>()
-        _mapNeteaseAlbums(list)
+        var offset = 0
+        while (offset < 3000) {
+            val data = httpGetJson(
+                "https://music.163.com/api/artist/albums/$artistId?limit=100&offset=$offset",
+                neteaseApiHeaders,
+            )
+            val raw = data["hotAlbums"]
+            val list = if (raw is List<*>) raw else emptyList<Any?>()
+            if (list.isEmpty()) break
+            out += _mapNeteaseAlbums(list)
+            if (list.size < 100) break
+            offset += 100
+        }
+        out
     } catch (_: Throwable) {
-        emptyList()
+        out
     }
 }
 
@@ -614,20 +658,24 @@ private suspend fun _fetchNeteaseMusicUrl(songId: String, quality: String): Stri
     return data["url"].toString()
 }
 
-/** 获取网易云播放链接（默认请求 320k） */
-suspend fun fetchNeteasePlayUrl(songId: String): String {
-    val cacheKey = "netease:playurl:${_rawId(songId)}"
+/**
+ * 获取网易云播放链接。[quality] 为 null 时用 320k（旧行为）；
+ * **缓存键带档位**——否则换档会命中旧档的直链。
+ */
+suspend fun fetchNeteasePlayUrl(songId: String, quality: Quality? = null): String {
+    val q = quality ?: Quality.k320k
+    val cacheKey = "netease:playurl:${_rawId(songId)}:${q.value}"
     val cached = cacheService.get<String>(cacheKey)
     if (cached != null && cached.isNotEmpty()) return cached
 
-    val url = retryUntilSuccess { _fetchNeteaseMusicUrl(songId, "320k") }
+    val url = retryUntilSuccess(maxRetries = 2, delayMs = 500L) { _fetchNeteaseMusicUrl(songId, q.value) }
     cacheService.set(cacheKey, url, _playUrlCacheTtl)
     return url
 }
 
 /** 获取网易云下载链接（按指定音质） */
 suspend fun fetchNeteaseDownloadUrl(songId: String, quality: Quality): String =
-    retryUntilSuccess { _fetchNeteaseMusicUrl(songId, quality.value) }
+    retryUntilSuccess(maxRetries = 2, delayMs = 500L) { _fetchNeteaseMusicUrl(songId, quality.value) }
 
 // ── 歌词 ──
 
@@ -646,7 +694,7 @@ private fun _neteaseYrcToWordLyric(yrc: String): String? {
         for (w in _reYrcWord.findAll(m.groupValues[2])) {
             val text = w.groupValues[4]
             if (text.isEmpty()) continue
-            sb.append('<').append(w.groupValues[1]).append(',').append(w.groupValues[2])
+            sb.append('<').append(mmssOfMs(w.groupValues[1].toIntOrNull() ?: 0))
                 .append('>').append(text)
         }
         if (sb.isEmpty()) continue
@@ -745,6 +793,31 @@ suspend fun getNeteaseAlbumDetail(albumId: String): NeteaseAlbumDetail? {
     }
 }
 
+/** 网易云单曲补充信息（走专辑详情接口：曲目号/CD号/发行时间/专辑歌手）；失败返回全 null */
+data class NeteaseEnrich(
+    val trackNumber: String?,
+    val discNumber: String?,
+    val releaseDate: String?,
+    val albumArtist: String?,
+)
+
+suspend fun enrichNeteaseSong(songId: String, albumId: String): NeteaseEnrich {
+    val empty = NeteaseEnrich(null, null, null, null)
+    if (albumId.isEmpty()) return empty
+    return try {
+        val album = getNeteaseAlbumDetail(albumId) ?: return empty
+        val matched = album.songs.firstOrNull { it.id == songId }
+        NeteaseEnrich(
+            trackNumber = matched?.no?.takeIf { it > 0 }?.toString(),
+            discNumber = matched?.disc?.takeIf { it.isNotEmpty() && it != "0" },
+            releaseDate = album.publishTime.ifEmpty { null },
+            albumArtist = album.artist.ifEmpty { null },
+        )
+    } catch (_: Throwable) {
+        empty
+    }
+}
+
 // ── 歌单 ──
 
 private suspend fun _fetchNeteaseSongDetails(chunk: List<Map<String, Any?>>): List<Song> {
@@ -787,6 +860,7 @@ private suspend fun _fetchNeteaseSongDetails(chunk: List<Map<String, Any?>>): Li
                 lyric = null,
                 tlyric = null,
                 qualities = if (qualities.isNotEmpty()) qualities else listOf(Quality.k128k),
+                qualitySizes = parseNeteaseQualitySizes(sm),
             )
         }
     } catch (_: Throwable) {

@@ -87,7 +87,8 @@ suspend fun downloadOneAndRegister(
             onProgress = onProgress,
             lyric = lyric.lrc,
             tlyric = lyric.tlyric,
-            albumArtist = meta.albumArtist ?: song.albumArtist ?: extra["albumArtist"]?.toString(),
+            wordLyric = lyric.wordLyric,
+            albumArtist = extra["albumArtist"]?.toString() ?: meta.albumArtist ?: song.albumArtist,
             trackNumber = meta.trackNumber ?: song.trackNumber ?: extra["trackNumber"]?.toString(),
             discNumber = meta.discNumber ?: song.discNumber ?: extra["discNumber"]?.toString(),
             releaseDate = meta.releaseDate ?: song.releaseDate ?: extra["releaseDate"]?.toString(),
@@ -180,9 +181,10 @@ class DownloadOrchestrator(
                         onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
                         lyric = lyricResult.lrc,
                         tlyric = lyricResult.tlyric,
-                        albumArtist = song.albumArtist ?: extra["albumArtist"]?.toString(),
+                        wordLyric = lyricResult.wordLyric,
+                        albumArtist = extra["albumArtist"]?.toString() ?: song.albumArtist,
                         trackNumber = song.trackNumber ?: extra["trackNumber"]?.toString(),
-                        discNumber = song.discNumber,
+                        discNumber = song.discNumber ?: extra["discNumber"]?.toString(),
                         releaseDate = song.releaseDate ?: extra["releaseDate"]?.toString(),
                     )
                     downloadViewModel.completeTask(songId)

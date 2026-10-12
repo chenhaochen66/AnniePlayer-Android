@@ -26,6 +26,7 @@ import com.annieplayer.annie_music.kt.data.AssetCache
 import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.network.CacheService
+import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
 import com.annieplayer.annie_music.kt.features.shell.AppShell
 import com.annieplayer.annie_music.kt.ui.theme.AnnieTheme
 import com.annieplayer.annie_music.kt.widgets.SplashScreen
@@ -68,6 +69,7 @@ class MainActivity : ComponentActivity() {
         KkboxViewModel.init(applicationContext)
         QobuzViewModel.init(applicationContext)
         MoreSettings.init(applicationContext)
+        LxPluginRegistry.init(applicationContext)
 
         // Android 13+ 媒体通知需要 POST_NOTIFICATIONS
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

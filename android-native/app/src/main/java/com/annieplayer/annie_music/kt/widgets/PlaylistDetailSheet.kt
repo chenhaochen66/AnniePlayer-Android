@@ -63,7 +63,6 @@ import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
 import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.PlaylistDetailData
-import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.util.bestQuality
 import com.annieplayer.annie_music.kt.data.PlaylistService
@@ -109,19 +108,20 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun PlaylistDetailSheet(
+    data: PlaylistDetailData,
+    isTop: Boolean,
+    onClose: () -> Unit,
     uiViewModel: UiViewModel,
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     modifier: Modifier = Modifier,
 ) {
-    val uiState by uiViewModel.state.collectAsState()
-    val data = uiState.playlistDetailData
-    if (!uiState.playlistDetailVisible || data == null) return
-
+    // 数据与可见性由宿主（详情真栈）传入：不再读 uiState 里的可见性/数据，也没有 early-return。
     key(data.platform, data.id) {
         PlaylistDetailContent(
             data = data,
-            uiState = uiState,
+            isTop = isTop,
+            onClose = onClose,
             uiViewModel = uiViewModel,
             playerViewModel = playerViewModel,
             downloadViewModel = downloadViewModel,
@@ -153,12 +153,14 @@ private class PlaylistDetailState {
 @Composable
 private fun PlaylistDetailContent(
     data: PlaylistDetailData,
-    uiState: UiState,
+    isTop: Boolean,
+    onClose: () -> Unit,
     uiViewModel: UiViewModel,
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     modifier: Modifier = Modifier,
 ) {
+    val uiState by uiViewModel.state.collectAsState()
     val st = remember { PlaylistDetailState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -268,7 +270,31 @@ private fun PlaylistDetailContent(
         }
     }
 
-    // 返回手势：多选模式优先退出；更高层浮层可见时让位（见 OverlayStack.kt）
+    // 进出场：150ms + 线性（AppDuration.sheet + AppEasing.linear，与其它浮层同规格）
+    val slide = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        slide.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+        )
+    }
+
+    // 关闭入口：先反向滑出（与滑入完全对称），动画结束后才真正出栈；动画期间重入忽略。
+    // slide 是 remember，closing 也 remember，生命周期对齐。
+    var closing by remember { mutableStateOf(false) }
+    fun requestClose() {
+        if (closing) return
+        closing = true
+        scope.launch {
+            slide.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+            )
+            onClose()
+        }
+    }
+
+    // 返回手势：多选模式优先退出（子页返回不播滑出）；更高层浮层可见时让位（见 OverlayStack.kt）
     val higherFlags = OverlayVisibilityFlags(
         songActions = uiState.songActionsVisible,
         artistPicker = uiState.artistPickerVisible,
@@ -279,22 +305,15 @@ private fun PlaylistDetailContent(
         downloadQueue = uiState.downloadQueueVisible,
         menuDrawer = uiState.drawerVisible,
     )
-    val detailIsTop = handleBack(higherFlags) == BackTarget.DETAIL && !uiState.downloadQueueVisible
+    val detailIsTop = isTop &&
+        !uiState.downloadQueueVisible &&
+        handleBack(higherFlags) == BackTarget.DETAIL
     BackHandler(enabled = st.selectMode || detailIsTop) {
         if (st.selectMode) {
             toggleSelectMode()
         } else {
-            uiViewModel.setPlaylistDetailVisible(false)
+            requestClose()
         }
-    }
-
-    // 进出场：150ms + 线性（AppDuration.sheet + AppEasing.linear，与其它浮层同规格）
-    val slide = remember { Animatable(1f) }
-    LaunchedEffect(Unit) {
-        slide.animateTo(
-            targetValue = 0f,
-            animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
-        )
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -319,7 +338,7 @@ private fun PlaylistDetailContent(
                     hasPlaylist = st.hasPlaylist,
                     selectMode = st.selectMode,
                     selectedAll = st.selectedIds.size == st.songs.size,
-                    onClose = { uiViewModel.setPlaylistDetailVisible(false) },
+                    onClose = { requestClose() },
                     onToggleSelectAll = { toggleSelectAll() },
                     onToggleSelectMode = { toggleSelectMode() },
                 )
@@ -347,6 +366,10 @@ private fun PlaylistDetailContent(
             QualityPickerSheet(
                 visible = st.batchPickerVisible,
                 qualities = batchDownloadQualities(st.songs.filter { st.selectedIds.contains(it.id) }),
+                sizeOf = { q ->
+                    val selected = st.songs.filter { st.selectedIds.contains(it.id) }
+                    if (selected.size == 1) selected.first().qualitySizes[q] else null
+                },
                     onSelect = { q ->
                         // 跑在全局串行队列上（同 AlbumDetailSheet）：弹窗一关作用域就作废
                         enqueueDownload("playlistSheet_batch_" + System.currentTimeMillis()) { batchDownload(q) }

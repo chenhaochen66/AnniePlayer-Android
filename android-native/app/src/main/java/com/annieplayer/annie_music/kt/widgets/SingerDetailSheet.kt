@@ -83,6 +83,7 @@ import com.annieplayer.annie_music.kt.core.routing.BackTarget
 import com.annieplayer.annie_music.kt.core.routing.OverlayVisibilityFlags
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
+import com.annieplayer.annie_music.kt.core.state.AlbumDetailEntry
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.MoreSettings
@@ -93,7 +94,6 @@ import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
 import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
-import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.enrichSong
@@ -157,20 +157,21 @@ import okhttp3.Request
  */
 @Composable
 fun SingerDetailSheet(
+    data: SingerDetailData,
+    isTop: Boolean,
+    onClose: () -> Unit,
     uiViewModel: UiViewModel,
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     modifier: Modifier = Modifier,
     colorViewModel: ColorViewModel = activityViewModel(),
 ) {
-    val uiState by uiViewModel.state.collectAsState()
-    val data = uiState.singerDetailData
-    if (!uiState.singerDetailVisible || data == null) return
-
+    // 数据与可见性由宿主（详情真栈）传入：不再读 uiState 里的可见性/数据，也没有 early-return。
     key(data.id) {
         SingerDetailContent(
             data = data,
-            uiState = uiState,
+            isTop = isTop,
+            onClose = onClose,
             uiViewModel = uiViewModel,
             playerViewModel = playerViewModel,
             downloadViewModel = downloadViewModel,
@@ -215,13 +216,15 @@ private class SingerDetailState {
 @Composable
 private fun SingerDetailContent(
     data: SingerDetailData,
-    uiState: UiState,
+    isTop: Boolean,
+    onClose: () -> Unit,
     uiViewModel: UiViewModel,
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     colorViewModel: ColorViewModel,
     modifier: Modifier = Modifier,
 ) {
+    val uiState by uiViewModel.state.collectAsState()
     val st = remember { SingerDetailState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -345,14 +348,17 @@ private fun SingerDetailContent(
     }
 
     fun openAlbum(album: Album) {
-        uiViewModel.setAlbumDetailVisible(
-            true,
-            AlbumDetailData(
-                id = album.albumid,
-                cover = buildAlbumCoverUrl(album),
-                name = album.name,
-                artist = album.artist,
-                platform = album.platform,
+        // 从歌手页跳专辑：把专辑详情**压栈**（歌手页留在下层、返回可逐层退回），
+        // 而不再先关掉自己（旧行为会收起歌手页）。
+        uiViewModel.pushDetail(
+            AlbumDetailEntry(
+                AlbumDetailData(
+                    id = album.albumid,
+                    cover = buildAlbumCoverUrl(album),
+                    name = album.name,
+                    artist = album.artist,
+                    platform = album.platform,
+                ),
             ),
         )
     }
@@ -400,24 +406,9 @@ private fun SingerDetailContent(
         downloadQueue = uiState.downloadQueueVisible,
         menuDrawer = uiState.drawerVisible,
     )
-    val detailIsTop = handleBack(higherFlags) == BackTarget.DETAIL &&
-        !uiState.albumDetailVisible &&
-        !uiState.downloadQueueVisible
-
-    // 子页（全部歌曲 / 全部专辑）的返回先回 overview，overview 才真正关面板
-    fun goBack() {
-        if (st.tab != "overview") {
-            st.tab = "overview"
-            st.selectMode = false
-            st.selectedSongs.clear()
-            // overview 的「最热门」只认第 1 页 → 从完整列表回来时把列表复位
-            if (st.songPage != 1) scope.launch { loadSongs(1) }
-        } else {
-            uiViewModel.setSingerDetailVisible(false)
-        }
-    }
-
-    BackHandler(enabled = detailIsTop) { goBack() }
+    val detailIsTop = isTop &&
+        !uiState.downloadQueueVisible &&
+        handleBack(higherFlags) == BackTarget.DETAIL
 
     // 进出场：150ms + 线性（AppDuration.sheet + AppEasing.linear，与其它浮层同规格）
     val slide = remember { Animatable(1f) }
@@ -427,6 +418,36 @@ private fun SingerDetailContent(
             animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
         )
     }
+
+    // 关闭入口：先反向滑出（与滑入完全对称），动画结束后才真正出栈；动画期间重入忽略。
+    // slide 是 remember，closing 也 remember，生命周期对齐。
+    var closing by remember { mutableStateOf(false) }
+    fun requestClose() {
+        if (closing) return
+        closing = true
+        scope.launch {
+            slide.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+            )
+            onClose()
+        }
+    }
+
+    // 子页（全部歌曲 / 全部专辑）的返回先回 overview（不播滑出），overview 才真正关面板
+    fun goBack() {
+        if (st.tab != "overview") {
+            st.tab = "overview"
+            st.selectMode = false
+            st.selectedSongs.clear()
+            // overview 的「最热门」只认第 1 页 → 从完整列表回来时把列表复位
+            if (st.songPage != 1) scope.launch { loadSongs(1) }
+        } else {
+            requestClose()
+        }
+    }
+
+    BackHandler(enabled = detailIsTop) { goBack() }
 
     val totalPages = (st.songTotal + PageSize - 1) / PageSize
     val pageRange = singerDetailPageRange(st.songPage, totalPages)
@@ -609,6 +630,9 @@ private fun SingerDetailContent(
             QualityPickerSheet(
                 visible = st.batchPickerVisible,
                 qualities = batchDownloadQualities(st.selectedSongs.toList()),
+                sizeOf = { q ->
+                    if (st.selectedSongs.size == 1) st.selectedSongs.first().qualitySizes[q] else null
+                },
                 labelOf = { q ->
                     if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
                 },

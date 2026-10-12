@@ -6,11 +6,11 @@ import kotlin.math.roundToInt
  * 歌词解析（1:1 移植 Flutter `core/utils/lrc_parser.dart`，对齐 RN 版 utils/lrcParser.ts）。
  */
 
-/** 逐字词块（统一逐字格式：`<绝对起始ms,时长ms>词`） */
+/** 逐字词块（统一逐字格式：`<mm:ss.mmm>词`，时间是**词绝对起始**） */
 data class LyricWord(
     /** 词绝对起始（毫秒） */
     val startMs: Int,
-    /** 词时长（毫秒） */
+    /** 词时长（毫秒）；源格式不给时长，由「下一个词的起点」推出（见 [_parseWordLyric]） */
     val durMs: Int,
     val text: String,
 )
@@ -62,18 +62,25 @@ private fun _parseTlyric(tlyric: String): Map<Int, String> {
     return map
 }
 
-/** 统一逐字行正则：`[mm:ss.mmm]<起始ms,时长ms>词…` */
+/** 统一逐字行正则：`[mm:ss.mmm]<mm:ss.mmm>词…`（行首是行时间，词标记是词的**绝对起始**） */
 private val _wordLineRegex by lazy {
-    Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\]((?:<\\d+,\\d+>[^<\\n]*)+)")
+    Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\]((?:<\\d{2}:\\d{2}\\.\\d{2,3}>[^<\\n]*)+)")
 }
 /**
- * 统一逐字词块正则（要求三个数字，避免把歌词里的普通括号当标记）。
+ * 统一逐字词块正则：`<mm:ss.mmm>词`（末尾那个无文本的标记用于收尾，故文本允许为空）。
  *
  * 文本必须**遇换行即停**：`[^<]*` 会跨行吃进下一行的 `[mm:ss.mmm]` 标签，
  * 于是每行最后一个词带着下一行的时间标签一起渲染出来（真机现象：开逐字后
  * 每行前面多出 `[00:01.640]`）。
  */
-private val _wordRegex by lazy { Regex("<(\\d+),(\\d+)>([^<\\n]*)") }
+private val _wordRegex by lazy { Regex("<(\\d{2}):(\\d{2})\\.(\\d{2,3})>([^<\\n]*)") }
+
+/** `<mm:ss.mmm>` / `<mm:ss.cc>` → 毫秒 */
+private fun _tagToMs(m: MatchResult): Int {
+    val msStr = m.groupValues[3]
+    val ms = if (msStr.length == 2) msStr.toInt() * 10 else msStr.toInt()
+    return m.groupValues[1].toInt() * 60000 + m.groupValues[2].toInt() * 1000 + ms
+}
 
 /** 翻译行时间戳的匹配容差（毫秒）：各平台行起点与翻译时间戳的精度不同（厘秒 / 毫秒） */
 private const val TlyricToleranceMs = 80
@@ -99,36 +106,31 @@ private data class WordLine(val timeMs: Int, val words: List<LyricWord>)
 private fun _parseWordLyric(wordLyric: String): List<WordLine> {
     val out = ArrayList<WordLine>()
     for (m in _wordLineRegex.findAll(wordLyric)) {
-        val min = m.groupValues[1].toInt()
-        val sec = m.groupValues[2].toInt()
-        val msStr = m.groupValues[3]
-        val ms = if (msStr.length == 2) msStr.toInt() * 10 else msStr.toInt()
-        val time = ((min * 60 + sec + ms / 1000.0) * 1000).roundToInt()
-        val words = _wordRegex.findAll(m.groupValues[4]).map {
-            LyricWord(
-                startMs = it.groupValues[1].toInt(),
-                durMs = it.groupValues[2].toInt(),
-                text = it.groupValues[3],
-            )
-        }.filter { it.text.isNotEmpty() }.toList()
-        if (words.isNotEmpty()) out.add(WordLine(time, words))
+        val time = _tagToMs(m)
+        // 原始序列**含空文本标记**：行首 `<00:00.000>` 与**行尾收尾标记**都是空文本，
+        // 行尾那个决定最后一个词的结束时间 —— 先留着推时长，最后再过滤空词
+        val raw = _wordRegex.findAll(m.groupValues[4])
+            .map { LyricWord(startMs = _tagToMs(it), durMs = 0, text = it.groupValues[4]) }
+            .toList()
+        if (raw.none { it.text.isNotEmpty() }) continue
+        out.add(WordLine(time, raw))
     }
     out.sortBy { it.timeMs }
-    // 时长为 0/负 的词（不少平台的末段不给时长）→ 用「下一个词的起点」补齐；
-    // 一行最后一个词 → 用「下一行的起点」补齐。否则那个字会瞬间闪亮（"最后一个字嗖一下"）。
+    val result = ArrayList<WordLine>()
     for (li in out.indices) {
-        val words = out[li].words.toMutableList()
+        val raw = out[li].words
         val nextLineMs = out.getOrNull(li + 1)?.timeMs
-        for (i in words.indices) {
-            if (words[i].durMs > 0) continue
-            val nextStart = words.getOrNull(i + 1)?.startMs ?: nextLineMs
-            if (nextStart != null && nextStart > words[i].startMs) {
-                words[i] = words[i].copy(durMs = nextStart - words[i].startMs)
-            }
+        // 时长一律取「原始序列里下一个标记的起点」（含空标记）；没有下一个才用下一行的起点。
+        // 否则最后一个词会被拉长到下一行，或那个字瞬间闪亮（"最后一个字嗖一下"）。
+        val words = raw.mapIndexedNotNull { i, w ->
+            if (w.text.isEmpty()) return@mapIndexedNotNull null
+            val nextStart = raw.getOrNull(i + 1)?.startMs ?: nextLineMs
+            val dur = if (nextStart != null && nextStart > w.startMs) nextStart - w.startMs else 0
+            w.copy(durMs = dur)
         }
-        out[li] = WordLine(out[li].timeMs, words)
+        if (words.isNotEmpty()) result.add(WordLine(out[li].timeMs, words))
     }
-    return out
+    return result
 }
 
 /**
@@ -186,11 +188,14 @@ fun parseLrcWithTranslation(
 }
 
 /** 毫秒 -> `[mm:ss.mmm]`（毫秒补 3 位，保证与 lrc 行的时间戳 key 一致） */
-fun lrcTimeOfMs(ms: Int): String {
+fun lrcTimeOfMs(ms: Int): String = "[" + mmssOfMs(ms) + "]"
+
+/** 毫秒 -> `mm:ss.mmm`（**不带方括号**）—— 逐字词标记 `<…>` 里用的是这个，别用 [lrcTimeOfMs] */
+fun mmssOfMs(ms: Int): String {
     val safe = if (ms < 0) 0 else ms
-    return "[" + (safe / 60000).toString().padStart(2, '0') + ":" +
+    return (safe / 60000).toString().padStart(2, '0') + ":" +
         ((safe % 60000) / 1000).toString().padStart(2, '0') + "." +
-        (safe % 1000).toString().padStart(3, '0') + "]"
+        (safe % 1000).toString().padStart(3, '0')
 }
 
 /** 二分查找当前歌词行索引（时间未到首行时返回 -1） */
@@ -206,4 +211,78 @@ fun findCurrentLineIndex(lines: List<LyricLine>, currentTime: Double): Int {
         }
     }
     return hi
+}
+
+/** 单文件歌词里的一行；[wordLine] 非空 = 带 `<…>` 词标记的增强行 */
+private data class _EmbeddedEntry(val timeMs: Int, val text: String, val wordLine: String?)
+
+/**
+ * 把**单个歌词文件**（普通 LRC / 增强 LRC，原文与翻译**交错**或**原文全在上、翻译全在下**）
+ * 拆成 [parseLrcWithTranslation] 需要的那三份 —— 本地曲库读「内嵌歌词 / 同名 .lrc」用。
+ *
+ * 判定规则：
+ * - 带 `<mm:ss.mmm>` 词标记的行 = 原文（增强行）；
+ * - 其余 `[mm:ss.xx]文本` 行：能对上一条原文 → 翻译，否则自己也是原文。
+ *
+ * 对上原文分两档：**时间完全相同**必算（普通 LRC 的原文/翻译是同一个标签）；
+ * 只有整份含增强行时才放宽到 [TlyricToleranceMs] —— 增强行标签是**首个词**的时间
+ * （QQ 实测 `[00:10.004]`）而翻译是厘秒（`[00:10.00]`），不放宽会整份翻译都当原文；
+ * 但纯普通 LRC 不能放宽，否则快歌里相邻两句会被误并成一句。
+ *
+ * @return `(lrc, tlyric, wordLyric)`；后两者无内容时为 `null`。
+ */
+fun splitEmbeddedLyric(raw: String): Triple<String, String?, String?> {
+    val entries = ArrayList<_EmbeddedEntry>()
+    for (line in raw.split('\n')) {
+        val t = line.trim()
+        val w = _wordLineRegex.find(t)
+        if (w != null) {
+            val text = _wordRegex.findAll(w.groupValues[4]).joinToString("") { it.groupValues[4] }
+            if (text.isNotEmpty()) entries.add(_EmbeddedEntry(_tagToMs(w), text, t))
+            continue
+        }
+        val m = _lrcRegex.find(t) ?: continue
+        val text = m.groupValues[4].trim()
+        if (text.isNotEmpty()) entries.add(_EmbeddedEntry(_tagToMs(m), text, null))
+    }
+    if (entries.isEmpty()) return Triple("", null, null)
+
+    val hasWords = entries.any { it.wordLine != null }
+    val originals = ArrayList<_EmbeddedEntry>()
+    val translations = ArrayList<_EmbeddedEntry>()
+    for (e in entries) {
+        if (e.wordLine != null) {
+            originals.add(e)
+            continue
+        }
+        val owner = originals.minByOrNull { kotlin.math.abs(it.timeMs - e.timeMs) }
+        val isTranslation = owner != null &&
+            (owner.timeMs == e.timeMs ||
+                (hasWords && kotlin.math.abs(owner.timeMs - e.timeMs) <= TlyricToleranceMs))
+        if (isTranslation) translations.add(e) else originals.add(e)
+    }
+
+    val lrc = StringBuilder()
+    val wordLyric = StringBuilder()
+    for (o in originals) {
+        lrc.append(lrcTimeOfMs(o.timeMs)).append(o.text).append('\n')
+        o.wordLine?.let { wordLyric.append(it).append('\n') }
+    }
+    val tlyric = StringBuilder()
+    for (t in translations) {
+        tlyric.append(lrcTimeOfMs(t.timeMs)).append(t.text).append('\n')
+    }
+    return Triple(
+        lrc.toString().trimEnd('\n'),
+        tlyric.toString().trimEnd('\n').ifEmpty { null },
+        wordLyric.toString().trimEnd('\n').ifEmpty { null },
+    )
+}
+
+/** 本地曲库入口：读「内嵌歌词 / 同名 .lrc」的原文，直接拿到可渲染的行（原文在上、翻译在下） */
+fun parseEmbeddedLyric(raw: String): List<LyricLine> {
+    if (raw.isBlank()) return emptyList()
+    val (lrc, tlyric, wordLyric) = splitEmbeddedLyric(raw)
+    if (lrc.isEmpty()) return emptyList()
+    return parseLrcWithTranslation(lrc, tlyric, wordLyric)
 }

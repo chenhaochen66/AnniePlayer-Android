@@ -66,7 +66,6 @@ import com.annieplayer.annie_music.kt.features.downloads.DownloadMeta
 import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
 import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
-import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.data.fetchAlbumSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
@@ -155,20 +154,22 @@ val LocalDetailQualityPickerHost = staticCompositionLocalOf<DetailQualityPickerH
  */
 @Composable
 fun AlbumDetailSheet(
+    data: AlbumDetailData,
+    isTop: Boolean,
+    onClose: () -> Unit,
     uiViewModel: UiViewModel,
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     modifier: Modifier = Modifier,
     colorViewModel: ColorViewModel = activityViewModel(),
 ) {
-    val uiState by uiViewModel.state.collectAsState()
-    val data = uiState.albumDetailData
-    if (!uiState.albumDetailVisible || data == null) return
-
+    // 数据与可见性由宿主（详情真栈）传入：不再读 uiState 里的可见性/数据，也没有 early-return，
+    // 因此栈内每一层详情各自渲染自己那份 data、互不干扰。
     key(data.id) {
         AlbumDetailContent(
             data = data,
-            uiState = uiState,
+            isTop = isTop,
+            onClose = onClose,
             uiViewModel = uiViewModel,
             playerViewModel = playerViewModel,
             downloadViewModel = downloadViewModel,
@@ -197,13 +198,15 @@ private class AlbumDetailState {
 @Composable
 private fun AlbumDetailContent(
     data: AlbumDetailData,
-    uiState: UiState,
+    isTop: Boolean,
+    onClose: () -> Unit,
     uiViewModel: UiViewModel,
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     modifier: Modifier = Modifier,
     colorViewModel: ColorViewModel,
 ) {
+    val uiState by uiViewModel.state.collectAsState()
     val st = remember { AlbumDetailState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -230,6 +233,7 @@ private fun AlbumDetailContent(
         platform = data.platform,
         // 必须带上专辑接口给的真实音质（否则详情页下载候选永远回退 flac/320/128，Hi-Res 丢失）
         qualities = s.qualities.ifEmpty { listOf(Quality.flac, Quality.k320k, Quality.k128k) },
+        qualitySizes = s.qualitySizes,
         albumArtist = data.artist,
         artistNames = if (s.artistNames.isNotEmpty()) s.artistNames else listOf(s.artistName),
         artistIds = s.artistIds,
@@ -323,33 +327,15 @@ private fun AlbumDetailContent(
         try {
             val result = fetchAlbumSongsByPlatform(data.platform, data.id)
             st.qualitySpec = result.qualitySpec
-            st.songs = result.songs
+            st.songs = result.songs.sortedWith(
+                compareBy({ it.discNumber ?: 1 }, { it.track ?: Int.MAX_VALUE }),
+            )
             st.releaseDate = result.pub
         } catch (e: Exception) {
             val msg = (e.message ?: "").replaceFirst("Exception: ", "")
             st.error = msg.ifEmpty { "加载失败" }
         } finally {
             st.loading = false
-        }
-    }
-
-    // 返回手势：多选模式优先退出；更高层浮层可见时让位（见 OverlayStack.kt）
-    val higherFlags = OverlayVisibilityFlags(
-        songActions = uiState.songActionsVisible,
-        artistPicker = uiState.artistPickerVisible,
-        qualityPicker = uiState.pickerVisible || st.pickerVisible,
-        queue = uiState.queueVisible,
-        playerOverlay = uiState.playerOverlayVisible,
-        detail = true,
-        downloadQueue = uiState.downloadQueueVisible,
-        menuDrawer = uiState.drawerVisible,
-    )
-    val detailIsTop = handleBack(higherFlags) == BackTarget.DETAIL && !uiState.downloadQueueVisible
-    BackHandler(enabled = st.selectMode || detailIsTop) {
-        if (st.selectMode) {
-            toggleSelectMode()
-        } else {
-            uiViewModel.setAlbumDetailVisible(false)
         }
     }
 
@@ -360,6 +346,44 @@ private fun AlbumDetailContent(
             targetValue = 0f,
             animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
         )
+    }
+
+    // 关闭入口：先反向滑出（与滑入完全对称），动画结束后才真正出栈；动画期间重入忽略。
+    // slide 是 remember，closing 也 remember，生命周期对齐。
+    var closing by remember { mutableStateOf(false) }
+    fun requestClose() {
+        if (closing) return
+        closing = true
+        scope.launch {
+            slide.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
+            )
+            onClose()
+        }
+    }
+
+    // 返回手势：多选模式优先退出（子页返回不播滑出）；仅栈顶详情消费，更高层浮层（音质 / 队列 /
+    // 播放页 / ⋮ / 多歌手 / 下载队列）可见时让位（见 OverlayStack.kt）。是否栈顶由宿主传入的 isTop 决定。
+    val higherFlags = OverlayVisibilityFlags(
+        songActions = uiState.songActionsVisible,
+        artistPicker = uiState.artistPickerVisible,
+        qualityPicker = uiState.pickerVisible || st.pickerVisible,
+        queue = uiState.queueVisible,
+        playerOverlay = uiState.playerOverlayVisible,
+        detail = true,
+        downloadQueue = uiState.downloadQueueVisible,
+        menuDrawer = uiState.drawerVisible,
+    )
+    val detailIsTop = isTop &&
+        !uiState.downloadQueueVisible &&
+        handleBack(higherFlags) == BackTarget.DETAIL
+    BackHandler(enabled = st.selectMode || detailIsTop) {
+        if (st.selectMode) {
+            toggleSelectMode()
+        } else {
+            requestClose()
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -382,7 +406,7 @@ private fun AlbumDetailContent(
                 AlbumDetailHeader(
                     selectMode = st.selectMode,
                     selectedAll = st.selectedIds.size == st.songs.size,
-                    onClose = { uiViewModel.setAlbumDetailVisible(false) },
+                    onClose = { requestClose() },
                     onToggleSelectAll = { toggleSelectAll() },
                     onToggleSelectMode = { toggleSelectMode() },
                 )
@@ -408,12 +432,12 @@ private fun AlbumDetailContent(
         val pickerHost = LocalDetailQualityPickerHost.current
         val pickerOwner = remember { Any() }
         val pickerPanel: @Composable () -> Unit = {
+            val pickerSongs = st.songs.filter { st.selectedIds.contains(it.id) }.map { toSong(it) }
             QualityPickerSheet(
                 visible = st.pickerVisible,
                 // 与曲目实际可用音质一致（Qobuz 专辑含 Hi-Res，其余三档）
-                qualities = batchDownloadQualities(
-                    st.songs.filter { st.selectedIds.contains(it.id) }.map { toSong(it) },
-                ),
+                qualities = batchDownloadQualities(pickerSongs),
+                sizeOf = { q -> if (pickerSongs.size == 1) pickerSongs.first().qualitySizes[q] else null },
                 labelOf = { q ->
                     if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
                 },
@@ -559,20 +583,37 @@ private fun AlbumDetailBody(
                             onBatch = onBatch,
                         )
                     }
+                    val multiDisc = st.songs.mapNotNull { it.discNumber }.distinct().size > 1
                     items(count = st.songs.size) { index ->
                         val song = st.songs[index]
-                        AlbumDetailSongRow(
-                            song = song,
-                            index = index,
-                            selectMode = st.selectMode,
-                            selected = st.selectedIds.contains(song.id),
-                            isPlaying = song.id == currentSongId,
-                            playingTint = palette.readablePrimary(),
-                            task = tasks[song.id],
-                            onPlay = onPlay,
-                            onDownload = onDownload,
-                            onToggle = onToggle,
-                        )
+                        val newDisc = multiDisc &&
+                            (index == 0 || st.songs[index - 1].discNumber != song.discNumber)
+                        Column {
+                            if (newDisc) {
+                                Text(
+                                    text = "CD ${song.discNumber ?: 1}",
+                                    color = AppColors.textTertiary,
+                                    fontSize = AppFontSize.size13,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(
+                                        horizontal = AppSpacing.sp16,
+                                        vertical = AppSpacing.sp10,
+                                    ),
+                                )
+                            }
+                            AlbumDetailSongRow(
+                                song = song,
+                                index = index,
+                                selectMode = st.selectMode,
+                                selected = st.selectedIds.contains(song.id),
+                                isPlaying = song.id == currentSongId,
+                                playingTint = palette.readablePrimary(),
+                                task = tasks[song.id],
+                                onPlay = onPlay,
+                                onDownload = onDownload,
+                                onToggle = onToggle,
+                            )
+                        }
                     }
                 }
             }
@@ -734,7 +775,7 @@ private fun AlbumDetailSongRow(
                 PlayingIndicator(tint = playingTint)
             } else {
                 Text(
-                    text = "${index + 1}",
+                    text = song.track?.toString() ?: "${index + 1}",
                     color = AppColors.white60,
                     fontSize = AppFontSize.size15,
                     fontWeight = FontWeight.Bold,

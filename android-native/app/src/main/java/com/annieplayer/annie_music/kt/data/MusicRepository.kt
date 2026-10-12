@@ -1,5 +1,6 @@
 package com.annieplayer.annie_music.kt.data
 
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.Artist
@@ -12,6 +13,8 @@ import com.annieplayer.annie_music.kt.data.network.json
 import com.annieplayer.annie_music.kt.data.network.jsonElementToAny
 import com.annieplayer.annie_music.kt.data.sources.enrichKuGouSong
 import com.annieplayer.annie_music.kt.data.sources.enrichKuwoSong
+import com.annieplayer.annie_music.kt.data.sources.enrichKkboxSong
+import com.annieplayer.annie_music.kt.data.sources.enrichNeteaseSong
 import com.annieplayer.annie_music.kt.data.sources.enrichQQSong
 import com.annieplayer.annie_music.kt.data.sources.fetchKugouArtistInfo
 import com.annieplayer.annie_music.kt.data.sources.fetchKugouLyric
@@ -48,6 +51,7 @@ import com.annieplayer.annie_music.kt.data.sources.fetchQobuzArtistPicture
 import com.annieplayer.annie_music.kt.data.sources.fetchQobuzLyrics
 import com.annieplayer.annie_music.kt.data.sources.getFileUrl
 import com.annieplayer.annie_music.kt.data.sources.qobuzHiresFormatId
+import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
 import com.annieplayer.annie_music.kt.data.sources.qobuzQualityFormatId
 import com.annieplayer.annie_music.kt.data.sources.qobuzQualitySpec
 import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
@@ -62,6 +66,10 @@ import com.annieplayer.annie_music.kt.data.sources.searchNeteaseAlbum
 import com.annieplayer.annie_music.kt.data.sources.searchNeteaseArtist
 import com.annieplayer.annie_music.kt.data.sources.searchQQAlbum
 import com.annieplayer.annie_music.kt.data.sources.searchQQArtist
+import com.annieplayer.annie_music.kt.data.source.BuiltinSourceProvider
+import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
+import com.annieplayer.annie_music.kt.data.source.LxPluginSourceProvider
+import kotlinx.coroutines.CancellationException
 
 /**
  * 音乐仓库层（1:1 移植 Flutter `lib/data/music_repository.dart`，对齐 RN 版
@@ -101,23 +109,219 @@ data class RepoArtistSongs(
     val pageable: Boolean = true,
 )
 
-/** 播放 URL（netease 走 c.wwwweb.top，qq/kugou 走长青解析，其余走 kuwo） */
-suspend fun fetchPlayUrlBySong(song: Song): String = when (song.platform) {
-    MusicPlatform.netease -> fetchNeteasePlayUrl(song.id)
-    MusicPlatform.qq -> fetchQQMusicUrl(
-        song.id.replaceFirst(Regex("^qq:"), ""),
-        if (song.qualities.contains(Quality.k320k)) "320k" else "128k",
-    )
-    MusicPlatform.kugou -> fetchKugouMusicUrl(
-        song.id.replaceFirst(Regex("^kugou:"), ""),
-        if (song.qualities.contains(Quality.k320k)) "320k" else "128k",
-    )
-    MusicPlatform.qobuz -> fetchQobuzUrl(song)
-    MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoPlayUrl(song.id)
+private val _builtinProvider by lazy { BuiltinSourceProvider() }
+private val _lxProvider by lazy { LxPluginSourceProvider() }
+
+/** 落雪插件能接管的国内四平台；开关打开后这些平台**不再使用内置音源** */
+private val _lxPlatforms = setOf(
+    MusicPlatform.netease,
+    MusicPlatform.kuwo,
+    MusicPlatform.kugou,
+    MusicPlatform.qq,
+)
+
+/**
+ * 播放 URL —— **音源路由**。
+ *
+ * 开关开且是落雪可接管的四平台：**只用插件**（无插件/插件失败 → 直接失败并提示，不回退内置）。
+ * 其余情况（开关关、或 Qobuz/KKBOX 这类插件覆盖不到的平台）走内置。
+ */
+suspend fun fetchPlayUrlBySong(song: Song): String = resolveUrlByProvider(song, null)
+
+/** 下载 URL —— 路由同上 */
+suspend fun fetchDownloadUrlBySong(song: Song, quality: Quality): String =
+    resolveUrlByProvider(song, quality)
+
+private suspend fun resolveUrlByProvider(song: Song, quality: Quality?): String {
+    val pluginMode = LxPluginRegistry.enabled.value && song.platform in _lxPlatforms
+    if (pluginMode) requireLxPlugin(song)
+
+    // 下载：显式档位，只请求一次（下载侧有字节嗅探等自身兜底）
+    if (quality != null) {
+        return if (pluginMode) {
+            _lxProvider.resolveDownloadUrl(song, quality)
+        } else {
+            _builtinProvider.resolveDownloadUrl(song, quality)
+        }
+    }
+
+    // 播放：先按「歌实际有的最高档」起跳 —— 选了无损但歌只有 320k 时**直接要 320k**，
+    // 不发注定失败的请求（否则拿到坏链 → 播放器报错 → 自动跳下一首）；再逐级往下兜底。
+    val configured = MoreSettings.qualityFor(song.platform)
+    val tiers: List<Quality?> = if (configured == null) {
+        listOf(null)
+    } else {
+        val start = if (degradesGracefully(song.platform)) {
+            configured
+        } else {
+            bestAvailableAtOrBelow(song, configured) ?: configured
+        }
+        val from = _playQualityLadder.indexOf(start).takeIf { it >= 0 }
+            ?: _playQualityLadder.lastIndex
+        _playQualityLadder.subList(from, _playQualityLadder.size)
+    }
+    var lastError: Throwable? = null
+    for (tier in tiers) {
+        try {
+            return playOnce(song, pluginMode, tier)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            lastError = e
+        }
+    }
+    // 配置档位全失败 → 退回自动（自动几乎不会失败）
+    if (configured != null) {
+        try {
+            return playOnce(song, pluginMode, null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            lastError = e
+        }
+    }
+    val err = lastError ?: IllegalStateException("解析失败")
+    if (pluginMode) LxPluginRegistry.postNotice("落雪插件解析失败：${err.message ?: "未知错误"}")
+    throw err
 }
 
-/** 下载 URL */
-suspend fun fetchDownloadUrlBySong(song: Song, quality: Quality): String = when (song.platform) {
+/** 插件模式但该平台没有可用插件：直接失败并提示（配置问题，不参与降级重试） */
+private fun requireLxPlugin(song: Song) {
+    if (LxPluginRegistry.pluginFor(song.platform) != null) return
+    val active = LxPluginRegistry.activePlugin()
+    val message = if (active != null) {
+        "「${active.name}」不支持${song.platform.label}，内置音源已停用"
+    } else {
+        "未添加可用的落雪插件，内置音源已停用"
+    }
+    LxPluginRegistry.postNotice(message)
+    throw IllegalStateException(message)
+}
+
+/** 单次播放取链（插件或内置；[quality] 为 null = 自动） */
+private suspend fun playOnce(song: Song, pluginMode: Boolean, quality: Quality?): String =
+    if (pluginMode) {
+        _lxProvider.resolvePlayUrl(song, quality)
+    } else {
+        _builtinProvider.resolvePlayUrl(song, quality)
+    }
+
+/**
+ * 引擎侧预取入口：把 Media3 队列项还原成 [Song] 后走同一条音源路由（插件/内置）。
+ *
+ * 队列项现在带 `qualities`（该歌真实可用档位），用于把「选了无损但歌只有 320k」直接选成 320k；
+ * 老队列项没有该字段时退回「假装有 320k」的旧行为。
+ */
+suspend fun fetchPlayUrlForBackend(item: Map<String, String>): String {
+    val platform = MusicPlatform.entries.firstOrNull { it.name == item["platform"] } ?: MusicPlatform.kuwo
+    val qualities = item["qualities"].orEmpty()
+        .split(',')
+        .mapNotNull { Quality.fromValue(it.trim().ifEmpty { null }) }
+        .distinct()
+    return fetchPlayUrlBySong(
+        Song(
+            id = item["id"].orEmpty(),
+            title = item["title"].orEmpty(),
+            artist = item["artist"].orEmpty(),
+            cover = item["cover"].orEmpty(),
+            album = item["album"],
+            duration = 0,
+            platform = platform,
+            qualities = qualities.ifEmpty { listOf(Quality.k320k) },
+        ),
+    )
+}
+
+/** 该平台播放请求档位 = 设置里该平台的「默认播放音质」；未配置（自动）当 320k。缓存 key 随之一致变化 */
+internal fun playRequestQuality(platformName: String): Quality =
+    MusicPlatform.entries.firstOrNull { it.name == platformName }
+        ?.let { MoreSettings.qualityFor(it) }
+        ?: Quality.k320k
+
+/**
+ * 该平台「默认播放音质」可选档位（高→低，不含「自动」；**KKBOX 暂不提供**）。
+ *
+ * 网易 `hr`、酷狗 `hash_high`（签名接口）都有真 Hi-Res；QQ（`hires` 被接口映射成 `lossless`）
+ * 与酷我实测**无损封顶**；Qobuz 走自己的三档（无 128k）。
+ */
+fun playQualityTiersOf(platform: MusicPlatform): List<Quality> = when (platform) {
+    MusicPlatform.netease, MusicPlatform.kugou ->
+        listOf(Quality.hires, Quality.flac, Quality.k320k, Quality.k128k)
+    MusicPlatform.qobuz -> listOf(Quality.hires, Quality.flac, Quality.k320k)
+    MusicPlatform.qq, MusicPlatform.kuwo ->
+        listOf(Quality.flac, Quality.k320k, Quality.k128k)
+    MusicPlatform.kkbox -> emptyList()
+}
+
+/** 档位显示名：Qobuz 用它自己的（`MP3 320` / `FLAC 16bit…`），其余用通用 [Quality.label] */
+fun playQualityLabelOf(platform: MusicPlatform, quality: Quality): String =
+    if (platform == MusicPlatform.qobuz) qobuzQualityLabel(quality) else quality.label
+
+/**
+ * 「自动」档显示名 —— 顺带写出它实际取到的档，避免看着像"没档位"。
+ *
+ * 国内四平台自动 = 320k（`builtinPlayUrl` 既有规则）；**Qobuz 自动 = FLAC Hires Max**（`qobuzHiresFormatId`）。
+ */
+fun playQualityAutoLabelOf(platform: MusicPlatform): String =
+    if (platform == MusicPlatform.qobuz) "自动（FLAC Hires Max）" else "自动（320k）"
+
+/**
+ * 内置播放直链（netease 走 c.wwwweb.top，qq/kugou 走长青解析，其余走 kuwo）。
+ *
+ * [quality] 为 null = 自动（各平台既有取档规则，旧行为）；指定档位只请求该档一次 ——
+ * **降级统一由仓库层做**（见 [resolveUrlByProvider]），插件/内置同一套，避免双重降级。
+ */
+internal suspend fun builtinPlayUrl(song: Song, quality: Quality? = null): String {
+    if (quality != null) return _builtinPlayUrlAt(song, quality)
+    return when (song.platform) {
+        MusicPlatform.netease -> fetchNeteasePlayUrl(song.id)
+        MusicPlatform.qq -> fetchQQMusicUrl(
+            song.id.replaceFirst(Regex("^qq:"), ""),
+            if (song.qualities.contains(Quality.k320k)) "320k" else "128k",
+        )
+        MusicPlatform.kugou -> fetchKugouMusicUrl(
+            song.id.replaceFirst(Regex("^kugou:"), ""),
+            if (song.qualities.contains(Quality.k320k)) "320k" else "128k",
+        )
+        MusicPlatform.qobuz -> fetchQobuzUrl(song)
+        MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoPlayUrl(song.id)
+    }
+}
+
+/** 播放档位由高到低（降级梯子；仓库层插件/内置共用） */
+private val _playQualityLadder =
+    listOf(Quality.hires, Quality.flac, Quality.k320k, Quality.k128k)
+
+/**
+ * 该平台内置取链在「要的档位不可用」时是否**优雅降级**（返回它能给的最高档、不报错）。
+ *
+ * 酷狗实测如此：`level=hires` 遇到无 Hi-Res 的歌给 `quflac`。这类平台**不该用列表元数据预先夹档** ——
+ * 否则歌单链路拿不到 `hash_high` 的酷狗歌永远用不上 Hi-Res。其余平台会报错/给坏链，必须靠夹档 + 降级梯子。
+ */
+private fun degradesGracefully(platform: MusicPlatform): Boolean =
+    platform == MusicPlatform.kugou
+
+/** 歌曲已知档位里「不超过 [want] 的最高档」；qualities 为空（未知）返回 null */
+private fun bestAvailableAtOrBelow(song: Song, want: Quality): Quality? {    val wantRank = _playQualityLadder.indexOf(want)
+    if (wantRank < 0) return null
+    return song.qualities
+        .mapNotNull { q -> _playQualityLadder.indexOf(q).takeIf { it >= 0 }?.let { it to q } }
+        .filter { it.first >= wantRank }
+        .minByOrNull { it.first }
+        ?.second
+}
+
+/** 按指定档位请求（各平台各自的接口） */
+private suspend fun _builtinPlayUrlAt(song: Song, quality: Quality): String = when (song.platform) {
+    MusicPlatform.netease -> fetchNeteasePlayUrl(song.id, quality)
+    MusicPlatform.qq -> fetchQQMusicUrl(song.id.replaceFirst(Regex("^qq:"), ""), quality.value)
+    MusicPlatform.kugou -> fetchKugouMusicUrl(song.id.replaceFirst(Regex("^kugou:"), ""), quality.value)
+    MusicPlatform.qobuz -> fetchQobuzUrl(song, quality)
+    MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoPlayUrl(song.id, quality)
+}
+
+/** 内置下载直链 */
+internal suspend fun builtinDownloadUrl(song: Song, quality: Quality): String = when (song.platform) {
     MusicPlatform.netease -> fetchNeteaseDownloadUrl(song.id, quality)
     MusicPlatform.qq -> fetchQQMusicUrl(
         song.id.replaceFirst(Regex("^qq:"), ""),
@@ -348,7 +552,7 @@ suspend fun fetchLyric(
 
     // 译文语言要进 key：同一首歌换语言是不同结果，共用 key 会一直命中旧译文；
     // autoPickTranslate 也进 key，否则「自动取第一个译文」的缓存会被「只要原文」的下载分支命中。
-    val cacheKey = "lyric:v4:${song.id}:${song.lyricTranslateLang.orEmpty()}:" +
+    val cacheKey = "lyric:v5:${song.id}:${song.lyricTranslateLang.orEmpty()}:" +
         (if (autoPickTranslate) "auto" else "raw")
     val cached = cacheService.get<String>(cacheKey)
     if (cached != null) {
@@ -458,6 +662,7 @@ suspend fun enrichSong(song: Song): Map<String, Any?> = when (song.platform) {
         mapOf<String, Any?>(
             "trackNumber" to r.trackNumber,
             "releaseDate" to r.releaseDate,
+            "albumArtist" to r.albumArtist,
         )
     }
     MusicPlatform.kugou -> {
@@ -466,14 +671,16 @@ suspend fun enrichSong(song: Song): Map<String, Any?> = when (song.platform) {
             "trackNumber" to r.trackNumber,
             "discNumber" to r.discNumber,
             "releaseDate" to r.releaseDate,
+            "albumArtist" to r.albumArtist,
         )
     }
     MusicPlatform.qq -> {
-        val r = enrichQQSong(song.id)
+        val r = enrichQQSong(song.id, song.albumId ?: "")
         mapOf<String, Any?>(
             "trackNumber" to r.trackNumber,
             "discNumber" to r.discNumber,
             "releaseDate" to r.releaseDate,
+            "albumArtist" to r.albumArtist,
         )
     }
     MusicPlatform.qobuz -> {
@@ -482,7 +689,25 @@ suspend fun enrichSong(song: Song): Map<String, Any?> = when (song.platform) {
             "trackNumber" to t.trackNumber.takeIf { it > 0 }?.toString(),
             "discNumber" to t.discNumber?.toString(),
             "releaseDate" to (t.releaseDateOriginal ?: t.year.takeIf { it > 0 }?.toString()),
+            "albumArtist" to t.albumArtist,
         )
     }
-    MusicPlatform.netease, MusicPlatform.kkbox -> emptyMap()
+    MusicPlatform.netease -> {
+        val r = enrichNeteaseSong(song.id, song.albumId ?: "")
+        mapOf<String, Any?>(
+            "trackNumber" to r.trackNumber,
+            "discNumber" to r.discNumber,
+            "releaseDate" to r.releaseDate,
+            "albumArtist" to r.albumArtist,
+        )
+    }
+    MusicPlatform.kkbox -> {
+        val r = enrichKkboxSong(song.id, song.albumId ?: "")
+        mapOf<String, Any?>(
+            "trackNumber" to r.trackNumber,
+            "discNumber" to r.discNumber,
+            "releaseDate" to r.releaseDate,
+            "albumArtist" to r.albumArtist,
+        )
+    }
 }

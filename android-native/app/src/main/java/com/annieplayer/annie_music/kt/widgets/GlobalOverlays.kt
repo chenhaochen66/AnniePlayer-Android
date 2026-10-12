@@ -12,12 +12,12 @@ import androidx.compose.ui.Modifier
  * 与 RN / Flutter 的挂载方式一致。**渲染顺序即叠放顺序**：靠后者后绘制 → 在上层。
  *
  * 顺序（数组靠后者在上层）：
- * QobuzTokenSheet → KkboxAccountSheet → SearchSelectionOverlay →
- * PlaylistDetailSheet → SingerDetailSheet → AlbumDetailSheet。
+ * QobuzTokenSheet → KkboxAccountSheet → SearchSelectionOverlay → 详情真栈（detailStack）。
  *
  * 关键约束（载荷相关，不得重排）：
- * - `albumDetailSheet` **必须排在** `singerDetailSheet` / `playlistDetailSheet` 之后，
- *   否则从歌手页 / 歌单页点击专辑时，专辑浮层会被压在下面，看起来像「点击没反应」。
+ * - 详情层（[detailStack]）整体位于 `searchSelectionOverlay` 之后，即 `Overlay.RENDER_ORDER`
+ *   的 `GLOBAL_OVERLAYS` 层内、`MENU_DRAWER` 之下。三个详情浮层的相对顺序不再是固定声明，
+ *   而是由宿主的 `detailStack` 按「栈底→栈顶」动态渲染（栈顶盖住下层并先消费返回）。
  * - **下载任务页（DownloadQueueSheet）不在本挂载器内**：它需要盖住侧边抽屉且抽屉不关闭，
  *   由宿主声明在 `MenuDrawer` 之后（见 `Overlay.RENDER_ORDER` 的 [Overlay.DOWNLOAD_QUEUE]）。
  * - **音质选择（[QualityPickerSheet]）不在这里**：它需要在全屏播放页之上才能点选，
@@ -33,17 +33,14 @@ fun GlobalOverlays(
     qobuzTokenSheet: @Composable () -> Unit = {},
     kkboxAccountSheet: @Composable () -> Unit = {},
     searchSelectionOverlay: @Composable () -> Unit = {},
-    playlistDetailSheet: @Composable () -> Unit = {},
-    singerDetailSheet: @Composable () -> Unit = {},
-    albumDetailSheet: @Composable () -> Unit = {},
+    /** 详情真栈：由宿主按栈底→栈顶顺序渲染；后声明者绘制在上层。 */
+    detailStack: @Composable () -> Unit = {},
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         qobuzTokenSheet()
         kkboxAccountSheet()
         searchSelectionOverlay()
-        playlistDetailSheet()
-        singerDetailSheet()
-        // 最后挂载 → 最上层（见上方「关键约束」）
-        albumDetailSheet()
+        // 详情层：整体位于其余全局浮层之后（见上方「关键约束」）
+        detailStack()
     }
 }

@@ -20,11 +20,13 @@ import androidx.compose.ui.unit.dp
 import com.annieplayer.annie_music.kt.R
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
+import com.annieplayer.annie_music.kt.core.state.AlbumDetailEntry
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SearchSelectionViewModel
 import com.annieplayer.annie_music.kt.core.state.SelectionState
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
+import com.annieplayer.annie_music.kt.core.state.SingerDetailEntry
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.features.downloads.DownloadOrchestrator
@@ -169,14 +171,15 @@ fun SearchScreen(
                                 query = albumSubmitted,
                                 source = albumPlatform,
                                 onAlbumPress = { album ->
-                                    uiViewModel.setAlbumDetailVisible(
-                                        true,
-                                        AlbumDetailData(
-                                            id = album.albumid,
-                                            cover = buildAlbumCoverUrl(album),
-                                            name = album.name,
-                                            artist = album.artist,
-                                            platform = album.platform,
+                                    uiViewModel.pushDetail(
+                                        AlbumDetailEntry(
+                                            AlbumDetailData(
+                                                id = album.albumid,
+                                                cover = buildAlbumCoverUrl(album),
+                                                name = album.name,
+                                                artist = album.artist,
+                                                platform = album.platform,
+                                            ),
                                         ),
                                     )
                                 },
@@ -187,13 +190,14 @@ fun SearchScreen(
                                 query = artistSubmitted,
                                 source = artistPlatform,
                                 onArtistPress = { artist ->
-                                    uiViewModel.setSingerDetailVisible(
-                                        true,
-                                        SingerDetailData(
-                                            id = artist.id,
-                                            name = artist.name,
-                                            picture = artist.picture,
-                                            platform = artistPlatform,
+                                    uiViewModel.pushDetail(
+                                        SingerDetailEntry(
+                                            SingerDetailData(
+                                                id = artist.id,
+                                                name = artist.name,
+                                                picture = artist.picture,
+                                                platform = artistPlatform,
+                                            ),
                                         ),
                                     )
                                 },

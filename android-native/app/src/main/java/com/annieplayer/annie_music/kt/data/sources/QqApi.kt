@@ -3,6 +3,7 @@ package com.annieplayer.annie_music.kt.data.sources
 import android.util.Base64
 import com.annieplayer.annie_music.kt.core.util.QrcDes
 import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
+import com.annieplayer.annie_music.kt.core.util.mmssOfMs
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.AlbumSongsPage
@@ -65,6 +66,7 @@ data class QqEnrich(
     val trackNumber: String?,
     val discNumber: String?,
     val releaseDate: String?,
+    val albumArtist: String?,
 )
 
 // ── 常量（与 RN / Dart 版完全一致） ──
@@ -142,6 +144,43 @@ private fun _deep(s: Map<String, Any?>, vararg path: String): Any? {
 /** 将任意值安全转换为 `Map<String, Any?>?` */
 private fun _toMap(v: Any?): Map<String, Any?>? =
     if (v is Map<*, *>) _normMap(v) else null
+
+private fun _numOrNull(v: Any?): Long? = when (v) {
+    is Number -> v.toLong()
+    is String -> v.trim().toLongOrNull()
+    else -> null
+}
+
+/** 各档位字节数（QQ 的 `sizeflac`/`size320`/`size128` 值就是字节数；`file.*` 为备用字段） */
+private fun _qqQualitySizes(s: Map<*, *>): Map<Quality, Long> {
+    val file = s["file"] as? Map<*, *>
+    val out = HashMap<Quality, Long>()
+
+    fun take(q: Quality, vararg keys: String) {
+        for (k in keys) {
+            val n = _numOrNull(s[k]) ?: continue
+            if (n > 0L) {
+                out[q] = n
+                return
+            }
+        }
+    }
+
+    take(Quality.flac, "sizeflac", "size_flac")
+    take(Quality.k320k, "size320", "size_320mp3")
+    take(Quality.k128k, "size128", "size_128mp3")
+    if (file != null) {
+        fun fileTake(q: Quality, key: String) {
+            if (q in out) return
+            val n = _numOrNull(file[key]) ?: return
+            if (n > 0L) out[q] = n
+        }
+        fileTake(Quality.flac, "size_flac")
+        fileTake(Quality.k320k, "size_320mp3")
+        fileTake(Quality.k128k, "size_128mp3")
+    }
+    return out
+}
 
 /** 从 `qq:songmid` 中剥离前缀得到纯 mid */
 private fun _rawId(songId: String): String = songId.removePrefix("qq:")
@@ -245,6 +284,7 @@ fun mapQQSong(s: Map<String, Any?>): Song {
         lyric = null,
         tlyric = null,
         qualities = qual,
+        qualitySizes = _qqQualitySizes(s),
         albumArtist = artist,
         artistNames = artistNames,
         artistIds = artistIds,
@@ -357,15 +397,16 @@ private fun _qrcToLrcAndWords(qrc: String): Pair<String, String?> {
         val ts = lrcTimeOfMs(lineStart)
         lrc.append(ts).append(text).append('\n')
         val wordsSb = StringBuilder()
-        if (lead.isNotBlank()) wordsSb.append('<').append(lineStart).append(",0>").append(lead)
+        if (lead.isNotBlank()) {
+            wordsSb.append('<').append(mmssOfMs(lineStart)).append('>').append(lead)
+        }
         // QRC 的词时间是**相对行首**的（实测 Kill Bill：0/465/930…）；按整行判断，
         // 不要逐词判断「小于行首就当相对」，行首较小时会误判成绝对值。
         val allRelative = marks.all { (it.groupValues[1].toIntOrNull() ?: 0) < lineStart }
         for (w in marks) {
             val rawStart = w.groupValues[1].toIntOrNull() ?: 0
-            val dur = w.groupValues[2].toIntOrNull() ?: 0
             val abs = if (allRelative) lineStart + rawStart else rawStart
-            wordsSb.append('<').append(abs).append(',').append(dur).append('>').append(w.groupValues[3])
+            wordsSb.append('<').append(mmssOfMs(abs)).append('>').append(w.groupValues[3])
         }
         wl.append(ts).append(wordsSb).append('\n')
     }
@@ -434,36 +475,21 @@ suspend fun fetchQQLyric(songId: String): QqLyric {
 
 // ── 单曲详情（补音轨号/碟号/发行日期） ──
 
-/** 补充 QQ 单曲 metadata；失败返回全 null */
-suspend fun enrichQQSong(songId: String): QqEnrich {
-    val empty = QqEnrich(null, null, null)
-    val songmid = _rawId(songId)
-    try {
-        val url =
-            "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg?songmid=$songmid" +
-                "&tpl=yqq_song_detail&format=json&loginUin=0&hostUin=0" +
-                "&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0"
-        val text = httpGetText(url, qqHeaders)
-        val decoded = jsonElementToAny(json.parseToJsonElement(_stripBom(text)))
-        if (decoded !is Map<*, *>) return empty
-
-        val arr = decoded["data"]
-        if (_neqZero(decoded["code"]) || arr !is List<*> || arr.isEmpty() || arr[0] !is Map<*, *>) {
-            return empty
-        }
-
-        val s = _toMap(arr[0])
-        val idxAlbum = s?.get("index_album")
-        val idxCd = s?.get("index_cd")
-        val timePublic = s?.get("time_public")
-
-        return QqEnrich(
-            trackNumber = if (_truthy(idxAlbum)) idxAlbum.toString() else null,
-            discNumber = if (_truthy(idxCd)) idxCd.toString() else null,
-            releaseDate = if (_truthy(timePublic)) timePublic.toString() else null,
+/** 补充 QQ 单曲 metadata（走专辑详情接口）；失败返回全 null */
+suspend fun enrichQQSong(songId: String, albumId: String): QqEnrich {
+    val empty = QqEnrich(null, null, null, null)
+    if (albumId.isEmpty()) return empty
+    return try {
+        val page = getQQAlbumSongs(albumId)
+        val matched = page.songs.firstOrNull { it.id == songId }
+        QqEnrich(
+            trackNumber = matched?.track?.toString(),
+            discNumber = matched?.discNumber?.toString(),
+            releaseDate = page.pub.ifEmpty { null },
+            albumArtist = matched?.albumArtist,
         )
     } catch (_: Throwable) {
-        return empty
+        empty
     }
 }
 
@@ -482,10 +508,6 @@ suspend fun searchQQMusic(query: String, page: Int = 1, pageSize: Int = 100): Li
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
 
-    val cacheKey = "search:qq:v2:$q:$page:$pageSize"
-    val cached = cacheService.get<List<Any?>>(cacheKey)
-    if (cached != null) return _mapQQSearchSongs(cached)
-
     val perRequest = 60
     val start = (page - 1) * pageSize
     val skip = start % perRequest
@@ -502,8 +524,6 @@ suspend fun searchQQMusic(query: String, page: Int = 1, pageSize: Int = 100): Li
     }
 
     val list = collected.drop(skip).take(pageSize)
-    // 缓存原始条目列表（JSON 可序列化），命中时按同一映射重建 Song
-    cacheService.set(cacheKey, list, _searchCacheTtl)
     return _mapQQSearchSongs(list)
 }
 
@@ -526,6 +546,8 @@ private suspend fun _fetchQQSearchRawPage(
     query: String,
     page: Int,
     pageSize: Int,
+    searchType: Int = 0,
+    bodyKey: String = "item_song",
 ): List<Any?> {
     val payload = mapOf(
         "req_0" to mapOf(
@@ -533,7 +555,8 @@ private suspend fun _fetchQQSearchRawPage(
             "method" to "DoSearchForQQMusicMobile",
             "param" to mapOf(
                 "query" to query,
-                "search_type" to "song",
+                // 整数枚举：0 歌曲 / 1 歌手 / 2 专辑
+                "search_type" to searchType,
                 "num_per_page" to pageSize,
                 // 必须是数字：字符串会被忽略（永远第 1 页）
                 "page_num" to page,
@@ -556,8 +579,8 @@ private suspend fun _fetchQQSearchRawPage(
         } else {
             null
         }
-        val songs = if (body is Map<*, *>) body["item_song"] else null
-        if (songs is List<*>) songs.toList() else emptyList()
+        val list = if (body is Map<*, *>) body[bodyKey] else null
+        if (list is List<*>) list.toList() else emptyList()
     } catch (_: Throwable) {
         emptyList()
     }
@@ -578,21 +601,8 @@ suspend fun searchQQAlbum(query: String, page: Int = 1, pageSize: Int = 30): Lis
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
 
-    val cacheKey = "search:qq:album:v1:$q:$page:$pageSize"
-    val cached = cacheService.get<List<Any?>>(cacheKey)
-    if (cached != null) return _mapQQAlbums(cached)
-
-    val url =
-        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp" +
-            "?p=$page&n=$pageSize&t=8&w=${_encodeComponent(q)}&format=json"
-    val text = httpGetText(url, qqHeaders)
-    val decoded = jsonElementToAny(json.parseToJsonElement(_stripBom(text)))
-    if (decoded !is Map<*, *>) return emptyList()
-    val data = decoded["data"]
-    val album = if (data is Map<*, *>) data["album"] else null
-    val listRaw = if (album is Map<*, *>) album["list"] else null
-    val list = if (listRaw is List<*>) listRaw else emptyList<Any?>()
-    cacheService.set(cacheKey, list, _searchCacheTtl)
+    val list = _fetchQQSearchRawPage(q, page, pageSize, searchType = 2, bodyKey = "item_album")
+    if (list.isEmpty()) return emptyList()
     return _mapQQAlbums(list)
 }
 
@@ -602,19 +612,40 @@ private fun _mapQQAlbums(raw: Any?): List<Album> {
     val out = mutableListOf<Album>()
     for (item in list) {
         val m = _toMap(item) ?: continue
-        val mid = _s(m["albumMID"])
+        val mid = _s(
+            _firstTruthy(listOf(m["albumMID"], m["albumMid"], m["albummid"], m["mid"])),
+        )
+        val singerArr = m["singer"]
+        val singerName = if (
+            singerArr is List<*> && singerArr.isNotEmpty() && singerArr.first() is Map<*, *>
+        ) {
+            val s0 = singerArr.first() as Map<*, *>
+            _firstTruthy(listOf(s0["name"], s0["title"]))
+        } else {
+            null
+        }
+        val picRaw = _s(m["pic"])
         out.add(
             Album(
                 albumid = mid,
-                name = decodeHtmlEntities(_s(m["albumName"])),
-                artist = decodeHtmlEntities(_s(m["singerName"])),
+                name = decodeHtmlEntities(_s(_firstTruthy(listOf(m["albumName"], m["name"])))),
+                artist = decodeHtmlEntities(
+                    _s(_firstTruthy(listOf(m["singerName"], singerName))),
+                ),
                 platform = MusicPlatform.qq,
-                musiccnt = _or(m["song_count"], "0"),
-                pub = _s(m["publicTime"]),
-                pic = if (mid.isEmpty()) {
-                    ""
-                } else {
+                musiccnt = _or(
+                    _firstTruthy(listOf(m["song_count"], m["songnum"], m["song_num"])),
+                    "0",
+                ),
+                pub = _s(
+                    _firstTruthy(
+                        listOf(m["publicTime"], m["public_time"], m["publishDate"], m["publish_date"]),
+                    ),
+                ),
+                pic = if (mid.isNotEmpty()) {
                     "https://y.gtimg.cn/music/photo_new/T002R800x800M000$mid.jpg"
+                } else {
+                    picRaw
                 },
             ),
         )
@@ -637,6 +668,16 @@ suspend fun getQQAlbumSongs(albumMid: String): AlbumSongsPage {
         val list = if (listRaw is List<*>) listRaw else emptyList<Any?>()
         // 发行时间在 `data.aDate`（形如 2013-06-03；同一响应内，无需额外请求）
         val pub = if (data is Map<*, *>) _s(data["aDate"]) else ""
+        // 专辑歌手在 `data.singer[]`（与 `list[].singer` 是「歌曲歌手」不同）
+        val albumSingerRaw = if (data is Map<*, *>) data["singer"] else null
+        val albumArtist = if (albumSingerRaw is List<*>) {
+            albumSingerRaw.filterIsInstance<Map<*, *>>()
+                .map { decodeHtmlEntities(_s(it["name"])) }
+                .filter { it.isNotEmpty() }
+                .joinToString(" / ")
+        } else {
+            ""
+        }
         val out = mutableListOf<AlbumSong>()
         for (item in list) {
             val m = _toMap(item) ?: continue
@@ -658,14 +699,17 @@ suspend fun getQQAlbumSongs(albumMid: String): AlbumSongsPage {
                 .filter { it.isNotEmpty() }
             val artistName = artistNames.firstOrNull() ?: ""
             val interval = m["interval"]
-            val idx = m["index_album"] ?: m["index_cd"]
+            val belongCd = m["belongCD"]
+            val cdIdx = m["cdIdx"]
             out.add(
                 AlbumSong(
                     id = "qq:$mid",
                     name = decodeHtmlEntities(_s(m["songname"])),
                     artistName = decodeHtmlEntities(artistName),
                     duration = if (interval is Number) interval.toInt() else 0,
-                    track = if (idx is Number) idx.toInt() else null,
+                    track = if (belongCd is Number) belongCd.toInt() else null,
+                    discNumber = if (cdIdx is Number) cdIdx.toInt() + 1 else null,
+                    albumArtist = albumArtist.ifEmpty { null },
                     // 带上真实音质（与搜索映射同款判定：新旧字段并存，平铺 / file.* 都认）
                     qualities = buildList {
                         if (_truthy(_firstTruthy(listOf(m["sizeflac"], _deep(m, "file", "size_flac"))))) {
@@ -679,6 +723,7 @@ suspend fun getQQAlbumSongs(albumMid: String): AlbumSongsPage {
                         }
                         if (isEmpty()) add(Quality.k128k)
                     },
+                    qualitySizes = _qqQualitySizes(m),
                     artistNames = artistNames,
                     // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
                     artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),
@@ -698,21 +743,8 @@ suspend fun searchQQArtist(query: String): List<Artist> {
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
 
-    val cacheKey = "search:qq:artist:v1:$q"
-    val cached = cacheService.get<List<Any?>>(cacheKey)
-    if (cached != null) return _mapQQArtists(cached)
-
-    val url =
-        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp" +
-            "?p=1&n=30&t=9&w=${_encodeComponent(q)}&format=json"
-    val text = httpGetText(url, qqHeaders)
-    val decoded = jsonElementToAny(json.parseToJsonElement(_stripBom(text)))
-    if (decoded !is Map<*, *>) return emptyList()
-    val data = decoded["data"]
-    val singer = if (data is Map<*, *>) data["singer"] else null
-    val listRaw = if (singer is Map<*, *>) singer["list"] else null
-    val list = if (listRaw is List<*>) listRaw else emptyList<Any?>()
-    cacheService.set(cacheKey, list, _searchCacheTtl)
+    val list = _fetchQQSearchRawPage(q, 1, 30, searchType = 1, bodyKey = "singer")
+    if (list.isEmpty()) return emptyList()
     return _mapQQArtists(list)
 }
 
@@ -722,12 +754,12 @@ private fun _mapQQArtists(raw: Any?): List<Artist> {
     val out = mutableListOf<Artist>()
     for (item in list) {
         val m = _toMap(item) ?: continue
-        val numSongs = m["songNum"]
+        val numSongs = _firstTruthy(listOf(m["songNum"], m["songnum"]))
         out.add(
             Artist(
-                id = _s(m["singerMID"]),
-                name = decodeHtmlEntities(_s(m["singerName"])),
-                picture = _s(m["singerPic"]),
+                id = _s(_firstTruthy(listOf(m["singerMID"], m["mid"]))),
+                name = decodeHtmlEntities(_s(_firstTruthy(listOf(m["singerName"], m["name"])))),
+                picture = _s(_firstTruthy(listOf(m["singerPic"], m["pic"]))),
                 musicNum = if (numSongs is Number) numSongs.toInt() else 0,
             ),
         )
@@ -848,6 +880,7 @@ private fun _mapQQArtistSong(m: Map<String, Any?>): Song {
         albumId = albumMid,
         duration = if (interval is Number) interval.toInt() else 0,
         platform = MusicPlatform.qq,
+        qualitySizes = _qqQualitySizes(m),
         albumArtist = decodeHtmlEntities(artist),
         artistNames = artistNames,
         artistIds = artistIds,
@@ -862,12 +895,37 @@ private fun _mapQQArtistSong(m: Map<String, Any?>): Song {
  * 精确过滤」，等签名实现接入后替换。
  */
 suspend fun getQQArtistAlbums(singerMid: String, singerName: String): List<Album> {
-    if (singerName.isEmpty()) return emptyList()
+    if (singerMid.isEmpty()) return emptyList()
+    val out = mutableListOf<Album>()
     return try {
-        val all = searchQQAlbum(singerName, pageSize = 60)
-        all.filter { it.artist == singerName }
+        var begin = 0
+        while (begin < 3000) {
+            val payload = mapOf(
+                "req_0" to mapOf(
+                    "module" to "music.musichallAlbum.AlbumListServer",
+                    "method" to "GetAlbumList",
+                    "param" to mapOf(
+                        "singerMid" to singerMid,
+                        "begin" to begin,
+                        "num" to 60,
+                        "order" to 1,
+                    ),
+                ),
+                "comm" to mapOf("guid" to _qqMusicuGuid, "ct" to 19, "cv" to 1914),
+            )
+            val data = httpPostJson(_qqMusicuSearchUrl, qqHeaders, payload)
+            val req0 = data["req_0"]
+            val d = if (req0 is Map<*, *>) req0["data"] else null
+            val list = if (d is Map<*, *>) _firstTruthy(listOf(d["albumList"], d["list"])) else null
+            val items = if (list is List<*>) list else emptyList<Any?>()
+            if (items.isEmpty()) break
+            out += _mapQQAlbums(items)
+            if (items.size < 60) break
+            begin += 60
+        }
+        out
     } catch (_: Throwable) {
-        emptyList()
+        out
     }
 }
 

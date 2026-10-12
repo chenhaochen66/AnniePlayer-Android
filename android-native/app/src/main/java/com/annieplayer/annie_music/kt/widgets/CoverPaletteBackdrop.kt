@@ -111,6 +111,7 @@ fun rememberCoverPalette(coverUrl: String?): ColorPalette {
             ColorPalette.fallback.copyWith(
                 primary = extracted.primary,
                 secondary = extracted.secondary,
+                accent = extracted.accent,
             )
         } else {
             ColorPalette.fallback

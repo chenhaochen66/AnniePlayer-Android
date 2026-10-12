@@ -245,8 +245,9 @@ private fun AlbumSearchCard(
                     Text(
                         text = album.pub,
                         modifier = Modifier.weight(1f),
-                        color = AppColors.whiteA20,
+                        color = AppColors.white70,
                         fontSize = AppFontSize.size10,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

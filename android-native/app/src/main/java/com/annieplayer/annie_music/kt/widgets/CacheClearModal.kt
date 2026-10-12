@@ -36,7 +36,7 @@ import java.util.Locale
  * 居中卡片 + 60% 遮罩；逐项列出各类缓存的体积，勾选后只清理所选。
  *
  * 分类（见 [CacheCategory]）：
- * - 播放缓存：Media3 流式缓存（LRU 上限 256MB）——边听边涨，通常最大
+ * - 播放缓存：Media3 流式缓存（无上限不淘汰）——边听边涨，通常最大
  * - 封面/图片：本层 assets + Coil image_cache
  * - 下载文件：私有下载目录
  * - 接口缓存：搜索/歌词等 API 缓存

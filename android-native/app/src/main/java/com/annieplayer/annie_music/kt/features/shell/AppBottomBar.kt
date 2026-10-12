@@ -175,8 +175,9 @@ fun AppBottomBar(
                 .background(Brush.verticalGradient(listOf(AppColors.glass, Color.Transparent)))
                 // 极细高光描边：玻璃边缘
                 .border(AppBorder.thin, AppColors.glassBorder, barShape)
-                // 触摸屏蔽：空白区域消费点击，避免穿透到下层列表（空实现、无点击语义）
-                .clickableNoRipple { },
+                // 迷你态：整条底栏**任意位置**都进播放页（元素之间的空白也是）；
+                // 底栏态仍是空实现，只屏蔽穿透到下层列表。
+                .clickableNoRipple { if (isMiniPlayer) onOpenPlayer() },
         )
 
         // ── ② 内容层：只有内容区那么高、贴顶 → 内容天然避开手势条 ──
@@ -348,7 +349,8 @@ private fun BottomBarCover(
 /**
  * 底栏 tab 按钮：48dp 命中区（外层，唯一 clickable）+ 40dp 选中胶囊（内层，纯视觉）。
  * 选中态用「主色 15% 胶囊 + 纯白图标」，未选中用「透明 + whiteA45 图标」，不额外加文字。
- * [enabled] 为 false 时（迷你播放器态）不可点，避免淡出后的透明热区截走点击。
+ * [enabled] 为 false 时（迷你播放器态）**完全不挂 clickable**（不是挂空实现）——
+ * 否则淡出后仍是透明热区，会截走「点整条底栏进播放页」的点击。
  */
 @Composable
 private fun BottomBarTab(
@@ -361,7 +363,7 @@ private fun BottomBarTab(
     Box(
         modifier = modifier
             .size(AppSize.bottomBarTabHitSize)
-            .clickableNoRipple { if (enabled) onClick() },
+            .then(if (enabled) Modifier.clickableNoRipple(onClick) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         Box(

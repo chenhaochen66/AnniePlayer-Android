@@ -10,6 +10,7 @@ import com.annieplayer.annie_music.kt.data.model.Song
 import android.util.Base64
 import com.annieplayer.annie_music.kt.core.util.LrcxDes
 import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
+import com.annieplayer.annie_music.kt.core.util.mmssOfMs
 import com.annieplayer.annie_music.kt.data.network.cacheService
 import com.annieplayer.annie_music.kt.data.network.httpGetBytes
 import com.annieplayer.annie_music.kt.data.network.httpGetJson
@@ -54,6 +55,7 @@ data class KuwoLyric(
 data class KuwoEnrich(
     val trackNumber: String?,
     val releaseDate: String?,
+    val albumArtist: String?,
 )
 
 /** 歌单单页结果（对齐 Dart 私有类 `_KuwoPage`） */
@@ -99,9 +101,6 @@ private const val _apiBase = "https://www.kuwo.cn/api/www"
 
 /** 专辑接口基地址 */
 private const val _apiBaseAlbum = "https://wapi.kuwo.cn/api/www"
-
-/** 移动端歌单接口基地址 */
-private const val _mobileApiBase = "https://m.kuwo.cn/newh5app/wapi/api/www"
 
 /** 自定义签名使用的 cookie 名 */
 private const val _kwCookieName = "Hm_Iuvt_cdb524f42f23cer9b268564v7y735ewrq2324"
@@ -325,6 +324,60 @@ fun parseQualities(minfo: String): List<Quality> {
     return result
 }
 
+/**
+ * 酷我曲目音质判定。
+ *
+ * **优先按 `MINFO` 解析** —— 专辑(`searchlist.kuwo.cn/r.s?stype=albuminfo`)、歌单、搜索
+ * 三个接口的曲目都带 `MINFO`，而 `hasLossless` 只有部分接口有：专辑接口里它**根本不存在**
+ * （实测：一张专辑响应 `MINFO` ×22、`hasLossless` ×0），所以此前专辑页音质永远封顶 320k。
+ * 拿不到 `MINFO` 时才退回 `hasLossless` 兜底。
+ */
+private fun _kuwoQualities(item: Map<String, Any?>): List<Quality> {
+    val byMinfo = parseQualities(_s(_firstTruthy(listOf(item["MINFO"], item["N_MINFO"]))))
+    if (byMinfo.isNotEmpty()) return byMinfo
+    val fallback = mutableListOf(Quality.k320k, Quality.k128k)
+    if (_truthy(item["hasLossless"])) fallback.add(0, Quality.flac)
+    return fallback
+}
+
+/** 各档位字节数（从 `MINFO` 的 `size:32.38Mb` 取）；取不到返回空表 */
+private fun _kuwoQualitySizes(item: Map<String, Any?>): Map<Quality, Long> =
+    parseQualitySizes(_s(_firstTruthy(listOf(item["MINFO"], item["N_MINFO"]))))
+
+/** 解析 MINFO 串里各档位的字节数（`size:32.38Mb`） */
+fun parseQualitySizes(minfo: String): Map<Quality, Long> {
+    val out = HashMap<Quality, Long>()
+    for (part in minfo.split(";")) {
+        var level: String? = null
+        var sizeBytes = 0L
+        for (kv in part.split(",")) {
+            when {
+                kv.startsWith("level") -> level = kv.substringAfter(':').substringAfter('=')
+                kv.startsWith("size") -> sizeBytes = _parseSizeText(kv.substringAfter(':').substringAfter('='))
+            }
+        }
+        val q = when (level) {
+            "h" -> Quality.k128k
+            "p", "s" -> Quality.k320k
+            "ff", "zp", "zply" -> Quality.flac
+            else -> null
+        } ?: continue
+        if (sizeBytes > 0L && q !in out) out[q] = sizeBytes
+    }
+    return out
+}
+
+private fun _parseSizeText(text: String): Long {
+    val t = text.trim().lowercase()
+    val num = t.takeWhile { it.isDigit() || it == '.' }.toDoubleOrNull() ?: return 0L
+    return when {
+        t.endsWith("gb") -> (num * 1024 * 1024 * 1024).toLong()
+        t.endsWith("mb") -> (num * 1024 * 1024).toLong()
+        t.endsWith("kb") -> (num * 1024).toLong()
+        else -> num.toLong()
+    }
+}
+
 // ── 伪 JSON 解析（单引号 -> 双引号，异常时正则兜底） ──
 
 /**
@@ -333,6 +386,16 @@ fun parseQualities(minfo: String): List<Quality> {
  *
  * [keysPattern] 形如 `abslist|list`，用于定位数组字段。
  */
+/** 解析酷我搜索系伪 JSON（单引号 -> 双引号）为顶层 Map；失败返回 null */
+private fun _parseKuwoRoot(text: String): Map<String, Any?>? {
+    if (text.isBlank()) return null
+    return try {
+        jsonElementToAny(json.parseToJsonElement(text.replace("'", "\""))) as? Map<String, Any?>
+    } catch (_: Throwable) {
+        null
+    }
+}
+
 private fun _parseKuwoList(text: String, keysPattern: String): List<Map<String, Any?>> {
     val normalized = text.replace("'", "\"")
     try {
@@ -384,10 +447,6 @@ suspend fun fetchKuwoArtistAvatar(name: String): String {
  * 注意：酷我的 `pn` 是 **0 基**（`pn=0` 才是第一页），所以 [page] > 1 时传 `pn=page-1`。
  */
 suspend fun searchMusic(query: String, page: Int = 1): List<Song> {
-    val cacheKey = if (page == 1) "search:v3:$query" else "search:v3:$query:${page - 1}"
-    val cached = cacheService.get<List<Any?>>(cacheKey)
-    if (cached != null) return _mapSearchSongs(cached)
-
     val pnParam = if (page > 1) "&pn=${page - 1}" else ""
     val url =
         "http://search.kuwo.cn/r.s?cluster=0&strategy=2012&vermerge=1&stype=name" +
@@ -398,8 +457,6 @@ suspend fun searchMusic(query: String, page: Int = 1): List<Song> {
 
     val text = httpGetText(url, mapOf("User-Agent" to _androidUa))
     val list = _parseKuwoList(text, "abslist|list")
-    // 缓存原始列表（JSON 可序列化），命中时按同一映射重建 Song
-    cacheService.set(cacheKey, list, _searchCacheTtl)
     return _mapSearchSongs(list)
 }
 
@@ -408,9 +465,8 @@ private fun _mapSearchSongs(raw: Any?): List<Song> {
     return _mapList(raw).map { item ->
         val rawRid = _s(item["MUSICRID"])
         val rid = rawRid.replaceFirst("MUSIC_", "")
-        val qualities = parseQualities(
-            _s(_firstTruthy(listOf(item["MINFO"], item["N_MINFO"]))),
-        ).toMutableList()
+        val minfo = _s(_firstTruthy(listOf(item["MINFO"], item["N_MINFO"])))
+        val qualities = parseQualities(minfo).toMutableList()
         if (qualities.isEmpty()) qualities.add(Quality.k128k)
         // 酷我：ARTIST 用 & 分隔多歌手；allartistid 是与之对应的 id 串（& 分隔）
         val artistNames = decodeHtmlEntities(_strOr(item["ARTIST"], "未知歌手"))
@@ -442,6 +498,7 @@ private fun _mapSearchSongs(raw: Any?): List<Song> {
             lyric = null,
             tlyric = null,
             qualities = qualities,
+            qualitySizes = parseQualitySizes(minfo),
             albumArtist = if (_truthy(item["AARTIST"])) {
                 decodeHtmlEntities(_s(item["AARTIST"]))
             } else {
@@ -527,10 +584,12 @@ suspend fun fetchKuwoArtistBio(name: String): String {
         val hit = list.firstOrNull { _s(it["ARTIST"]) == q } ?: list.firstOrNull()
         val raw = (hit?.get("desc") ?: "").toString()
         // 伪 JSON 里换行是转义的 `\n`（可能被多重转义），统一还原成空格并清掉残留下划线
-        raw.replace(Regex("\\\\+n"), " ")
-            .replace(Regex("\\\\+"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        decodeHtmlEntities(
+            raw.replace(Regex("\\\\+n"), " ")
+                .replace(Regex("\\\\+"), "")
+                .replace(Regex("\\s+"), " ")
+                .trim(),
+        )
     } catch (_: Throwable) {
         ""
     }
@@ -538,10 +597,6 @@ suspend fun fetchKuwoArtistBio(name: String): String {
 
 /** 搜索歌手，返回 [Artist] 列表；失败返回空 */
 suspend fun searchArtist(keyword: String): List<Artist> {
-    val cacheKey = "artist:search:v1:$keyword"
-    val cached = cacheService.get<List<Any?>>(cacheKey)
-    if (cached != null) return _mapArtists(cached)
-
     val reqId = generateReqId()
     val encodedKey = _encodeComponent(keyword)
     val url =
@@ -575,8 +630,6 @@ suspend fun searchArtist(keyword: String): List<Artist> {
             null
         }
         val rawList = _mapList(listRaw)
-        // 仅成功响应才写缓存（对齐 RN 在 return 前 set 的行为）
-        cacheService.set(cacheKey, rawList, _artistCacheTtl)
         _mapArtists(rawList)
     } catch (_: Throwable) {
         emptyList()
@@ -597,54 +650,17 @@ private fun _mapArtists(raw: Any?): List<Artist> {
 
 /** 获取歌手歌曲（分页 20 条）；失败返回空列表与 total=0 */
 suspend fun getArtistSongs(artistId: String, page: Int = 1): KuwoArtistSongs {
-    val reqId = generateReqId()
+    // 歌手歌曲接口（对齐 LX kw/artist.js 的 stype=artist2music）：伪 JSON，歌曲在 musiclist，带 MINFO
+    // 注意 pn 是 0 基；旧 web 接口 artistMusic 的曲目没有 MINFO → 歌手页音质取不到大小
     val url =
-        "$_apiBase/artist/artistMusic?artistid=$artistId&pn=$page&rn=20" +
-            "&httpsStatus=1&reqId=$reqId&plat=web_www&from="
+        "http://search.kuwo.cn/r.s?stype=artist2music&artistid=$artistId" +
+            "&pn=${page - 1}&rn=20&encode=utf8&rformat=json" +
+            "&vipver=MUSIC_8.7.7.0_BCS37&newver=1&client=kt"
     return try {
-        val resp = httpGetJson(
-            url,
-            mapOf(
-                "User-Agent" to _desktopUa,
-                "Accept" to "application/json, text/plain, */*",
-                "sec-ch-ua-platform" to "\"Android\"",
-                "Secret" to "4020c1e17b54296da65df0e32a8ce97445b88ba3748ad24a6fea38adedb112e202abc8c8",
-                "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
-                "sec-ch-ua-mobile" to "?1",
-                "X-Requested-With" to "idm.internet.download.manager.plus",
-                "Sec-Fetch-Site" to "same-origin",
-                "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Dest" to "empty",
-                "Referer" to "https://www.kuwo.cn/singer_detail/$artistId",
-                "Accept-Language" to "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Cookie" to "Hm_Iuvt_cdb524f42f23cer9b268564v7y735ewrq2324=cpJCjsAFxxPra6XYMwztCpNMfjC4k7wn",
-            ),
-        )
-        if (_toInt(resp["code"]) != 200) return KuwoArtistSongs(emptyList(), 0)
-        val dataRaw = resp["data"]
-        val data = if (dataRaw is Map<*, *>) dataRaw else emptyMap<String, Any?>()
-        val total = _toInt(data["total"])
-        val songs = _mapList(data["list"]).map { item ->
-            val qualities = mutableListOf(Quality.k320k, Quality.k128k)
-            if (_truthy(item["hasLossless"])) qualities.add(0, Quality.flac)
-            val cover = _strOr(
-                _firstTruthy(listOf(item["pic"], item["albumpic"])),
-                "",
-            ).replaceFirst("/120/", "/800/")
-            Song(
-                id = _s(item["rid"]),
-                title = _strOr(item["name"], "未知歌曲"),
-                artist = _strOr(item["artist"], "未知歌手"),
-                cover = cover,
-                album = _strOr(item["album"], ""),
-                albumId = if (_truthy(item["albumid"])) _s(item["albumid"]) else null,
-                duration = _toInt(item["duration"]),
-                platform = MusicPlatform.kuwo,
-                playUrl = "",
-                lyric = null,
-                qualities = qualities,
-            )
-        }
+        val root = _parseKuwoRoot(httpGetText(url, mapOf("User-Agent" to _androidUa)))
+            ?: return KuwoArtistSongs(emptyList(), 0)
+        val total = _toInt(root["total"])
+        val songs = _mapList(root["musiclist"]).map { _mapKuwoSong(it) }
         KuwoArtistSongs(songs = songs, total = total)
     } catch (_: Throwable) {
         KuwoArtistSongs(emptyList(), 0)
@@ -695,11 +711,11 @@ private fun _mapAlbums(raw: Any?): List<Album> {
     return _mapList(raw).map { item ->
         Album(
             albumid = _s(item["albumid"]),
-            name = _strOr(item["album"], "未知专辑"),
-            artist = _strOr(item["artist"], ""),
+            name = decodeHtmlEntities(_strOr(item["album"], "未知专辑")),
+            artist = decodeHtmlEntities(_strOr(item["artist"], "")),
             musiccnt = "0",
             pub = _strOr(item["releaseDate"], ""),
-            pic = _strOr(item["pic"], ""),
+            pic = _strOr(item["pic"], "").replace(Regex("/(120|240|500)/"), "/800/"),
             img = "",
             htsImg = "",
             company = "",
@@ -783,12 +799,10 @@ suspend fun getAlbumSongs(albumId: String): KuwoAlbumSongs {
             name = decodeHtmlEntities(_strOr(item["name"], "未知歌曲")),
             artistName = artistNameRaw,
             duration = _toInt(item["duration"]),
+            albumArtist = decodeHtmlEntities(_s(item["aartist"])).ifEmpty { null },
             // 带上真实音质：不带的话专辑弹窗的下载候选永远回退 flac/320/128（与本文件专辑路径同款判定）
-            qualities = buildList {
-                add(Quality.k320k)
-                add(Quality.k128k)
-                if (_truthy(item["hasLossless"])) add(0, Quality.flac)
-            },
+            qualities = _kuwoQualities(item),
+            qualitySizes = _kuwoQualitySizes(item),
             track = if (_truthy(item["track"])) {
                 _s(item["track"]).toDoubleOrNull()?.toInt()
             } else {
@@ -806,7 +820,7 @@ private val _albumDetailCache = HashMap<String, KuwoAlbumSongs>()
 
 /** 补充酷我单曲 metadata（曲目号/发行日期）；无专辑或无匹配返回全 null */
 suspend fun enrichKuwoSong(songId: String, albumId: String): KuwoEnrich {
-    if (albumId.isEmpty()) return KuwoEnrich(null, null)
+    if (albumId.isEmpty()) return KuwoEnrich(null, null, null)
     return try {
         val album = _albumDetailCache[albumId]
             ?: getAlbumSongs(albumId).also { _albumDetailCache[albumId] = it }
@@ -820,9 +834,10 @@ suspend fun enrichKuwoSong(songId: String, albumId: String): KuwoEnrich {
         KuwoEnrich(
             trackNumber = matched?.track?.toString(),
             releaseDate = if (album.pub.isNotEmpty()) album.pub else null,
+            albumArtist = matched?.albumArtist,
         )
     } catch (_: Throwable) {
-        KuwoEnrich(null, null)
+        KuwoEnrich(null, null, null)
     }
 }
 
@@ -860,14 +875,17 @@ suspend fun fetchKuwoMusicUrl(songId: String, br: String): String {
     )
 }
 
-/** 获取播放直链（默认 320kmp3，最多重试 100 次） */
-suspend fun fetchPlayUrl(songId: String): String {
-    val cacheKey = "playurl:$songId"
+/**
+ * 获取播放直链（[quality] 为 null 用 320kmp3；**缓存键带档位**——否则换档命中旧档直链；最多重试 100 次）
+ */
+suspend fun fetchPlayUrl(songId: String, quality: Quality? = null): String {
+    val q = quality ?: Quality.k320k
+    val cacheKey = "playurl:$songId:${q.value}"
     val cached = cacheService.get<String>(cacheKey)
     if (cached != null && cached.isNotEmpty()) return cached
 
-    val url = retryUntilSuccess(maxRetries = 100, delayMs = 500L) {
-        fetchKuwoMusicUrl(songId, "320kmp3")
+    val url = retryUntilSuccess(maxRetries = 2, delayMs = 500L) {
+        fetchKuwoMusicUrl(songId, _brMap[q] ?: "128kmp3")
     }
     cacheService.set(cacheKey, url, _playUrlCacheTtl)
     return url
@@ -876,13 +894,14 @@ suspend fun fetchPlayUrl(songId: String): String {
 /** 下载链接（按指定音质，映射 BR_MAP，最多重试 100 次） */
 suspend fun fetchDownloadUrl(songId: String, quality: Quality): String {
     val br = _brMap[quality] ?: "128kmp3"
-    return retryUntilSuccess(maxRetries = 100, delayMs = 500L) {
+    return retryUntilSuccess(maxRetries = 2, delayMs = 500L) {
         fetchKuwoMusicUrl(songId, br)
     }
 }
 
 /** 仓库层调用别名（与 netease/qq 命名约定对齐） */
-suspend fun fetchKuwoPlayUrl(songId: String): String = fetchPlayUrl(songId)
+suspend fun fetchKuwoPlayUrl(songId: String, quality: Quality? = null): String =
+    fetchPlayUrl(songId, quality)
 
 /** 仓库层调用别名（与 netease/qq 命名约定对齐） */
 suspend fun fetchKuwoDownloadUrl(songId: String, quality: Quality): String =
@@ -941,7 +960,6 @@ private suspend fun _fetchKuwoPcLyric(musicId: String, isLrcx: Boolean): String?
 private fun _parseKuwoLrcx(lrcx: String): KuwoLyric {
     val tag = _reKuwoOffset.find(lrcx)?.groupValues?.get(1)?.toIntOrNull(8) ?: 11
     val d1 = (tag / 10).coerceAtLeast(1)
-    val d2 = (tag % 10).coerceAtLeast(1)
     val lrc = StringBuilder()
     val tl = StringBuilder()
     val wl = StringBuilder()
@@ -979,8 +997,7 @@ private fun _parseKuwoLrcx(lrcx: String): KuwoLyric {
             val o = w.groupValues[1].toInt()
             val d = w.groupValues[2].toInt()
             val start = ms + kotlin.math.abs(o + d) / (d1 * 2)
-            val dur = kotlin.math.abs(o - d) / (d2 * 2)
-            "<$start,$dur>${w.groupValues[3]}"
+            "<${mmssOfMs(start)}>${w.groupValues[3]}"
         }
     }
     flush()
@@ -1063,18 +1080,21 @@ fun generateKuwoSecret(cookieVal: String, cookieName: String = _kwCookieName): S
 // ── 歌单 ──
 
 private fun _mapKuwoSong(item: Map<String, Any?>): Song {
-    val coverUrl = _strOr(
-        _firstTruthy(listOf(item["pic"], item["albumpic"])),
-        "",
-    ).replaceFirst("/120/", "/800/")
-    val qualities = mutableListOf(Quality.k320k, Quality.k128k)
-    if (_truthy(item["hasLossless"])) qualities.add(0, Quality.flac)
+    val coverUrl = buildCoverUrl(item).ifEmpty {
+        _strOr(_firstTruthy(listOf(item["pic"], item["albumpic"], item["musicPic"])), "")
+    }.replaceFirst("/120/", "/800/")
+    val qualities = _kuwoQualities(item)
+    // 与搜索/专辑路径一致：拆多歌手名并与 id 按下标配对，否则 UI 拿不到多歌手、跳转退化成按名字搜索
+    val artistRaw = decodeHtmlEntities(_strOr(item["artist"], "未知歌手"))
+    val artistNames = splitArtistNames(artistRaw).ifEmpty { listOf(artistRaw) }
+    val artistIds = splitArtistIds(_s(item["allartistid"]).ifEmpty { _s(item["artistid"]) })
     return Song(
-        id = _s(item["rid"]),
-        title = _strOr(item["name"], "未知歌曲"),
-        artist = _strOr(item["artist"], "未知歌手"),
+        id = _s(_firstTruthy(listOf(item["id"], item["rid"], item["musicrid"])))
+            .replaceFirst("MUSIC_", ""),
+        title = decodeHtmlEntities(_strOr(item["name"], "未知歌曲")),
+        artist = artistRaw,
         cover = coverUrl,
-        album = _strOr(item["album"], ""),
+        album = decodeHtmlEntities(_strOr(item["album"], "")),
         albumId = if (_truthy(item["albumid"])) _s(item["albumid"]) else null,
         duration = _toInt(item["duration"]),
         platform = MusicPlatform.kuwo,
@@ -1082,32 +1102,29 @@ private fun _mapKuwoSong(item: Map<String, Any?>): Song {
         lyric = null,
         tlyric = null,
         qualities = qualities,
+        qualitySizes = _kuwoQualitySizes(item),
+        artistNames = artistNames,
+        // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
+        artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),
     )
 }
 
 private suspend fun _fetchKuwoPage(playlistId: String, pn: Int, pageSize: Int): KuwoPage? {
-    val reqId = generateReqId()
+    // 官方歌单接口（对齐 LX kw/songList.js）：返回标准 JSON，顶层 result=="ok"，歌曲在 musiclist
+    // 注意 pn 是 0 基；旧版 m.kuwo.cn/newh5app/wapi 那条接口已废弃（无 code、字段为 musicList）
     val url =
-        "$_mobileApiBase/playlist/playListInfo?pid=$playlistId&pn=$pn" +
-            "&rn=$pageSize&httpsStatus=1&reqId=$reqId&plat=web_www&from="
+        "http://nplserver.kuwo.cn/pl.svc?op=getlistinfo&pid=$playlistId" +
+            "&pn=${pn - 1}&rn=$pageSize&encode=utf8&keyset=pl2012" +
+            "&identity=kuwo&pcmp4=1&vipver=MUSIC_9.0.5.0_W1&newver=1"
     return try {
-        val resp = httpGetJson(
-            url,
-            mapOf(
-                "User-Agent" to _mobileUa,
-                "Accept" to "application/json, text/plain, */*",
-                "Referer" to "https://m.kuwo.cn/newh5app/playlist_detail/$playlistId",
-            ),
-        )
-        if (_toInt(resp["code"]) != 200) return null
-        val dRaw = resp["data"]
-        val d = if (dRaw is Map<*, *>) dRaw else emptyMap<String, Any?>()
+        val resp = httpGetJson(url, mapOf("User-Agent" to _desktopUa))
+        if (_strOr(resp["result"], "") != "ok") return null
         KuwoPage(
-            songs = _mapList(d["musicList"]).map { _mapKuwoSong(it) },
-            total = _toInt(d["total"]),
-            name = _strOr(d["name"], ""),
-            creator = _strOr(_firstTruthy(listOf(d["userName"], d["uname"])), ""),
-            cover = _strOr(_firstTruthy(listOf(d["img"], d["pic"])), ""),
+            songs = _mapList(resp["musiclist"]).map { _mapKuwoSong(it) },
+            total = _toInt(resp["total"]),
+            name = _strOr(resp["title"], ""),
+            creator = _strOr(resp["uname"], ""),
+            cover = _strOr(resp["pic"], ""),
         )
     } catch (_: Throwable) {
         null

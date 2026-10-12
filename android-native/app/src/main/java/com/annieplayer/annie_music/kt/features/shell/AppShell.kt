@@ -19,9 +19,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import android.widget.Toast
+import android.util.Log
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -33,6 +35,9 @@ import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
 import com.annieplayer.annie_music.kt.core.platform.isManageStorageGranted
 import com.annieplayer.annie_music.kt.core.platform.requestManageStorage
 import com.annieplayer.annie_music.kt.core.state.AppShellViewModel
+import com.annieplayer.annie_music.kt.core.state.AlbumDetailEntry
+import com.annieplayer.annie_music.kt.core.state.PlaylistDetailEntry
+import com.annieplayer.annie_music.kt.core.state.SingerDetailEntry
 import com.annieplayer.annie_music.kt.core.state.AppTab
 import com.annieplayer.annie_music.kt.features.library.LocalLibraryScreen
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
@@ -53,10 +58,12 @@ import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.model.LoopMode
 import com.annieplayer.annie_music.kt.data.model.Quality
+import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
 import com.annieplayer.annie_music.kt.features.kkbox.KkboxDetailScreen
 import com.annieplayer.annie_music.kt.features.library.LocalLibraryScreen
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
+import com.annieplayer.annie_music.kt.data.sources.kkboxSidProvider
 import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
 import com.annieplayer.annie_music.kt.features.playlist.PlaylistParseScreen
 import com.annieplayer.annie_music.kt.features.playlist.PlaylistParseScreenState
@@ -73,6 +80,8 @@ import com.annieplayer.annie_music.kt.widgets.DetailQualityPickerHost
 import com.annieplayer.annie_music.kt.widgets.DownloadQueueSheet
 import com.annieplayer.annie_music.kt.widgets.GlobalOverlays
 import com.annieplayer.annie_music.kt.widgets.KkboxAccountSheet
+import com.annieplayer.annie_music.kt.widgets.LxImportUrlDialog
+import com.annieplayer.annie_music.kt.widgets.LxPluginManagerSheet
 import com.annieplayer.annie_music.kt.widgets.LocalDetailQualityPickerHost
 import com.annieplayer.annie_music.kt.widgets.MenuDrawer
 import com.annieplayer.annie_music.kt.widgets.MenuDrawerCacheSize
@@ -93,6 +102,7 @@ import com.annieplayer.annie_music.kt.widgets.SourcePickerSheet
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -151,6 +161,11 @@ fun AppShell(
     val downloadTasks by downloadViewModel.state.collectAsState()
     val selection by selectionViewModel.state.collectAsState()
 val writeQobuzDownloadTranslation by MoreSettings.writeQobuzDownloadTranslation.collectAsState()
+val writeEnhancedLyrics by MoreSettings.writeEnhancedLyrics.collectAsState()
+val saveLrcFile by MoreSettings.saveLrcFile.collectAsState()
+val playQualityMap by MoreSettings.playQuality.collectAsState()
+val lxPluginEnabled by LxPluginRegistry.enabled.collectAsState()
+val lxPlugins by LxPluginRegistry.plugins.collectAsState()
 val translatePickerVisible by TranslatePicker.visible.collectAsState()
 val translatePickerLangs by TranslatePicker.langs.collectAsState()
 val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
@@ -228,6 +243,33 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
             }
         }
     }
+
+    // 落雪插件：本地导入（SAF 选 .js）+ 在线导入（URL 弹窗）
+    val lxLocalPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                try {
+                    val plugin = LxPluginRegistry.importLocal(uri)
+                    Toast.makeText(ctx, "已导入：${plugin.name}", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Log.w("LxPlugin", "本地导入失败", e)
+                    Toast.makeText(ctx, "导入失败：${e.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    var lxImportUrlVisible by remember { mutableStateOf(false) }
+    var lxImporting by remember { mutableStateOf(false) }
+
+    // 数据层的提示（如"未添加落雪插件"）用安卓原生 Toast 告知
+    LaunchedEffect(Unit) {
+        LxPluginRegistry.notices.collect { message ->
+            Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     var cacheSize by remember { mutableStateOf<MenuDrawerCacheSize>(MenuDrawerCacheSize.Loading) }
 
     // 「清除缓存」弹窗状态（体积数据异步加载，勾选项由本地维护）
@@ -236,12 +278,17 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
     var cacheItems by remember { mutableStateOf<List<CacheItem>>(emptyList()) }
     var cacheSelected by remember { mutableStateOf<Set<CacheCategory>>(emptySet()) }
 
-    // 抽屉里的缓存大小（对齐 Dart `cacheSizeProvider` 首次计算）
-    LaunchedEffect(Unit) {
-        cacheSize = try {
-            MenuDrawerCacheSize.Ready(AssetCache.getFileCacheSize())
-        } catch (_: Exception) {
-            MenuDrawerCacheSize.Error
+    // 抽屉里的缓存大小：**每次打开都重算 + 打开期间每 3s 刷新**。原来 `LaunchedEffect(Unit)`
+    // 只在启动时算一次 → 表现就是「重启才更新」；播放缓存边听边涨，必须实时反映。
+    LaunchedEffect(uiState.drawerVisible) {
+        if (!uiState.drawerVisible) return@LaunchedEffect
+        while (true) {
+            cacheSize = try {
+                MenuDrawerCacheSize.Ready(AssetCache.getFileCacheSize())
+            } catch (_: Exception) {
+                MenuDrawerCacheSize.Error
+            }
+            delay(3_000L)
         }
     }
 
@@ -253,6 +300,7 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
         playerViewModel.setBackend(backend)
         // KKBOX 歌词/播放票据需要活跃账号的会话 sid（对齐 Flutter 从 kkbox store 读取）
         playerViewModel.kkboxSidProvider = { kkboxViewModel.getActiveAccount()?.session?.sid }
+        kkboxSidProvider = { kkboxViewModel.getActiveAccount()?.session?.sid }
         qobuzTokenProvider = { qobuzViewModel.getActiveToken()?.token }
     }
 
@@ -278,20 +326,19 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
     }
 
     // 任意浮层 / 抽屉 / sheet 打开 → 收起搜索框的文本选择与键盘
-    val anyOverlayVisible = uiState.drawerVisible ||
+        val anyOverlayVisible = uiState.drawerVisible ||
         uiState.songActionsVisible ||
         uiState.artistPickerVisible ||
         uiState.playerOverlayVisible ||
         uiState.queueVisible ||
         uiState.pickerVisible ||
-        uiState.albumDetailVisible ||
-        uiState.singerDetailVisible ||
-        uiState.playlistDetailVisible ||
+        uiState.detailStack.isNotEmpty() ||
         uiState.downloadQueueVisible ||
         uiState.qobuzTokenVisible ||
         uiState.kkboxAccountVisible ||
         uiState.contactVisible ||
         uiState.cacheClearVisible ||
+        uiState.lxPluginManagerVisible ||
         st.sourcePickerVisible ||
                 dl.batchPickerVisible
     LaunchedEffect(anyOverlayVisible) {
@@ -378,26 +425,41 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                         onRemove = { id -> selectionViewModel.removeSong(id) },
                     )
                 },
-                playlistDetailSheet = {
-                    PlaylistDetailSheet(
-                        uiViewModel = uiViewModel,
-                        playerViewModel = playerViewModel,
-                        downloadViewModel = downloadViewModel,
-                    )
-                },
-                singerDetailSheet = {
-                    SingerDetailSheet(
-                        uiViewModel = uiViewModel,
-                        playerViewModel = playerViewModel,
-                        downloadViewModel = downloadViewModel,
-                    )
-                },
-                albumDetailSheet = {
-                    AlbumDetailSheet(
-                        uiViewModel = uiViewModel,
-                        playerViewModel = playerViewModel,
-                        downloadViewModel = downloadViewModel,
-                    )
+                detailStack = {
+                    // 详情真栈：按栈底→栈顶顺序渲染，后声明者绘制在上层、其 BackHandler 也先消费返回。
+                    // key(entry.key) 用条目唯一键维持每个详情在重组中的身份（同类型多层互不干扰）。
+                    val lastIndex = uiState.detailStack.lastIndex
+                    uiState.detailStack.forEachIndexed { index, entry ->
+                        key(entry.key) {
+                            val isTop = index == lastIndex
+                            when (entry) {
+                                is AlbumDetailEntry -> AlbumDetailSheet(
+                                    data = entry.data,
+                                    isTop = isTop,
+                                    onClose = { uiViewModel.popDetail() },
+                                    uiViewModel = uiViewModel,
+                                    playerViewModel = playerViewModel,
+                                    downloadViewModel = downloadViewModel,
+                                )
+                                is SingerDetailEntry -> SingerDetailSheet(
+                                    data = entry.data,
+                                    isTop = isTop,
+                                    onClose = { uiViewModel.popDetail() },
+                                    uiViewModel = uiViewModel,
+                                    playerViewModel = playerViewModel,
+                                    downloadViewModel = downloadViewModel,
+                                )
+                                is PlaylistDetailEntry -> PlaylistDetailSheet(
+                                    data = entry.data,
+                                    isTop = isTop,
+                                    onClose = { uiViewModel.popDetail() },
+                                    uiViewModel = uiViewModel,
+                                    playerViewModel = playerViewModel,
+                                    downloadViewModel = downloadViewModel,
+                                )
+                            }
+                        }
+                    }
                 },
             )
             }
@@ -483,8 +545,32 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                     onToggleWriteQobuzDownloadTranslation = {
                         MoreSettings.setWriteQobuzDownloadTranslation(it)
                     },
+                    playQualityOf = { platform -> playQualityMap[platform] },
+                    onPickPlayQuality = { platform, quality ->
+                        MoreSettings.setPlayQuality(platform, quality)
+                    },
+                    writeEnhancedLyrics = writeEnhancedLyrics,
+                    onToggleWriteEnhancedLyrics = { MoreSettings.setWriteEnhancedLyrics(it) },
+                    saveLrcFile = saveLrcFile,
+                    onToggleSaveLrcFile = { MoreSettings.setSaveLrcFile(it) },
+                    lxPluginEnabled = lxPluginEnabled,
+                    lxPluginCount = lxPlugins.size,
+                    onToggleLxPlugin = { LxPluginRegistry.setGlobalEnabled(it) },
+                    onImportLxPluginLocal = { lxLocalPicker.launch(arrayOf("*/*")) },
+                    onImportLxPluginOnline = { lxImportUrlVisible = true },
+                    onManageLxPlugins = { uiViewModel.setLxPluginManagerVisible(true) },
                 ),
                 onClose = { uiViewModel.setMoreSettingsVisible(false) },
+            )
+
+            // ── 落雪插件管理页（声明在更多设置之后 → 盖住它；返回先关本页、再关设置页） ──
+            LxPluginManagerSheet(
+                visible = uiState.lxPluginManagerVisible,
+                plugins = lxPlugins,
+                emptyWarning = lxPluginEnabled && LxPluginRegistry.noUsablePlugin(),
+                onClose = { uiViewModel.setLxPluginManagerVisible(false) },
+                onSelect = { LxPluginRegistry.setActive(it) },
+                onDelete = { id -> LxPluginRegistry.delete(id) },
             )
 
             // ── 底栏槽位（旧 MiniPlayerBar 原位：MenuDrawer 之后、PlayerOverlay 之前）──
@@ -570,6 +656,9 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                                     current.copyWith(
                                         primary = extracted.primary,
                                         secondary = extracted.secondary,
+                                        accent = extracted.accent,
+                                        coverGrid = extracted.coverGrid,
+                                        coverGridDim = extracted.coverGridDim,
                                     ),
                                 )
                             }
@@ -592,6 +681,7 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
             QualityPickerSheet(
                 visible = uiState.pickerVisible,
                         qualities = uiState.pickerSong?.qualities ?: listOf(Quality.k128k),
+                        sizeOf = { q -> uiState.pickerSong?.qualitySizes?.get(q) },
                         labelOf = { q ->
                             if (uiState.pickerSong?.platform == MusicPlatform.qobuz) {
                                 qobuzQualityLabel(q)
@@ -610,6 +700,13 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
             QualityPickerSheet(
                         visible = dl.batchPickerVisible,
                         qualities = batchDownloadQualities(selection.selectedSongs),
+                        sizeOf = { q ->
+                            if (selection.selectedSongs.size == 1) {
+                                selection.selectedSongs.first().qualitySizes[q]
+                            } else {
+                                null
+                            }
+                        },
                         labelOf = { q ->
                             if (selection.selectedSongs.isNotEmpty() &&
                                 selection.selectedSongs.all { it.platform == MusicPlatform.qobuz }
@@ -739,6 +836,27 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 songTitle = translatePickerSongTitle,
                 onSelect = { TranslatePicker.resolve(it) },
                 onCancel = { TranslatePicker.resolve(null) },
+            )
+
+            LxImportUrlDialog(
+                visible = lxImportUrlVisible,
+                importing = lxImporting,
+                onDismiss = { lxImportUrlVisible = false },
+                onConfirm = { url ->
+                    scope.launch {
+                        lxImporting = true
+                        try {
+                            val plugin = LxPluginRegistry.importOnline(url)
+                            Toast.makeText(ctx, "已导入：${plugin.name}", Toast.LENGTH_SHORT).show()
+                            lxImportUrlVisible = false
+                        } catch (e: Exception) {
+                            Log.w("LxPlugin", "在线导入失败", e)
+                            Toast.makeText(ctx, "导入失败：${e.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                        } finally {
+                            lxImporting = false
+                        }
+                    }
+                },
             )
         }
     }

@@ -486,6 +486,36 @@ data class KkboxAlbumData(
     return KkboxAlbumData(album = album, songs = songs)
 }
 
+/** 当前 KKBOX 会话 sid 提供者（由 AppShell 注入；未登录返回 null） */
+var kkboxSidProvider: () -> String? = { null }
+
+/** KKBOX 单曲补充信息（走专辑详情接口：曲目号/发行时间/专辑歌手）；失败返回全 null */
+data class KkboxEnrich(
+    val trackNumber: String?,
+    val discNumber: String?,
+    val releaseDate: String?,
+    val albumArtist: String?,
+)
+
+suspend fun enrichKkboxSong(songId: String, albumId: String): KkboxEnrich {
+    val empty = KkboxEnrich(null, null, null, null)
+    val sid = kkboxSidProvider() ?: return empty
+    if (albumId.isEmpty()) return empty
+    return try {
+        val data = getKkboxAlbum(sid, albumId)
+        val rawId = songId.removePrefix("kkbox:")
+        val matched = data.songs.firstOrNull { (it["song_id"] ?: "").toString() == rawId }
+        KkboxEnrich(
+            trackNumber = matched?.let { _asInt(it["song_idx"]) }?.takeIf { it > 0 }?.toString(),
+            discNumber = null,
+            releaseDate = matched?.let { (it["album_date"] ?: "").toString().ifEmpty { null } },
+            albumArtist = (data.album["artist_name"] ?: "").toString().ifEmpty { null },
+        )
+    } catch (_: Throwable) {
+        empty
+    }
+}
+
 // ── 播放票据 / 直链 ──
 
 /** 播放票据结果（uris + 可能被续期后的 sid） */
@@ -744,7 +774,7 @@ fun qualityExtension(quality: String): String {
 }
 
 /** 拼接封面 URL（替换模板占位符、去除逗号多规格、扩展名转小写） */
-fun getCoverUrl(urlTemplate: String, size: Int = 2048): String {
+fun getCoverUrl(urlTemplate: String, size: Int = 800): String {
     var url = urlTemplate
         .replace("{width}", size.toString())
         .replace("{height}", size.toString())

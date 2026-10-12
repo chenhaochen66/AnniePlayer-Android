@@ -494,7 +494,7 @@ private fun KaraokeText(
     dimColor: Color,
     modifier: Modifier = Modifier,
 ) {
-    var fullLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var fullLayout by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
     val sungIndex = karaokeSungIndex(words, currentTimeMs)
     val layout = fullLayout
 
@@ -511,8 +511,9 @@ private fun KaraokeText(
             for (row in 0 until layout.lineCount) {
                 val start = layout.getLineStart(row)
                 val end = layout.getLineEnd(row)
-                if (end <= start) continue
-                val slice = text.substring(start, end)
+                // layout 与当前 text 可能短暂不同步（复用/换行变化），越界一律跳过或裁剪
+                if (start >= text.length || end <= start) continue
+                val slice = text.substring(start, end.coerceAtMost(text.length))
                 val localSung = (sungIndex - start).coerceIn(0f, slice.length.toFloat())
                 KaraokeRowText(
                     text = slice,

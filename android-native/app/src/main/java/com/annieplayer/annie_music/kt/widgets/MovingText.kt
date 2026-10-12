@@ -2,9 +2,12 @@ package com.annieplayer.annie_music.kt.widgets
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -15,6 +18,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
@@ -49,8 +53,15 @@ fun MovingText(
     threshold: Int = 15,
     gap: Float = 60f,
     speed: Float = 40f,
+    pingPong: Boolean = false,
 ) {
     if (text.isEmpty()) return
+
+    // 往返模式：单份文本、滚到尾部再原路滚回（无「尾部+头部同框」接缝），见 [PingPongText]
+    if (pingPong) {
+        PingPongText(text = text, modifier = modifier, style = style, speed = speed)
+        return
+    }
 
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -133,6 +144,74 @@ fun MovingText(
                     x += p.width
                 }
             }
+        }
+    }
+}
+
+/**
+ * 往返跑马灯（[MovingText] 的 `pingPong` 模式）：单份文本，滚到「尾部露出窗口」后**原路滚回**，
+ * 因此不会出现「上一份尾部 + 下一份头部」同框的接缝。
+ *
+ * 关键：文字宽度取**实际测量出来的 `Text` 宽度**（`wrapContentWidth(unbounded)` + `onSizeChanged`），
+ * 不用 `TextMeasurer` —— 后者量出的宽度比实际窄，会让滚动距离偏短、尾部永远露不出来。
+ * 窗口宽度由 [BoxWithConstraints] 在 composition 阶段直接取得，两者同坐标系、精确且稳定。
+ */
+@Composable
+private fun PingPongText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = LocalTextStyle.current,
+    speed: Float = 40f,
+) {
+    val density = LocalDensity.current
+    var textPx by remember(text) { mutableIntStateOf(0) }
+    var windowPx by remember { mutableIntStateOf(0) }
+    val distancePx = (textPx - windowPx).coerceAtLeast(0)
+
+    val holdMs = 1500f
+    val moveMs = max(600f, distancePx / speed * 1000f)
+    val totalMs = (holdMs + moveMs) * 2f
+
+    var elapsed by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(text, distancePx, moveMs) {
+        elapsed = 0f
+        var last = 0L
+        while (true) {
+            withFrameNanos { now ->
+                if (last != 0L) elapsed = (elapsed + (now - last) / 1_000_000f) % totalMs
+                last = now
+            }
+        }
+    }
+
+    val offsetPx = if (distancePx <= 0) {
+        0f
+    } else {
+        when {
+            elapsed < holdMs -> 0f
+            elapsed < holdMs + moveMs -> -distancePx * ((elapsed - holdMs) / moveMs)
+            elapsed < holdMs + moveMs + holdMs -> -distancePx.toFloat()
+            else -> -distancePx * (1f - (elapsed - holdMs - moveMs - holdMs) / moveMs)
+        }
+    }
+
+    BoxWithConstraints(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .width(maxWidth)
+                .onSizeChanged { if (windowPx != it.width) windowPx = it.width }
+                .clipToBounds(),
+        ) {
+            Text(
+                text = text,
+                style = style,
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier
+                    .wrapContentWidth(unbounded = true, align = Alignment.Start)
+                    .onSizeChanged { if (textPx != it.width) textPx = it.width }
+                    .offset(x = with(density) { offsetPx.toDp() }),
+            )
         }
     }
 }

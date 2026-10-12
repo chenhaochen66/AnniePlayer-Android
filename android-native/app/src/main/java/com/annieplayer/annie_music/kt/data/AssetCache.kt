@@ -171,7 +171,7 @@ object AssetCache {
     /**
      * 逐项统计可清理的缓存体积（供弹窗展示）。
      *
-     * 注意「播放缓存」占的是 Media3 流式缓存，**LRU 上限 256MB**，所以边听边涨很凶，
+     * 注意「播放缓存」占的是 Media3 流式缓存，**无上限（不淘汰）**，所以边听边涨很凶，
      * 是「缓存涨得快」的主要原因；封面还会被 Coil 再缓存一份到 `image_cache`。
      */
     suspend fun cacheItems(): List<CacheItem> = withContext(Dispatchers.IO) {
@@ -254,7 +254,7 @@ object AssetCache {
 
 /** 「清除缓存」弹窗里的缓存分类。 */
 enum class CacheCategory {
-    /** 播放缓存（Media3 流式缓存，LRU 上限 256MB） */
+    /** 播放缓存（Media3 流式缓存，无上限不淘汰） */
     PLAYBACK,
 
     /** 封面/图片缓存（本层 assets + Coil image_cache） */

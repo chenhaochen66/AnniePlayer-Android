@@ -218,6 +218,10 @@ data class ColorPalette(
     val secondary: Color,
     val background: Color,
     val surface: Color,
+    val accent: Color = secondary,
+    /** 封面 N×N 网格取色（行优先，长度 = [coverGridDim]²）；空表示不可用 */
+    val coverGrid: List<Color> = emptyList(),
+    val coverGridDim: Int = 0,
 ) {
     /** 对齐 Flutter `ColorPalette.copyWith`。 */
     fun copyWith(
@@ -225,7 +229,11 @@ data class ColorPalette(
         secondary: Color = this.secondary,
         background: Color = this.background,
         surface: Color = this.surface,
-    ): ColorPalette = ColorPalette(primary, secondary, background, surface)
+        accent: Color = this.accent,
+        coverGrid: List<Color> = this.coverGrid,
+        coverGridDim: Int = this.coverGridDim,
+    ): ColorPalette =
+        ColorPalette(primary, secondary, background, surface, accent, coverGrid, coverGridDim)
 
     // ---- 暗底前景可读性 ----------------------------------------------------------------------
 

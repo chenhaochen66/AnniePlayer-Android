@@ -138,18 +138,24 @@ private fun _toIntOr(value: Any?, fallback: Int): Int {
     return s.toIntOrNull() ?: fallback
 }
 
+/** 把 Qobuz 封面 `_<size>.jpg` 提升到 `_max.jpg`（Qobuz 无 800 档，实测 `_600`=600、`_max`=1400、`_800`=404） */
+private fun _maxCover(url: Any?): Any? {
+    val s = url?.toString() ?: return url
+    return s.replace(Regex("_\\d+\\.jpg$"), "_max.jpg")
+}
+
 /** 取容器 `container.image.large`（用于 `album?.image?.large`） */
 private fun _nestedLarge(container: Any?): Any? {
     if (container is Map<*, *>) {
         val image = container["image"]
-        if (image is Map<*, *>) return image["large"]
+        if (image is Map<*, *>) return _maxCover(image["large"])
     }
     return null
 }
 
 /** 取图像对象 `image.large`（用于 `image?.large`） */
 private fun _directLarge(image: Any?): Any? {
-    if (image is Map<*, *>) return image["large"]
+    if (image is Map<*, *>) return _maxCover(image["large"])
     return null
 }
 
@@ -307,7 +313,7 @@ suspend fun getFileUrl(trackId: String, token: String, qualityId: Int = 5): Qobu
     allParams["request_sig"] = s.sig
     val qs = allParams.entries.joinToString("&") { "${it.key}=${_encodeComponent(it.value)}" }
     val url = "${qobuzBaseUrl}track/getFileUrl?$qs"
-    val data = retryUntilSuccess { _getJson(url, token) }
+    val data = retryUntilSuccess(maxRetries = 2, delayMs = 500L) { _getJson(url, token) }
     return QobuzFileUrl(
         url = data["url"]?.toString() ?: "",
         mimeType = _firstTruthy(listOf(data["mime_type"]))?.toString() ?: "audio/flac",

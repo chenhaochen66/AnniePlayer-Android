@@ -31,6 +31,9 @@ private const val _coverUa =
 /** secondary 兜底：vibrant/muted/darkVibrant/darkMuted 全落空时取 0xFF8B5CF6 */
 private val _fallbackSecondary: Int = 0xFF8B5CF6.toInt()
 
+/** 封面色块网格边长（N×N，共 N² 个色块；背景按同位置铺同色） */
+private const val _GridDim = 4
+
 /** 取色结果缓存（key = 封面地址/本地路径；[_cacheMiss] 表示失败，避免重复下载解码） */
 private val _cache = java.util.concurrent.ConcurrentHashMap<String, Any>()
 
@@ -60,9 +63,17 @@ suspend fun extractPaletteFromCover(coverSource: String): ColorPalette? {
             _cache[coverSource] = _cacheMiss
             return null
         }
+        val gridColors = if (argb.size > 3) {
+            argb.drop(3).map { Color(it.toLong() and 0xFFFFFFFFL) }
+        } else {
+            emptyList()
+        }
         val palette = ColorPalette.fallback.copyWith(
             primary = Color(argb[0].toLong() and 0xFFFFFFFFL),
             secondary = Color(argb[1].toLong() and 0xFFFFFFFFL),
+            accent = Color((argb.getOrNull(2) ?: argb[1]).toLong() and 0xFFFFFFFFL),
+            coverGrid = gridColors,
+            coverGridDim = if (gridColors.isNotEmpty()) _GridDim else 0,
         )
         _cache[coverSource] = palette
         return palette
@@ -146,7 +157,36 @@ private fun _extractPaletteIsolate(bytes: ByteArray): List<Int>? {
         ?: _bestMatch(candidates) { _isDarkMuted(it) }
         ?: _fallbackSecondary
 
-    return listOf(primary, secondary)
+    // accent = 占比最高的色块（主导色）
+    val accent = candidates.maxByOrNull { it.count }?.let { _argb(it.avgR, it.avgG, it.avgB) }
+        ?: secondary
+
+    // 封面 N×N 网格平均色（行优先）：背景按同样位置铺同色块，位置与封面一致
+    val grid = ArrayList<Int>(_GridDim * _GridDim)
+    for (gy in 0 until _GridDim) {
+        val y0 = gy * height / _GridDim
+        val y1 = maxOf(y0 + 1, (gy + 1) * height / _GridDim)
+        for (gx in 0 until _GridDim) {
+            val x0 = gx * width / _GridDim
+            val x1 = maxOf(x0 + 1, (gx + 1) * width / _GridDim)
+            var sr = 0
+            var sg = 0
+            var sb = 0
+            var n = 0
+            for (y in y0 until y1) {
+                for (x in x0 until x1) {
+                    val p = pixels[y * width + x]
+                    sr += (p ushr 16) and 0xFF
+                    sg += (p ushr 8) and 0xFF
+                    sb += p and 0xFF
+                    n++
+                }
+            }
+            grid.add(_argb(sr / n, sg / n, sb / n))
+        }
+    }
+
+    return listOf(primary, secondary, accent) + grid
 }
 
 /**

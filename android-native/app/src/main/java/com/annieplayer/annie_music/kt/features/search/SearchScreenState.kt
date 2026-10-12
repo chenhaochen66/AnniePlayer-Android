@@ -7,10 +7,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
+import com.annieplayer.annie_music.kt.core.state.AlbumDetailEntry
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SearchSelectionViewModel
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
+import com.annieplayer.annie_music.kt.core.state.SingerDetailEntry
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.Artist
@@ -29,7 +31,6 @@ import com.annieplayer.annie_music.kt.data.sources.searchQQMusic
 import com.annieplayer.annie_music.kt.data.sources.searchQobuzTracks
 import com.annieplayer.annie_music.kt.widgets.SongArtistRef
 import com.annieplayer.annie_music.kt.widgets.SongSearchColumn
-import com.annieplayer.annie_music.kt.widgets.closeOtherDetailOverlays
 import com.annieplayer.annie_music.kt.widgets.ModeDropdownMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -311,41 +312,34 @@ class SearchScreenState(
                 snackbarHostState.showSnackbar("未找到歌手「${artist.name}」")
                 return@launch
             }
-            // 详情浮层在播放页之下：先收起播放页，再关其它详情，最后开歌手详情
+            // 详情浮层在播放页之下：先收起播放页；歌手详情**压入真栈**（上层的其它详情不被收起，
+            // 返回时逐层退回）。旧实现会先关掉其它详情（closeOtherDetailOverlays）。
             uiViewModel.setPlayerOverlayVisible(false)
-            closeOtherDetailOverlays(
-                setAlbumDetailVisible = { uiViewModel.setAlbumDetailVisible(it) },
-                setSingerDetailVisible = { uiViewModel.setSingerDetailVisible(it) },
-                setPlaylistDetailVisible = { uiViewModel.setPlaylistDetailVisible(it) },
-            )
-            uiViewModel.setSingerDetailVisible(
-                true,
-                SingerDetailData(
-                    id = resolved.id,
-                    name = resolved.name,
-                    picture = resolved.picture,
-                    platform = song.platform,
+            uiViewModel.pushDetail(
+                SingerDetailEntry(
+                    SingerDetailData(
+                        id = resolved.id,
+                        name = resolved.name,
+                        picture = resolved.picture,
+                        platform = song.platform,
+                    ),
                 ),
             )
         }
     }
 
-    /** ⋮ → 专辑：先收起播放页、关其它详情，再置专辑详情数据 */
+    /** ⋮ → 专辑：先收起播放页，再把专辑详情压入真栈（上层详情不被收起） */
     fun openAlbumDetail(song: Song) {
         uiViewModel.setPlayerOverlayVisible(false)
-        closeOtherDetailOverlays(
-            setAlbumDetailVisible = { uiViewModel.setAlbumDetailVisible(it) },
-            setSingerDetailVisible = { uiViewModel.setSingerDetailVisible(it) },
-            setPlaylistDetailVisible = { uiViewModel.setPlaylistDetailVisible(it) },
-        )
-        uiViewModel.setAlbumDetailVisible(
-            true,
-            AlbumDetailData(
-                id = song.albumId ?: "",
-                cover = song.cover,
-                name = song.album ?: "",
-                artist = song.albumArtist ?: song.artist,
-                platform = song.platform,
+        uiViewModel.pushDetail(
+            AlbumDetailEntry(
+                AlbumDetailData(
+                    id = song.albumId ?: "",
+                    cover = song.cover,
+                    name = song.album ?: "",
+                    artist = song.albumArtist ?: song.artist,
+                    platform = song.platform,
+                ),
             ),
         )
     }

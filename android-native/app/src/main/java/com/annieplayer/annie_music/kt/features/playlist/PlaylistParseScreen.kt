@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.Modifier
 import com.annieplayer.annie_music.kt.core.state.PlaylistDetailData
+import com.annieplayer.annie_music.kt.core.state.PlaylistDetailEntry
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.data.PlaylistService
 import com.annieplayer.annie_music.kt.features.search.HomePlaylistLinkView
@@ -43,9 +44,10 @@ class PlaylistParseScreenState(
             scope.launch { snackbarHostState.showSnackbar("未识别到有效的歌单链接或ID") }
             return
         }
-        uiViewModel.setPlaylistDetailVisible(
-            true,
-            PlaylistDetailData(id = parsed.id, platform = parsed.platform.name),
+        uiViewModel.pushDetail(
+            PlaylistDetailEntry(
+                PlaylistDetailData(id = parsed.id, platform = parsed.platform.name),
+            ),
         )
     }
 }

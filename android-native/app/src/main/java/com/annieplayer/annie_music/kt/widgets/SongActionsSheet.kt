@@ -85,23 +85,6 @@ fun songArtistsOf(song: Song?): List<SongArtistRef> {
 }
 
 /**
- * 打开目标详情前，先关掉其它详情浮层（对齐 Dart `closeOtherDetails`）。
- *
- * GlobalOverlays 里同级浮层是「后渲染者盖前者」：专辑详情开着时再开歌手详情，
- * 歌手详情会先渲染 → 被专辑详情盖住 → 看起来「弹不出来」。宿主在打开任一详情前
- * 调用本函数，把三个详情浮层的可见性回调传进来即可。
- */
-fun closeOtherDetailOverlays(
-    setAlbumDetailVisible: (Boolean) -> Unit,
-    setSingerDetailVisible: (Boolean) -> Unit,
-    setPlaylistDetailVisible: (Boolean) -> Unit,
-) {
-    setAlbumDetailVisible(false)
-    setSingerDetailVisible(false)
-    setPlaylistDetailVisible(false)
-}
-
-/**
  * ⋮ 歌曲操作面板 + 二级歌手选择。
  *
  * 隐藏时保持挂载（对齐 Flutter 的常驻浮层约定），仅由 [AppSheet] 内部把面板移出屏外、
@@ -110,9 +93,9 @@ fun closeOtherDetailOverlays(
  * 回调语义（对齐 Dart 行内先关面板再动作的顺序）：
  * - [onClose]：宿主置 `songActionsVisible = false`。
  * - [onDownload]：宿主置 `pickerVisible = true, pickerSong = song`。
- * - [onOpenArtist]：宿主先收起播放页、再关其它详情浮层，最后开歌手详情
+ * - [onOpenArtist]：宿主先收起播放页、再把歌手详情**压入真栈**
  *   （对齐 Dart `openArtistDetail` 的异步 `resolveArtist` + SnackBar 兜底）。
- * - [onOpenAlbum]：宿主先收起播放页、关其它详情浮层，再置 `albumDetailData`。
+ * - [onOpenAlbum]：宿主先收起播放页、再把专辑详情压入真栈。
  */
 @Composable
 fun SongActionsSheet(

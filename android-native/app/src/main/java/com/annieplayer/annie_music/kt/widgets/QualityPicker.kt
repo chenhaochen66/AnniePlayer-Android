@@ -82,6 +82,8 @@ fun QualityPickerSheet(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     labelOf: (Quality) -> String = { it.label },
+    sizeOf: (Quality) -> Long? = { null },
+    specOf: (Quality) -> String? = { null },
     avoidMiniPlayer: Boolean = false,
     miniPlayerVisible: Boolean = false,
 ) {
@@ -191,6 +193,8 @@ fun QualityPickerSheet(
                         enabled = visible,
                         onTap = { onSelect(quality) },
                         labelOf = labelOf,
+                        sizeOf = sizeOf,
+                        specOf = specOf,
                     )
                     Spacer(modifier = Modifier.height(AppSpacing.sp8))
                 }
@@ -230,6 +234,8 @@ private fun QualityPickerOptionRow(
     enabled: Boolean,
     onTap: () -> Unit,
     labelOf: (Quality) -> String,
+    sizeOf: (Quality) -> Long?,
+    specOf: (Quality) -> String?,
 ) {
     val detail = QualityPickerDetails.getValue(quality)
     val interaction = remember { MutableInteractionSource() }
@@ -268,7 +274,11 @@ private fun QualityPickerOptionRow(
             )
             Spacer(modifier = Modifier.height(AppSpacing.sp1))
             Text(
-                text = detail.desc,
+                text = buildString {
+                    append(detail.desc)
+                    val extra = specOf(quality) ?: sizeOf(quality)?.let { qualitySizeLabel(it) }
+                    if (!extra.isNullOrEmpty()) append(" · ").append(extra)
+                },
                 color = detail.color,
                 fontSize = AppFontSize.sm,
             )
@@ -278,6 +288,14 @@ private fun QualityPickerOptionRow(
             tint = AppColors.whiteA25,
         )
     }
+}
+
+/** 文件大小文案（`12.3 MB` / `1.2 GB`）；≤0 返回 null（不显示） */
+fun qualitySizeLabel(bytes: Long): String? = when {
+    bytes <= 0L -> null
+    bytes >= 1024L * 1024 * 1024 -> "%.2f GB".format(bytes / 1024.0 / 1024 / 1024)
+    bytes >= 1024L * 1024 -> "%.1f MB".format(bytes / 1024.0 / 1024)
+    else -> "%.0f KB".format(bytes / 1024.0)
 }
 
 /**

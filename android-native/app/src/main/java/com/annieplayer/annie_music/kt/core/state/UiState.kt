@@ -14,8 +14,11 @@ import kotlinx.coroutines.flow.asStateFlow
  * 本层只承载「浮层可见性 + 详情数据」这一组纯 UI 状态。浮层之间叠放顺序敏感，
  * 因此字段名与 Dart 完全一致：songActionsVisible / artistPickerVisible /
  * pickerVisible / drawerVisible / playerOverlayVisible / queueVisible /
- * albumDetailVisible / singerDetailVisible / playlistDetailVisible /
  * downloadQueueVisible，UI 层据此镜像同一套层序。
+ *
+ * 与 Dart 的唯一结构性差异：专辑 / 歌手 / 歌单三个全屏详情不再各占一对
+ * `xDetailVisible` + `xDetailData` 布尔槽，而是共用一条**真栈** [detailStack]：
+ * 从任意详情跳转到另一个详情时原详情不被收起，返回逐层退回（见 [DetailEntry]）。
  */
 
 /** 专辑详情数据（对齐 Dart `AlbumDetailData`） */
@@ -46,6 +49,49 @@ data class PlaylistDetailData(
     val cover: String? = null,
 )
 
+/** 详情类型（与三个全屏详情浮层一一对应，供 [UiViewModel.closeDetailKind] 按类型批量关闭）。 */
+enum class DetailKind { Album, Singer, Playlist }
+
+/**
+ * 详情浮层栈条目：专辑 / 歌手 / 歌单三个全屏详情共用一条真栈。
+ *
+ * 旧实现里三者各占一对可见性布尔 + 数据槽，互跳前必须先关掉其它详情；改为真栈后，
+ * 从任意详情跳到另一个详情只是把新详情**压栈**（原详情留在下层，自身的滚动位置 /
+ * 已加载数据 / 多选状态全部保留），返回逐层退回。
+ *
+ * [key] 是栈内唯一标识，用于渲染时的 `key(entry.key)` 维持条目身份。用进程内自增
+ * 序号生成（而非仅取 data.id），保证「同类型多层」（专辑A→歌手S→专辑B，甚至同一张
+ * 专辑重复入栈）也不会撞键。
+ */
+sealed interface DetailEntry {
+    /** 栈内唯一键（含自增序号，同类型多层也不重复）。 */
+    val key: String
+
+    /** 条目类型。 */
+    val kind: DetailKind
+}
+
+/** 进程内自增序号：为每个入栈条目分配唯一 key。 */
+private val detailEntrySeq = java.util.concurrent.atomic.AtomicLong(0L)
+
+/** 专辑详情栈条目。 */
+class AlbumDetailEntry(val data: AlbumDetailData) : DetailEntry {
+    override val kind: DetailKind = DetailKind.Album
+    override val key: String = "album:${detailEntrySeq.incrementAndGet()}"
+}
+
+/** 歌手详情栈条目。 */
+class SingerDetailEntry(val data: SingerDetailData) : DetailEntry {
+    override val kind: DetailKind = DetailKind.Singer
+    override val key: String = "singer:${detailEntrySeq.incrementAndGet()}"
+}
+
+/** 歌单详情栈条目。 */
+class PlaylistDetailEntry(val data: PlaylistDetailData) : DetailEntry {
+    override val kind: DetailKind = DetailKind.Playlist
+    override val key: String = "playlist:${detailEntrySeq.incrementAndGet()}"
+}
+
 /** 纯 UI 状态（对齐 Dart `UIState`） */
 data class UiState(
     val playerOverlayVisible: Boolean = false,
@@ -64,17 +110,15 @@ data class UiState(
     val cacheClearVisible: Boolean = false,
     val isDragging: Boolean = false,
     val seekRatio: Double = 0.0,
-    val albumDetailVisible: Boolean = false,
-    val albumDetailData: AlbumDetailData? = null,
-    val singerDetailVisible: Boolean = false,
-    val singerDetailData: SingerDetailData? = null,
+    /** 全屏详情真栈（栈底在前、栈顶在后；栈顶渲染在最上层、返回先处理）。 */
+    val detailStack: List<DetailEntry> = emptyList(),
     val downloadQueueVisible: Boolean = false,
     /** 「更多设置」整页是否可见 */
     val moreSettingsVisible: Boolean = false,
+    /** 「落雪音源」插件管理页是否可见 */
+    val lxPluginManagerVisible: Boolean = false,
     val qobuzTokenVisible: Boolean = false,
     val kkboxAccountVisible: Boolean = false,
-    val playlistDetailVisible: Boolean = false,
-    val playlistDetailData: PlaylistDetailData? = null,
     val showLyricsTranslation: Boolean = true,
     /** 逐字歌词展示开关（有逐字数据时生效） */
     val showWordByWord: Boolean = true,
@@ -99,16 +143,12 @@ data class UiState(
     cacheClearVisible: Boolean? = null,
         isDragging: Boolean? = null,
         seekRatio: Double? = null,
-        albumDetailVisible: Boolean? = null,
-        albumDetailData: AlbumDetailData? = null,
-        singerDetailVisible: Boolean? = null,
-        singerDetailData: SingerDetailData? = null,
+        detailStack: List<DetailEntry>? = null,
         downloadQueueVisible: Boolean? = null,
         moreSettingsVisible: Boolean? = null,
+        lxPluginManagerVisible: Boolean? = null,
         qobuzTokenVisible: Boolean? = null,
         kkboxAccountVisible: Boolean? = null,
-        playlistDetailVisible: Boolean? = null,
-        playlistDetailData: PlaylistDetailData? = null,
         showLyricsTranslation: Boolean? = null,
         showWordByWord: Boolean? = null,
         currentLineIndex: Int? = null,
@@ -125,16 +165,12 @@ data class UiState(
         cacheClearVisible = cacheClearVisible ?: this.cacheClearVisible,
         isDragging = isDragging ?: this.isDragging,
         seekRatio = seekRatio ?: this.seekRatio,
-        albumDetailVisible = albumDetailVisible ?: this.albumDetailVisible,
-        albumDetailData = albumDetailData ?: this.albumDetailData,
-        singerDetailVisible = singerDetailVisible ?: this.singerDetailVisible,
-        singerDetailData = singerDetailData ?: this.singerDetailData,
+        detailStack = detailStack ?: this.detailStack,
         downloadQueueVisible = downloadQueueVisible ?: this.downloadQueueVisible,
         moreSettingsVisible = moreSettingsVisible ?: this.moreSettingsVisible,
+        lxPluginManagerVisible = lxPluginManagerVisible ?: this.lxPluginManagerVisible,
         qobuzTokenVisible = qobuzTokenVisible ?: this.qobuzTokenVisible,
         kkboxAccountVisible = kkboxAccountVisible ?: this.kkboxAccountVisible,
-        playlistDetailVisible = playlistDetailVisible ?: this.playlistDetailVisible,
-        playlistDetailData = playlistDetailData ?: this.playlistDetailData,
         showLyricsTranslation = showLyricsTranslation ?: this.showLyricsTranslation,
         showWordByWord = showWordByWord ?: this.showWordByWord,
         currentLineIndex = currentLineIndex ?: this.currentLineIndex,
@@ -189,20 +225,16 @@ class UiViewModel : ViewModel() {
         _state.value = _state.value.copyWith(isDragging = dragging, seekRatio = seekRatio ?: 0.0)
     }
 
-    fun setAlbumDetailVisible(visible: Boolean, data: AlbumDetailData? = null) {
-        _state.value = _state.value.copyWith(albumDetailVisible = visible, albumDetailData = data)
-    }
-
-    fun setSingerDetailVisible(visible: Boolean, data: SingerDetailData? = null) {
-        _state.value = _state.value.copyWith(singerDetailVisible = visible, singerDetailData = data)
-    }
-
     fun setDownloadQueueVisible(visible: Boolean) {
         _state.value = _state.value.copyWith(downloadQueueVisible = visible)
     }
 
     fun setMoreSettingsVisible(visible: Boolean) {
         _state.value = _state.value.copyWith(moreSettingsVisible = visible)
+    }
+
+    fun setLxPluginManagerVisible(visible: Boolean) {
+        _state.value = _state.value.copyWith(lxPluginManagerVisible = visible)
     }
 
     fun setQobuzTokenVisible(visible: Boolean) {
@@ -213,11 +245,28 @@ class UiViewModel : ViewModel() {
         _state.value = _state.value.copyWith(kkboxAccountVisible = visible)
     }
 
-    fun setPlaylistDetailVisible(visible: Boolean, data: PlaylistDetailData? = null) {
+    /** 详情压栈：栈顶渲染在最上层，返回先处理。 */
+    fun pushDetail(entry: DetailEntry) {
+        _state.value = _state.value.copyWith(detailStack = _state.value.detailStack + entry)
+    }
+
+    /** 弹出栈顶详情（返回逐层退回；空栈时为 no-op）。 */
+    fun popDetail() {
+        val stack = _state.value.detailStack
+        if (stack.isEmpty()) return
+        _state.value = _state.value.copyWith(detailStack = stack.dropLast(1))
+    }
+
+    /** 关闭栈内指定类型的全部详情（保留其它类型条目）。 */
+    fun closeDetailKind(kind: DetailKind) {
         _state.value = _state.value.copyWith(
-            playlistDetailVisible = visible,
-            playlistDetailData = data,
+            detailStack = _state.value.detailStack.filterNot { it.kind == kind },
         )
+    }
+
+    /** 关闭全部详情。 */
+    fun closeAllDetails() {
+        _state.value = _state.value.copyWith(detailStack = emptyList())
     }
 
     fun setShowLyricsTranslation(visible: Boolean) {

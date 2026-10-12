@@ -82,5 +82,11 @@ dependencies {
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.9")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // QuickJS（Kotlin 绑定）：运行「落雪（LX Music）自定义源」插件。
+    // 选 dokar3/quickjs-kt 而非 cashapp/quickjs-android：后者不 drain microtask
+    // 队列（native 只做 JS_EvalFunction），插件里的 Promise/async 永远 resolve 不了；
+    // 本库是协程原生实现（evaluate 为 suspend），能正确驱动异步。
+    implementation("io.github.dokar3:quickjs-kt:1.0.15")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

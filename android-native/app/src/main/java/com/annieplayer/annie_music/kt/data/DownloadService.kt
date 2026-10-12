@@ -5,7 +5,11 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.util.Log
 import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
-import com.annieplayer.annie_music.kt.core.util.parseLrc
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
+import com.annieplayer.annie_music.kt.core.util.LyricLine
+import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
+import com.annieplayer.annie_music.kt.core.util.mmssOfMs
+import com.annieplayer.annie_music.kt.core.util.parseLrcWithTranslation
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
 import com.annieplayer.annie_music.kt.data.sources.decodeHtmlEntities
@@ -23,7 +27,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
@@ -107,32 +110,80 @@ object DownloadService {
     }
 
     /**
-     * 合并翻译歌词（对齐 Dart `mergeLyrics`）：以毫秒时间戳对齐，翻译行紧跟在原行之后。
-     * 未匹配到翻译的行保持原样。
+     * 合并歌词（普通分支）：翻译行紧跟在原行之后，两行用**同一个** `[mm:ss.xx]` 标签。
+     *
+     * 对齐必须走 [parseLrcWithTranslation]（内部有容差），**不能**自己按毫秒精确查表：
+     * QQ 的 lrc 行是 `[00:10.00]` 而 trans 是别的精度，精确匹配会整句丢翻译（真机复现：
+     * 《Sorry》从第 4 行起翻译全没写进 flac 标签）。
+     *
+     * [enhancedLyric] 非空且设置里开了「下载歌词写入逐字」时改走**增强 LRC**：
+     * 对齐交给 [parseLrcWithTranslation] —— 各平台逐字时间轴与 lrc **不是同一条**
+     * （网易 yrc 与 lrc 实测差 ~8.3s），必须由它统一平移到音频时间轴，
+     * 再序列化成 `[行时间]<00:00.000><行时间>词…`，翻译行紧随其后（复用同一行标签）。
      */
-    fun mergeLyrics(lrc: String, tlyric: String?): String {
-        if (tlyric.isNullOrEmpty()) return lrc
-        val lrcLines = parseLrc(lrc)
-        val tlyricLines = parseLrc(tlyric)
-        val transMap = HashMap<Int, String>()
-        for (tl in tlyricLines) {
-            transMap[(tl.time * 1000).roundToInt()] = tl.text
+    fun mergeLyrics(lrc: String, tlyric: String?, enhancedLyric: String? = null): String {
+        val enhanced = enhancedLyric?.takeIf {
+            it.isNotEmpty() && MoreSettings.writeEnhancedLyrics.value
         }
+        if (enhanced != null) {
+            return _toEnhancedLrc(parseLrcWithTranslation(lrc, tlyric, enhanced))
+        }
+        if (tlyric.isNullOrEmpty()) return lrc
         val result = ArrayList<String>()
-        for (line in lrcLines) {
-            val timeKey = (line.time * 1000).roundToInt()
-            val totalSec = line.time.toInt()
-            val min = totalSec / 60
-            val sec = totalSec % 60
-            val frac = ((line.time - floor(line.time)) * 100).roundToInt()
-            val ts = "[" + min.toString().padStart(2, '0') + ":" +
-                sec.toString().padStart(2, '0') + "." +
-                frac.toString().padStart(2, '0') + "]"
+        for (line in parseLrcWithTranslation(lrc, tlyric)) {
+            val ts = _centisTag((line.time * 1000).roundToInt())
             result.add("$ts${line.text}")
-            val trans = transMap[timeKey]
-            if (trans != null) result.add("$ts$trans")
+            line.translation?.let { result.add("$ts$it") }
         }
         return result.joinToString("\n")
+    }
+
+    /** `[mm:ss.xx]`（厘秒）。**整数运算** —— 浮点 `0.999` 四舍五入会得到非法的 `.100` */
+    private fun _centisTag(msTotal: Int): String {
+        val safe = if (msTotal < 0) 0 else msTotal
+        return "[" + (safe / 60000).toString().padStart(2, '0') + ":" +
+            ((safe % 60000) / 1000).toString().padStart(2, '0') + "." +
+            ((safe % 1000) / 10).toString().padStart(2, '0') + "]"
+    }
+
+    /**
+     * 序列化为**增强 LRC**（严格对齐项目根目录 `增强lrc.txt` 的形状）：
+     * `[行时间]<00:00.000><行时间>词<词时间>词…<收尾时间>` —— 行首固定零标记；
+     * 收尾标记（无文本）是最后一个词的结束时间，**未知就不写**（样例里也只有部分行有）。
+     *
+     * 翻译行**必须复用原行那一模一样的标签**（[lrcTimeOfMs]，3 位毫秒）：显示端是按同一时间戳
+     * 把翻译合并进原行的，写成厘秒（[ _centisTag ]）或另取 `line.time` 就会整句错位。
+     */
+    private fun _toEnhancedLrc(lines: List<LyricLine>): String {
+        val out = ArrayList<String>()
+        out.add("[offset:0]")
+        lines.forEachIndexed { i, line ->
+            val lineMs = if (line.words.isNotEmpty()) {
+                line.words.first().startMs
+            } else {
+                (line.time * 1000).roundToInt()
+            }
+            if (line.words.isNotEmpty()) {
+                val sb = StringBuilder(lrcTimeOfMs(lineMs))
+                sb.append("<00:00.000>")
+                for (w in line.words) {
+                    sb.append('<').append(mmssOfMs(w.startMs)).append('>').append(w.text)
+                }
+                // 收尾标记只在「最后一个词的结束**早于**下一行起点」时写 —— 说明源数据给了明确时长；
+                // 若结束正好等于下一行起点，那只是补出来的时长，样例文件里这种行也没有收尾标记。
+                val last = line.words.last()
+                val endMs = last.startMs + last.durMs
+                val nextLineMs = lines.getOrNull(i + 1)?.let { (it.time * 1000).roundToInt() }
+                if (last.durMs > 0 && (nextLineMs == null || endMs < nextLineMs)) {
+                    sb.append('<').append(mmssOfMs(endMs)).append('>')
+                }
+                out.add(sb.toString())
+            } else {
+                out.add(lrcTimeOfMs(lineMs) + line.text)
+            }
+            line.translation?.let { out.add(lrcTimeOfMs(lineMs) + it) }
+        }
+        return out.joinToString("\n")
     }
 
     /** 读取文件中可被 [MediaMetadataRetriever] 识别的标签（用于打标后校验，键为规范名）。 */
@@ -194,6 +245,7 @@ object DownloadService {
         lyric: String,
         album: String? = null,
         tlyric: String? = null,
+        wordLyric: String? = null,
         albumArtist: String? = null,
         trackNumber: String? = null,
         discNumber: String? = null,
@@ -279,8 +331,8 @@ object DownloadService {
         val coverPath = _downloadCover(coverUrl, songId)
         onProgress(0.65)
 
+        val mergedLyric = mergeLyrics(lyric, tlyric, wordLyric)
         withContext(Dispatchers.IO) {
-            val mergedLyric = mergeLyrics(lyric, tlyric)
             try {
                 _tagFile(
                     inputPath = tempPath,
@@ -350,6 +402,17 @@ object DownloadService {
                     } catch (_: Throwable) {
                         // 与 Dart `catchError((_) => File(...))` 一致：保留原文件
                     }
+                }
+            }
+        }
+
+        if (MoreSettings.saveLrcFile.value) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val audio = File(finalPath)
+                    File(audio.parentFile, audio.nameWithoutExtension + ".lrc").writeText(mergedLyric)
+                } catch (ex: Throwable) {
+                    Log.w(TAG, "[download] write lrc failed: $ex")
                 }
             }
         }

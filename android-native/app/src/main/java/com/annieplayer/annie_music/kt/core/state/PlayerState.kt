@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.annieplayer.annie_music.kt.data.fetchLyric
+import com.annieplayer.annie_music.kt.data.model.AudioInfo
 import com.annieplayer.annie_music.kt.data.model.LoopMode
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Song
@@ -82,6 +83,8 @@ data class PlayerState(
     val volume: Double = 0.8,
     val downloadedIds: List<String> = emptyList(),
     val isLyricsVisible: Boolean = false,
+    /** 正在播放音频的格式信息（引擎探测后下发；空 = 隐藏胶囊） */
+    val audioInfo: AudioInfo = AudioInfo(),
 ) {
     /**
      * 局部更新（对齐 Dart `PlayerState.copyWith`）。
@@ -101,6 +104,7 @@ data class PlayerState(
         volume: Double? = null,
         downloadedIds: List<String>? = null,
         isLyricsVisible: Boolean? = null,
+        audioInfo: AudioInfo? = null,
     ): PlayerState = PlayerState(
         queue = queue ?: this.queue,
         currentIndex = currentIndex ?: this.currentIndex,
@@ -113,6 +117,7 @@ data class PlayerState(
         volume = volume ?: this.volume,
         downloadedIds = downloadedIds ?: this.downloadedIds,
         isLyricsVisible = isLyricsVisible ?: this.isLyricsVisible,
+        audioInfo = audioInfo ?: this.audioInfo,
     )
 }
 
@@ -131,6 +136,9 @@ private fun _toBackendItem(song: Song): Map<String, String> {
     m["artist"] = song.artist
     m["cover"] = song.cover
     m["album"] = song.album ?: ""
+    // 带上该歌**真实可用档位**：引擎据此把「选了无损但歌只有 320k」直接选成 320k，
+    // 不再去发注定失败的请求（否则会拿到坏链 → 播放器报错 → 自动跳下一首）
+    m["qualities"] = song.qualities.joinToString(",") { it.value }
     // 只有 qobuz 需要把直链带进队列（详情页/搜索拿到的直链是唯一来源）。
     // 其余平台一律留空 → 交给引擎按平台解析，否则 Song 上任何残留的旧直链都会
     // 让引擎「直接用、不请求播放接口」（真机抓包：网易/QQ 完全没发请求）。
@@ -260,8 +268,18 @@ class PlayerViewModel : ViewModel() {
                     val q = _state.value.queue
                     val song = if (idx in q.indices) q[idx] else _state.value.currentSong
                     val songChanged = song?.id != _state.value.currentSong?.id
-                    _state.value = _state.value.copyWith(currentIndex = idx, currentSong = song)
+                    _state.value = _state.value.copyWith(
+                        currentIndex = idx,
+                        currentSong = song,
+                        // 切歌先清空，等引擎探测结果下发后再填充
+                        audioInfo = if (songChanged) AudioInfo() else null,
+                    )
                     if (songChanged) _onSongChanged(song)
+                }
+
+                val audioInfo = event["audioInfo"]
+                if (audioInfo is AudioInfo && !audioInfo.isEmpty) {
+                    _state.value = _state.value.copyWith(audioInfo = audioInfo)
                 }
 
                 val isPlaying = event["isPlaying"]

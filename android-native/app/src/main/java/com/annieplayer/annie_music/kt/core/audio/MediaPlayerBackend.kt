@@ -20,7 +20,8 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.ContentMetadata
+import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -30,14 +31,18 @@ import androidx.media3.session.SessionResult
 import com.annieplayer.annie_music.kt.MainActivity
 import com.annieplayer.annie_music.kt.core.state.PlayerBackend
 import com.annieplayer.annie_music.kt.data.model.LoopMode
-import com.annieplayer.annie_music.kt.data.sources.fetchKugouMusicUrl
-import com.annieplayer.annie_music.kt.data.sources.fetchKuwoPlayUrl
-import com.annieplayer.annie_music.kt.data.sources.fetchNeteasePlayUrl
-import com.annieplayer.annie_music.kt.data.sources.fetchQQMusicUrl
+import com.annieplayer.annie_music.kt.data.fetchPlayUrlForBackend
+import com.annieplayer.annie_music.kt.data.network.globalOkHttp
+import com.annieplayer.annie_music.kt.data.playRequestQuality
+import com.annieplayer.annie_music.kt.data.model.AudioInfo
 import com.annieplayer.annie_music.kt.data.sources.getFileUrl
 import com.annieplayer.annie_music.kt.data.sources.qobuzHiresFormatId
 import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
+import com.arthenica.ffmpegkit.FFprobeKit
 import java.io.File
+import okhttp3.Request
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToLong
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -118,7 +123,12 @@ class MediaPlayerBackend(
     // ── 应用层队列状态（对齐 Dart 字段） ──
 
     private var _queue: List<Map<String, String>> = emptyList()
-    private val _urlCache: MutableMap<Int, String> = mutableMapOf()
+    // 已解析直链缓存，按「歌曲身份」（`平台:id:音质`）而非队列下标——
+    // 重进列表/来回切歌时不必重复解析（原按下标实现会被 setQueue 清空）
+    private val _urlCache: MutableMap<String, String> = mutableMapOf()
+    // 解析出的直链 -> 稳定缓存 key（`平台:id:音质`）。Media3 默认拿 URL 当 key，
+    // 插件直链一变就 miss；按歌曲身份映射后，同一首歌无论直链怎么变都命中同一份缓存
+    private val _cacheKeyByUrl: MutableMap<String, String> = ConcurrentHashMap()
     private val _pendingPrefetch: MutableSet<Int> = mutableSetOf()
     private var _appLoopMode: LoopMode = LoopMode.sequential
     private var _preloadBaseIndex: Int = 0
@@ -176,6 +186,7 @@ class MediaPlayerBackend(
             val cacheFactory = CacheDataSource.Factory()
                 .setCache(cache)
                 .setUpstreamDataSourceFactory(upstream)
+                .setCacheKeyFactory { spec -> _cacheKeyByUrl[spec.uri.toString()] ?: spec.uri.toString() }
                 .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
             _cachedSourceFactory = DefaultMediaSourceFactory(cacheFactory)
             _plainSourceFactory = DefaultMediaSourceFactory(upstream)
@@ -258,6 +269,7 @@ class MediaPlayerBackend(
                 CacheDataSource.Factory()
                     .setCache(_cache ?: sharedCache(_context))
                     .setUpstreamDataSourceFactory(upstream)
+                    .setCacheKeyFactory { spec -> _cacheKeyByUrl[spec.uri.toString()] ?: spec.uri.toString() }
                     .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR),
             )
             AnnieAudioHolder.plainSourceFactory = DefaultMediaSourceFactory(upstream)
@@ -339,6 +351,7 @@ class MediaPlayerBackend(
             _playRequestId++
             _queue = items.toList()
             _urlCache.clear()
+            _cacheKeyByUrl.clear()
             _pendingPrefetch.clear()
             _consecutiveFailures = 0
             _appLoopMode = LoopMode.fromName(loopMode)
@@ -488,7 +501,7 @@ class MediaPlayerBackend(
         // 解析期间用户可能已经切歌 -> 放弃本次设置，避免旧请求覆盖新音源
         if (requestId != _playRequestId) return
 
-        _urlCache[index] = url
+        _urlCache[_cacheKeyOf(item)] = url
         if (!_setSource(url, item)) {
             _handlePlaybackFailure(index)
             return
@@ -500,6 +513,7 @@ class MediaPlayerBackend(
         _player?.play()
         _ensureServiceStarted()
         _startPrefetchUpcoming()
+        _startAudioInfoProbe(index, url)
     }
 
     /**
@@ -507,9 +521,11 @@ class MediaPlayerBackend(
      * 预取入口 [fetchPreloadUrl] 的 Kotlin 移植见 [_fetchPreloadUrl]。
      */
     private suspend fun _resolveUrl(index: Int, item: Map<String, String>, forceRefresh: Boolean): String? {
+        val songKey = _cacheKeyOf(item)
         if (!forceRefresh) {
-            val cached = _urlCache[index]
+            val cached = _urlCache[songKey]
             if (!cached.isNullOrEmpty()) return cached
+            _cachedOnlyUrl(songKey)?.let { return it }
         }
         return try {
             val url = _fetchPreloadUrl(item)
@@ -526,12 +542,13 @@ class MediaPlayerBackend(
     }
 
     /**
-     * 预取 URL（1:1 移植 Dart `fetchPreloadUrl`）。
+     * 预取 URL。
      *
      * - 队列项自带 url（qobuz 详情页 / 已解析）优先
-     * - kkbox：无 url 时返回 null（与 Dart 相同）
+     * - kkbox：无 url 时返回 null
      * - qobuz：无 url 时用活跃 token 取直链（搜索 / 跳转进来的歌靠这条）
-     * - netease / qq / kugou / kuwo：委托既有 `data/sources/` 的实现，qq/kugou 固定 320k（同 Dart）
+     * - **其余平台（国内四平台）：统一走仓库层音源路由**（`fetchPlayUrlForBackend`），
+     *   这样落雪插件才能接管播放；此前这里直连 `data/sources/` 会绕过插件。
      */
     private suspend fun _fetchPreloadUrl(item: Map<String, String>): String? {
         val provided = item["url"]
@@ -549,11 +566,7 @@ class MediaPlayerBackend(
                 }
             }
             "kkbox" -> null
-            "netease" -> fetchNeteasePlayUrl(id)
-            "qq" -> fetchQQMusicUrl(id.replaceFirst(_reQqPrefix, ""), _prefetchQuality)
-            "kugou" -> fetchKugouMusicUrl(id.replaceFirst(_reKugouPrefix, ""), _prefetchQuality)
-            // 默认（kuwo / 未知）
-            else -> fetchKuwoPlayUrl(id)
+            else -> fetchPlayUrlForBackend(item)
         }
     }
 
@@ -561,14 +574,15 @@ class MediaPlayerBackend(
      * 设置播放源（对齐 Dart `_setSource`）。返回是否成功（进程内同步错误如非法 URI 返回 false；
      * 网络/解码错误异步到达 [AnniePlayerListener.onPlayerError]）。
      *
-     * 磁盘缓存规则（同 Dart `_cacheFileFor`）：酷狗直链**不走**边播边缓存，
-     * 因此用不带缓存的 `_plainSourceFactory`；其余平台走 CacheDataSource + SimpleCache。
+     * 磁盘缓存规则：**所有平台**统一走 CacheDataSource + SimpleCache，缓存 key 用歌曲身份
+     * `平台:id:音质`（见 [_cacheKeyOf]）而非直链 URL——这样插件换直链（带时间戳/签名）也命中同一份缓存。
      */
     private fun _setSource(url: String, item: Map<String, String>): Boolean {
         val p = _player ?: return false
         return try {
-            val isKugou = item["platform"] == "kugou"
-            val factory = if (isKugou) _plainSourceFactory else _cachedSourceFactory
+            // 先登记稳定 key，CacheDataSource 打开时才认得出是同一首歌
+            _cacheKeyByUrl[url] = _cacheKeyOf(item)
+            val factory = _cachedSourceFactory ?: _plainSourceFactory
             val source: MediaSource = (factory ?: return false).createMediaSource(_buildMediaItem(url, item))
             p.setMediaSource(source)
             p.prepare()
@@ -576,6 +590,30 @@ class MediaPlayerBackend(
         } catch (_: Throwable) {
             false
         }
+    }
+
+    /** 稳定缓存 key：`平台:id:音质`（与直链无关，插件/内置、换链重解析都命中同一份） */
+    private fun _cacheKeyOf(item: Map<String, String>): String =
+        "${item["platform"].orEmpty()}:${item["id"].orEmpty()}:" +
+            playRequestQuality(item["platform"].orEmpty()).value
+
+    /**
+     * 整首已在本地时，返回一个**不联网**的占位 URI（并登记到该缓存 key）。
+     *
+     * 判定极严：必须已记录内容总长、且「已缓存字节 == 总长」才成立 —— 只要差一字节就返回 null，
+     * 退回正常解析拿真直链（缓存前缀照读、缺的部分照下）。占位 URI 因请求区间全命中，不会打开 upstream。
+     */
+    private fun _cachedOnlyUrl(songKey: String): String? {
+        val cache = _cache ?: return null
+        val length = runCatching {
+            ContentMetadata.getContentLength(cache.getContentMetadata(songKey))
+        }.getOrNull() ?: return null
+        if (length <= 0) return null
+        val cachedBytes = runCatching { cache.getCachedBytes(songKey, 0L, length) }.getOrNull() ?: return null
+        if (cachedBytes != length) return null
+        val url = Uri.parse("https://annie.local/cache/" + Uri.encode(songKey)).toString()
+        _cacheKeyByUrl[url] = songKey
+        return url
     }
 
     /** 构造 MediaItem：把队列项 metadata 带入，供通知/锁屏展示（对齐 Dart handler.setMediaItem 的兜底文案） */
@@ -619,16 +657,16 @@ class MediaPlayerBackend(
         _retriedCurrent = true
 
         val requestId = _playRequestId
-        _urlCache.remove(index)
+        _urlCache.remove(_cacheKeyOf(item))
         val url = _resolveUrl(index, item, true)
         if (requestId != _playRequestId) return
         if (url == null) {
             _autoAdvanceOnFailure(index)
             return
         }
-        _urlCache[index] = url
+        _urlCache[_cacheKeyOf(item)] = url
         if (!_setSource(url, item)) {
-            _urlCache.remove(index)
+            _urlCache.remove(_cacheKeyOf(item))
             _autoAdvanceOnFailure(index)
             return
         }
@@ -639,6 +677,7 @@ class MediaPlayerBackend(
         _player?.play()
         _ensureServiceStarted()
         _startPrefetchUpcoming()
+        _startAudioInfoProbe(index, url)
     }
 
     /** 当前曲目播放失败 -> 自动切下一首；连续失败达上限则暂停（对齐 Dart `_autoAdvanceOnFailure`） */
@@ -697,13 +736,14 @@ class MediaPlayerBackend(
                     if (i >= targets.size) return@launch
                     val idx = targets[i]
                     if (gen != _generation) return@launch
-                    if (_urlCache.containsKey(idx) || _pendingPrefetch.contains(idx)) continue
+                    val item = _queue.getOrNull(idx) ?: continue
+                    val songKey = _cacheKeyOf(item)
+                    if (_urlCache.containsKey(songKey) || _pendingPrefetch.contains(idx)) continue
                     _pendingPrefetch.add(idx)
                     try {
-                        val item = _queue.getOrNull(idx) ?: continue
                         val url = _fetchPreloadUrl(item)
                         if (gen == _generation && !url.isNullOrEmpty()) {
-                            _urlCache[idx] = url
+                            _urlCache[songKey] = url
                         }
                     } catch (_: Throwable) {
                         // 预取失败静默忽略，切歌时会再次尝试解析
@@ -713,6 +753,127 @@ class MediaPlayerBackend(
                 }
             }
         }
+    }
+
+    /**
+     * 探测当前曲目的音频格式（编码 / 位深 / 采样率）并下发 `audioInfo` 事件。
+     *
+     * 优先读 Media3 磁盘缓存里**已落盘的本地文件**（零网络）；刚起播缓存还没写入、
+     * 或该平台不走缓存（酷狗直链走 [_plainSourceFactory]）时退回直接探测 URL。
+     */
+    private fun _startAudioInfoProbe(index: Int, url: String) {
+        if (!_active || url.isEmpty()) return
+        val gen = _generation
+        _scope.launch {
+            val info = _probeAudioInfo(url)
+            if (gen != _generation || index != _currentAbsIndex) return@launch
+            _emit(mapOf("audioInfo" to (info ?: AudioInfo())))
+        }
+    }
+
+    /**
+     * 用 ffprobe 读取 [url] 的格式信息；失败 / 超时返回 null。
+     *
+     * 缓存分片可能还没落盘完整：此时 ffprobe 拿得到采样率/比特率却**拿不到 `codec_name`**，
+     * 于是结果里缺编码。所以探到「无编码」时改用完整 URL 重探一次，保证编码一定拿得到。
+     */
+    private suspend fun _probeAudioInfo(url: String): AudioInfo? = withContext(Dispatchers.IO) {
+        val cached = _cachedFileFor(url)?.absolutePath
+        if (cached != null) {
+            val info = _probeTarget(cached)
+            if (info != null && info.codec.isNotEmpty()) return@withContext info
+        }
+        // 首次播放时 Media3 还没 commit 缓存分片（只在数据源关闭时才写索引），本地无文件可探；
+        // 而 ffprobe 直接拉 URL 常拿不到编码 → 自己抓一段头部字节再 probe
+        val prefix = _probeUrlPrefix(url)
+        if (prefix != null && prefix.codec.isNotEmpty()) return@withContext prefix
+        _probeTarget(url)
+    }
+
+    /**
+     * 抓 [url] 开头 [Companion._probePrefixBytes] 字节到临时文件后 probe。
+     *
+     * 首次播放只能这样拿编码：mp3 的 ID3 标签 + 首帧、flac 的 STREAMINFO 都在文件头部，
+     * 拿到头部 ffprobe 就能给出编码 / 位深 / 采样率。用完即删。
+     */
+    private suspend fun _probeUrlPrefix(url: String): AudioInfo? = withContext(Dispatchers.IO) {
+        var file: File? = null
+        try {
+            val req = Request.Builder().url(url).header("User-Agent", _userAgent).build()
+            val client = globalOkHttp.newBuilder()
+                .callTimeout(_probeTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .build()
+            file = File.createTempFile("probe_", ".bin", _context.cacheDir)
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body ?: return@withContext null
+                body.byteStream().use { input ->
+                    file.outputStream().use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        var total = 0
+                        while (total < _probePrefixBytes) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            total += n
+                        }
+                    }
+                }
+            }
+            _probeTarget(file.absolutePath)
+        } catch (_: Throwable) {
+            null
+        } finally {
+            runCatching { file?.delete() }
+        }
+    }
+
+    /** 对单个目标（本地文件或 URL）跑一次 ffprobe。 */
+    private suspend fun _probeTarget(target: String): AudioInfo? = withContext(Dispatchers.IO) {
+        try {
+            val media = FFprobeKit.getMediaInformation(target, _probeTimeoutMs).mediaInformation
+                ?: return@withContext null
+            val audio = media.streams.firstOrNull { it.type == "audio" } ?: return@withContext null
+            Log.i(
+                _tag,
+                "[audio] probe target=$target streams=${media.streams.size} " +
+                    "codec=${audio.codec} depth=${audio.getStringProperty("bits_per_raw_sample")} " +
+                    "rate=${audio.sampleRate} bps=${audio.bitrate}",
+            )
+            val codec = _formatCodec(audio.codec)
+            val rate = audio.sampleRate?.toIntOrNull() ?: 0
+            if (codec.isEmpty() && rate == 0) return@withContext null
+            AudioInfo(
+                codec = codec,
+                bitDepth = audio.getStringProperty("bits_per_raw_sample")?.toIntOrNull()
+                    ?: audio.getStringProperty("bits_per_sample")?.toIntOrNull()
+                    ?: 0,
+                sampleRate = rate,
+                bitrate = audio.bitrate?.toIntOrNull()?.takeIf { it > 0 }
+                    ?: media.bitrate?.toIntOrNull()?.takeIf { it > 0 }
+                    ?: 0,
+            )
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** 取 [url] 在 Media3 缓存里从 0 开始的 span 文件（存在即已落盘、可本地 probe）。 */
+    private fun _cachedFileFor(url: String): File? {
+        val cache = _cache ?: return null
+        val key = _cacheKeyByUrl[url] ?: url
+        return try {
+            cache.getCachedSpans(key).firstOrNull { it.position == 0L && it.length > 0 }?.file
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** ffprobe 编码名 -> 展示名（`mp3` -> `MP3`；`pcm_*` 归并为 `PCM`）。 */
+    private fun _formatCodec(codec: String?): String {
+        val c = codec?.trim().orEmpty()
+        if (c.isEmpty()) return ""
+        if (c.startsWith("pcm", ignoreCase = true)) return "PCM"
+        return c.uppercase()
     }
 
     /**
@@ -817,7 +978,8 @@ class MediaPlayerBackend(
         const val _tag: String = "AnnieAudio"
         const val _progressIntervalMs: Long = 200L
         const val _cacheDirName: String = PLAYBACK_CACHE_DIR_NAME
-        const val _cacheMaxBytes: Long = 256L * 1024L * 1024L
+        /** 首次播放探测音频信息时抓的头部字节数（够覆盖 ID3 标签 + 首帧 / FLAC STREAMINFO） */
+        const val _probePrefixBytes: Int = 256 * 1024
 
         /** 进程级唯一的磁盘缓存：`SimpleCache` 对同一目录只允许一个实例，重复创建会抛异常崩溃 */
         @Volatile
@@ -830,18 +992,16 @@ class MediaPlayerBackend(
                 _sharedCache?.let { return it }
                 val dir = File(context.cacheDir, _cacheDirName)
                 if (!dir.exists()) dir.mkdirs()
-                val created = SimpleCache(dir, LeastRecentlyUsedCacheEvictor(_cacheMaxBytes))
+                val created = SimpleCache(dir, NoOpCacheEvictor())
                 _sharedCache = created
                 return created
             }
         }
         const val _userAgent: String = "AnnieMusic/1.0 (Android)"
-        const val _prefetchQuality: String = "320k"
         const val _prefetchAhead: Int = 5
+        const val _probeTimeoutMs: Int = 10_000
         const val _prefetchConcurrency: Int = 3
         const val _maxConsecutiveFailures: Int = 3
-        val _reQqPrefix: Regex by lazy { Regex("^qq:") }
-        val _reKugouPrefix: Regex by lazy { Regex("^kugou:") }
     }
 }
 

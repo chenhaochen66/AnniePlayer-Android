@@ -47,6 +47,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
+import com.annieplayer.annie_music.kt.data.model.Quality
+import com.annieplayer.annie_music.kt.data.playQualityAutoLabelOf
+import com.annieplayer.annie_music.kt.data.playQualityLabelOf
+import com.annieplayer.annie_music.kt.data.playQualityTiersOf
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppEasing
@@ -88,6 +93,40 @@ data class MoreSettingSwitch(
     val onCheckedChange: (Boolean) -> Unit,
 ) : MoreSettingItem
 
+/** 动作项（点一下执行，不带开关） */
+data class MoreSettingAction(
+    override val key: String,
+    override val label: String,
+    override val subtitle: String,
+    val onClick: () -> Unit,
+) : MoreSettingItem
+
+/** 下拉候选里的一个选项 */
+data class MoreSettingOption(
+    val label: String,
+    val selected: Boolean,
+    val onSelect: () -> Unit,
+)
+
+/** 下拉项：右侧一个「当前值」框，点一下在行下方内联列出候选（不做子分组开合） */
+data class MoreSettingDropdown(
+    override val key: String,
+    override val label: String,
+    override val subtitle: String,
+    val value: String,
+    val options: List<MoreSettingOption>,
+) : MoreSettingItem
+
+/** 子组（**不可开合**）：一个小标题 + 若干子项，用于在同一分组下再分类 */
+data class MoreSettingSubGroup(
+    override val key: String,
+    val title: String,
+    val items: List<MoreSettingItem>,
+) : MoreSettingItem {
+    override val label: String get() = title
+    override val subtitle: String get() = ""
+}
+
 /** 分组：一个可展开 / 收起的标题 + 若干设置项 */
 data class MoreSettingGroup(
     val title: String,
@@ -103,7 +142,107 @@ data class MoreSettingGroup(
 fun moreSettingsGroups(
     writeQobuzDownloadTranslation: Boolean,
     onToggleWriteQobuzDownloadTranslation: (Boolean) -> Unit,
+    playQualityOf: (MusicPlatform) -> Quality?,
+    onPickPlayQuality: (MusicPlatform, Quality?) -> Unit,
+    writeEnhancedLyrics: Boolean,
+    onToggleWriteEnhancedLyrics: (Boolean) -> Unit,
+    saveLrcFile: Boolean,
+    onToggleSaveLrcFile: (Boolean) -> Unit,
+    lxPluginEnabled: Boolean = false,
+    lxPluginCount: Int = 0,
+    onToggleLxPlugin: (Boolean) -> Unit = {},
+    onImportLxPluginLocal: () -> Unit = {},
+    onImportLxPluginOnline: () -> Unit = {},
+    onManageLxPlugins: () -> Unit = {},
 ): List<MoreSettingGroup> = listOf(
+    MoreSettingGroup(
+        title = "播放相关",
+        items = listOf(
+            MoreSettingSubGroup(
+                key = "play-quality",
+                title = "播放音质选择",
+                items = MusicPlatform.entries
+                    .filter { playQualityTiersOf(it).isNotEmpty() }
+                    .map { platform ->
+                        val current = playQualityOf(platform)
+                        val autoLabel = playQualityAutoLabelOf(platform)
+                        MoreSettingDropdown(
+                            key = "play-quality-${platform.name}",
+                            label = platform.label,
+                            subtitle = "默认播放音质",
+                            value = current?.let { playQualityLabelOf(platform, it) } ?: autoLabel,
+                            options = buildList {
+                                add(
+                                    MoreSettingOption(
+                                        label = autoLabel,
+                                        selected = current == null,
+                                        onSelect = { onPickPlayQuality(platform, null) },
+                                    ),
+                                )
+                                for (tier in playQualityTiersOf(platform)) {
+                                    add(
+                                        MoreSettingOption(
+                                            label = playQualityLabelOf(platform, tier),
+                                            selected = current == tier,
+                                            onSelect = { onPickPlayQuality(platform, tier) },
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    },
+            ),
+        ),
+    ),
+    MoreSettingGroup(
+        title = "落雪音源",
+        items = listOf(
+            MoreSettingSwitch(
+                key = "lx-plugin-enabled",
+                label = "启用落雪插件",
+                subtitle = "国内四平台由落雪插件解析；无可用插件时仍走内置并提示",
+                checked = lxPluginEnabled,
+                onCheckedChange = onToggleLxPlugin,
+            ),
+            MoreSettingAction(
+                key = "lx-plugin-import-local",
+                label = "本地导入插件",
+                subtitle = "选择一个 .js 插件文件",
+                onClick = onImportLxPluginLocal,
+            ),
+            MoreSettingAction(
+                key = "lx-plugin-import-online",
+                label = "在线导入插件",
+                subtitle = "粘贴 http/https 直链",
+                onClick = onImportLxPluginOnline,
+            ),
+            MoreSettingAction(
+                key = "lx-plugin-manage",
+                label = "插件管理",
+                subtitle = if (lxPluginCount == 0) "暂无已导入插件" else "已导入 $lxPluginCount 个插件",
+                onClick = onManageLxPlugins,
+            ),
+        ),
+    ),
+    MoreSettingGroup(
+        title = "下载相关",
+        items = listOf(
+            MoreSettingSwitch(
+                key = "write-enhanced-lyrics",
+                label = "下载歌词写入逐字（增强 LRC）",
+                subtitle = "把逐字歌词写进歌词文件；该平台没有逐字数据时仍写普通 LRC",
+                checked = writeEnhancedLyrics,
+                onCheckedChange = onToggleWriteEnhancedLyrics,
+            ),
+            MoreSettingSwitch(
+                key = "save-lrc-file",
+                label = "保存 lrc 文件",
+                subtitle = "下载时在歌曲同目录另存一份同名 .lrc（内容与内嵌歌词一致）",
+                checked = saveLrcFile,
+                onCheckedChange = onToggleSaveLrcFile,
+            ),
+        ),
+    ),
     MoreSettingGroup(
         title = "Qobuz 相关",
         items = listOf(
@@ -224,6 +363,183 @@ private fun MoreSettingItemRow(item: MoreSettingItem) {
             subtitle = item.subtitle,
             checked = item.checked,
             onCheckedChange = item.onCheckedChange,
+        )
+
+        is MoreSettingAction -> MoreSettingsActionRow(
+            label = item.label,
+            subtitle = item.subtitle,
+            onClick = item.onClick,
+        )
+
+        is MoreSettingDropdown -> MoreSettingsDropdownRow(item)
+
+        is MoreSettingSubGroup -> MoreSettingsSubGroupBlock(item)
+    }
+}
+
+/** 动作行：标题 + 副标题 + 右侧 chevron（整行可点） */
+@Composable
+private fun MoreSettingsActionRow(
+    label: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(MoreSettingRowHeight)
+            .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.card))
+            .clickableNoRipple(onClick)
+            .padding(AppSpacing.sp16),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = AppColors.textPrimary,
+                fontSize = AppFontSize.size15,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(modifier = Modifier.height(AppSpacing.sp1))
+            Text(
+                text = subtitle,
+                color = AppColors.textTertiary,
+                fontSize = AppFontSize.sm,
+                maxLines = 1,
+            )
+        }
+        Spacer(modifier = Modifier.width(AppSpacing.sp12))
+        Canvas(modifier = Modifier.size(AppIconSize.icon16)) {
+            val w = size.width
+            val h = size.height
+            val stroke = w * 0.15f
+            drawLine(AppColors.textSecondary, Offset(w * 0.36f, h * 0.25f), Offset(w * 0.62f, h * 0.50f), stroke, StrokeCap.Round)
+            drawLine(AppColors.textSecondary, Offset(w * 0.36f, h * 0.75f), Offset(w * 0.62f, h * 0.50f), stroke, StrokeCap.Round)
+        }
+    }
+}
+
+/** 子组：一个小标题 + 子项（**不可开合**） */
+@Composable
+private fun MoreSettingsSubGroupBlock(group: MoreSettingSubGroup) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = group.title,
+            modifier = Modifier.padding(top = AppSpacing.sp4, bottom = AppSpacing.sp8),
+            color = AppColors.textSecondary,
+            fontSize = AppFontSize.size13,
+            fontWeight = FontWeight.Medium,
+        )
+        for (child in group.items) {
+            MoreSettingItemRow(child)
+            Spacer(modifier = Modifier.height(AppSpacing.sp8))
+        }
+    }
+}
+
+/** 下拉行：标题(+副标题) + 右侧「当前值」框；点一下在下方内联展开候选（不做子分组开合） */
+@Composable
+private fun MoreSettingsDropdownRow(item: MoreSettingDropdown) {
+    var expanded by remember(item.key) { mutableStateOf(false) }
+    val chevron by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
+        label = "moreSettingsDropdownChevron",
+    )
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(MoreSettingRowHeight)
+                .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.card))
+                .clickableNoRipple { expanded = !expanded }
+                .padding(AppSpacing.sp16),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.label,
+                    color = AppColors.textPrimary,
+                    fontSize = AppFontSize.size15,
+                    fontWeight = FontWeight.Medium,
+                )
+                if (item.subtitle.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(AppSpacing.sp1))
+                    Text(
+                        text = item.subtitle,
+                        color = AppColors.textTertiary,
+                        fontSize = AppFontSize.sm,
+                        maxLines = 1,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(AppSpacing.sp12))
+            Text(
+                text = item.value,
+                color = AppColors.textPrimary,
+                fontSize = AppFontSize.size13,
+                modifier = Modifier
+                    .background(AppColors.whiteA15, RoundedCornerShape(AppRadius.r8))
+                    .padding(horizontal = AppSpacing.sp10, vertical = AppSpacing.sp6),
+            )
+            Spacer(modifier = Modifier.width(AppSpacing.sp8))
+            Canvas(modifier = Modifier.size(AppIconSize.icon16).graphicsLayer { rotationZ = chevron }) {
+                val w = size.width
+                val h = size.height
+                val stroke = w * 0.15f
+                drawLine(AppColors.textSecondary, Offset(w * 0.25f, h * 0.36f), Offset(w * 0.50f, h * 0.62f), stroke, StrokeCap.Round)
+                drawLine(AppColors.textSecondary, Offset(w * 0.75f, h * 0.36f), Offset(w * 0.50f, h * 0.62f), stroke, StrokeCap.Round)
+            }
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(
+                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
+            ) + fadeIn(
+                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
+            ),
+            exit = shrinkVertically(
+                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
+            ) + fadeOut(
+                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
+            ),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = AppSpacing.sp8)
+                    .clip(RoundedCornerShape(AppRadius.r8))
+                    .background(AppColors.whiteA03)
+                    .padding(vertical = AppSpacing.sp4),
+            ) {
+                for (option in item.options) {
+                    MoreSettingOptionRow(option) { expanded = false }
+                }
+            }
+        }
+    }
+}
+
+/** 下拉里的一个候选行；选中项用主色高亮 */
+@Composable
+private fun MoreSettingOptionRow(option: MoreSettingOption, onPicked: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickableNoRipple {
+                option.onSelect()
+                onPicked()
+            }
+            .padding(horizontal = AppSpacing.sp16, vertical = AppSpacing.sp12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = option.label,
+            color = if (option.selected) AppColors.primary else AppColors.textSecondary,
+            fontSize = AppFontSize.size15,
+            fontWeight = if (option.selected) FontWeight.SemiBold else FontWeight.Normal,
         )
     }
 }

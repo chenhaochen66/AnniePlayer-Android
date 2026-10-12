@@ -93,6 +93,8 @@ data class Song(
     /** 当前选中的译文语言（null = 未选；仅 Qobuz 官方歌词用） */
     val lyricTranslateLang: String? = null,
     val qualities: List<Quality> = emptyList(),
+    /** 各档位对应的文件大小（字节）；平台没给就不含该键。仅用于下载音质面板展示 */
+    val qualitySizes: Map<Quality, Long> = emptyMap(),
     val albumArtist: String? = null,
     val trackNumber: String? = null,
     val discNumber: String? = null,
@@ -114,6 +116,7 @@ data class Song(
         tlyric: String? = null,
         wordLyric: String? = null,
         qualities: List<Quality>? = null,
+        qualitySizes: Map<Quality, Long>? = null,
         lyricTranslateLangs: List<String>? = null,
         lyricTranslateLang: String? = null,
     ): Song = Song(
@@ -130,6 +133,7 @@ data class Song(
         tlyric = tlyric ?: this.tlyric,
         wordLyric = wordLyric ?: this.wordLyric,
         qualities = qualities ?: this.qualities,
+        qualitySizes = qualitySizes ?: this.qualitySizes,
         lyricTranslateLangs = lyricTranslateLangs ?: this.lyricTranslateLangs,
         lyricTranslateLang = lyricTranslateLang ?: this.lyricTranslateLang,
         albumArtist = albumArtist,
@@ -261,7 +265,10 @@ data class AlbumSong(
     val duration: Int,
     val track: Int? = null,
     val discNumber: Int? = null,
+    val albumArtist: String? = null,
     val qualities: List<Quality> = emptyList(),
+    /** 各档位对应的文件大小（字节）；平台没给就不含该键 */
+    val qualitySizes: Map<Quality, Long> = emptyMap(),
     /** 歌手名列表（多歌手逐个列出） */
     val artistNames: List<String> = emptyList(),
     /** 歌手 id 列表（与 [artistNames] 按下标对应；平台拿不到时为空） */
@@ -411,4 +418,23 @@ data class KkboxAccount(
         session = session ?: this.session,
         isActive = isActive ?: this.isActive,
     )
+}
+
+/**
+ * 正在播放音频的格式信息（播放页胶囊展示，由引擎 ffprobe 探测后经事件流下发）。
+ *
+ * 无损才有 [bitDepth]（mp3/aac 等有损格式取不到，保持 0），此时改用 [bitrate] 展示。
+ */
+data class AudioInfo(
+    /** 编码（`FLAC` / `MP3` / `AAC` / `OPUS` …；未探测到为空串） */
+    val codec: String = "",
+    /** 位深（bit，如 16 / 24；未知为 0） */
+    val bitDepth: Int = 0,
+    /** 采样率（Hz，如 44100 / 96000；未知为 0） */
+    val sampleRate: Int = 0,
+    /** 比特率（bit/s，如 320000；未知为 0）。无位深的有损格式用它顶替展示 */
+    val bitrate: Int = 0,
+) {
+    /** 是否无有效信息（UI 据此隐藏胶囊） */
+    val isEmpty: Boolean get() = codec.isEmpty() && sampleRate == 0
 }

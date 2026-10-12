@@ -405,6 +405,16 @@ fun QobuzDetailScreen(
             visible = st.batchPickerVisible,
             qualities = listOf(Quality.hires, Quality.flac, Quality.k320k),
             labelOf = { q -> qobuzQualityLabel(q) },
+            specOf = { q ->
+                when (q) {
+                    Quality.hires -> listOfNotNull(
+                        st.maxBitDepth?.let { "${it}bit" },
+                        st.maxSamplingRateKhz?.let { "${qobuzRateText(it)}kHz" },
+                    ).joinToString("/").ifEmpty { null }
+                    Quality.flac -> "16bit/44.1kHz"
+                    else -> null
+                }
+            },
             onSelect = { q -> batchDownload(q) },
             onCancel = { st.batchPickerVisible = false },
         )
