@@ -667,17 +667,56 @@ suspend fun getArtistSongs(artistId: String, page: Int = 1): KuwoArtistSongs {
     }
 }
 
-/** 获取歌手全部专辑（rn=100000）；失败返回空 */
+/**
+ * 获取歌手全部专辑；失败返回空。
+ *
+ * 主源 `stype=albumlist` 的条目带 `musiccnt`；web `artist/artistAlbum` 没有曲目数字段
+ * （用它卡片会恒显示 0 首），仅作主源失效时的兜底。
+ */
 suspend fun getArtistAlbums(artistId: String): List<Album> {
-    val cacheKey = "artist:albums:v1:$artistId"
+    // v2：v1 缓存的是无曲目数的旧结构，命中会继续显示 0 首
+    val cacheKey = "artist:albums:v2:$artistId"
     val cached = cacheService.get<List<Any?>>(cacheKey)
     if (cached != null) return _mapAlbums(cached)
 
-    val reqId = generateReqId()
-    val url =
-        "$_apiBaseAlbum/artist/artistAlbum?artistid=$artistId&pn=1" +
-            "&rn=100000&httpsStatus=1&reqId=$reqId&plat=web_www&from="
+    var rawList = _fetchArtistAlbumsRaw(artistId)
+    if (rawList.isEmpty()) rawList = _fetchArtistAlbumsRawFallback(artistId)
+    if (rawList.isEmpty()) return emptyList()
+    cacheService.set(cacheKey, rawList, _artistCacheTtl)
+    return _mapAlbums(rawList)
+}
+
+/** 歌手专辑主源（`stype=albumlist`；一页 100，取不满即到底） */
+private suspend fun _fetchArtistAlbumsRaw(artistId: String): List<Map<String, Any?>> {
+    val out = ArrayList<Map<String, Any?>>()
+    try {
+        var page = 0
+        while (page < 20) {
+            val url =
+                "http://search.kuwo.cn/r.s?stype=albumlist&artistid=$artistId" +
+                    "&pn=$page&rn=100&rformat=json&encoding=utf8" +
+                    "&vipver=MUSIC_8.7.7.0_BCS37&newver=1&client=kt&pcmp4=1"
+            val items = _parseKuwoList(
+                httpGetText(url, mapOf("User-Agent" to _desktopUa)),
+                "albumlist",
+            )
+            out += items
+            if (items.size < 100) break
+            page += 1
+        }
+    } catch (_: Throwable) {
+        return out
+    }
+    return out
+}
+
+/** 歌手专辑兜底源（web `artist/artistAlbum`；无曲目数） */
+private suspend fun _fetchArtistAlbumsRawFallback(artistId: String): List<Map<String, Any?>> {
     return try {
+        val reqId = generateReqId()
+        val url =
+            "$_apiBaseAlbum/artist/artistAlbum?artistid=$artistId&pn=1" +
+                "&rn=100000&httpsStatus=1&reqId=$reqId&plat=web_www&from="
         val resp = httpGetJson(
             url,
             mapOf(
@@ -698,30 +737,37 @@ suspend fun getArtistAlbums(artistId: String): List<Album> {
         if (_toInt(resp["code"]) != 200) return emptyList()
         val dataRaw = resp["data"]
         val data = if (dataRaw is Map<*, *>) dataRaw else emptyMap<String, Any?>()
-        val rawList = _mapList(data["albumList"])
-        cacheService.set(cacheKey, rawList, _artistCacheTtl)
-        _mapAlbums(rawList)
+        _mapList(data["albumList"])
     } catch (_: Throwable) {
         emptyList()
     }
 }
 
-/** 将酷我专辑原始条目映射为 [Album]（缓存命中与网络路径共用） */
+/** 酷我专辑条目 -> [Album]（缓存命中与网络路径共用；两源字段名不同，故取并集） */
 private fun _mapAlbums(raw: Any?): List<Album> {
     return _mapList(raw).map { item ->
         Album(
             albumid = _s(item["albumid"]),
-            name = decodeHtmlEntities(_strOr(item["album"], "未知专辑")),
+            name = decodeHtmlEntities(
+                _strOr(_firstTruthy(listOf(item["name"], item["NAME"], item["album"])), "未知专辑"),
+            ),
             artist = decodeHtmlEntities(_strOr(item["artist"], "")),
-            musiccnt = "0",
-            pub = _strOr(item["releaseDate"], ""),
+            platform = MusicPlatform.kuwo,
+            musiccnt = _strOr(
+                _firstTruthy(listOf(item["musiccnt"], item["MUSICCNT"])),
+                "0",
+            ),
+            pub = _strOr(
+                _firstTruthy(listOf(item["pub"], item["PUB"], item["releaseDate"])),
+                "",
+            ),
             pic = _strOr(item["pic"], "").replace(Regex("/(120|240|500)/"), "/800/"),
-            img = "",
-            htsImg = "",
-            company = "",
-            lang = "",
-            vip = "",
-            playcnt = "0",
+            img = _strOr(item["img"], ""),
+            htsImg = _strOr(item["hts_img"], ""),
+            company = _strOr(item["company"], ""),
+            lang = _strOr(item["lang"], ""),
+            vip = _strOr(item["vip"], ""),
+            playcnt = _strOr(item["PLAYCNT"], "0"),
         )
     }
 }

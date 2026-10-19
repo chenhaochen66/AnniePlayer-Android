@@ -625,6 +625,8 @@ private fun _mapQQAlbums(raw: Any?): List<Album> {
             null
         }
         val picRaw = _s(m["pic"])
+        // 曲目数两条链路位置不同：专辑搜索在 song_count，歌手专辑在 latest_song.song_count
+        val latestSong = _toMap(m["latest_song"])
         out.add(
             Album(
                 albumid = mid,
@@ -634,12 +636,25 @@ private fun _mapQQAlbums(raw: Any?): List<Album> {
                 ),
                 platform = MusicPlatform.qq,
                 musiccnt = _or(
-                    _firstTruthy(listOf(m["song_count"], m["songnum"], m["song_num"])),
+                    _firstTruthy(
+                        listOf(
+                            m["song_count"],
+                            m["songnum"],
+                            m["song_num"],
+                            latestSong?.get("song_count"),
+                        ),
+                    ),
                     "0",
                 ),
                 pub = _s(
                     _firstTruthy(
-                        listOf(m["publicTime"], m["public_time"], m["publishDate"], m["publish_date"]),
+                        listOf(
+                            m["publicTime"],
+                            m["public_time"],
+                            m["publishDate"],
+                            m["publish_date"],
+                            m["pubTime"],
+                        ),
                     ),
                 ),
                 pic = if (mid.isNotEmpty()) {
@@ -890,12 +905,44 @@ private fun _mapQQArtistSong(m: Map<String, Any?>): Song {
 /**
  * QQ 音乐歌手专辑。
  *
- * 已废弃：官方歌手专辑接口（musicu `get_singer_album`）已失效，恒返回空；
- * 官方网页改用签名版 `musics.fcg`。这里保留 Dart 原兜底——「专辑搜索 + 歌手名
- * 精确过滤」，等签名实现接入后替换。
+ * 主源 `fcg_v8_singer_album`（网页歌手页在用）条目带 `latest_song.song_count`；
+ * musicu `GetAlbumList` 的 `totalNum` 恒为 0（卡片曲目数会一直显示 0），仅作兜底。
  */
 suspend fun getQQArtistAlbums(singerMid: String, singerName: String): List<Album> {
     if (singerMid.isEmpty()) return emptyList()
+    val viaWeb = _fetchQQArtistAlbumsViaWeb(singerMid)
+    if (viaWeb.isNotEmpty()) return viaWeb
+    return _fetchQQArtistAlbumsViaMusicu(singerMid)
+}
+
+/** 歌手专辑主源（网页 `fcg_v8_singer_album`；一页 60，取不满即到底） */
+private suspend fun _fetchQQArtistAlbumsViaWeb(singerMid: String): List<Album> {
+    val out = mutableListOf<Album>()
+    try {
+        var begin = 0
+        while (begin < 3000) {
+            val url =
+                "https://c.y.qq.com/v8/fcg-bin/fcg_v8_singer_album.fcg" +
+                    "?singermid=$singerMid&format=json&platform=yqq&needNewCode=1" +
+                    "&begin=$begin&num=60"
+            val text = httpGetText(url, qqHeaders)
+            val decoded = jsonElementToAny(json.parseToJsonElement(_stripBom(text)))
+            val data = if (decoded is Map<*, *>) decoded["data"] else null
+            val list = if (data is Map<*, *>) data["list"] else null
+            val items = if (list is List<*>) list else emptyList<Any?>()
+            if (items.isEmpty()) break
+            out += _mapQQAlbums(items)
+            if (items.size < 60) break
+            begin += 60
+        }
+    } catch (_: Throwable) {
+        return out
+    }
+    return out
+}
+
+/** 歌手专辑兜底源（musicu `GetAlbumList`；`totalNum` 恒 0，拿不到曲目数） */
+private suspend fun _fetchQQArtistAlbumsViaMusicu(singerMid: String): List<Album> {
     val out = mutableListOf<Album>()
     return try {
         var begin = 0
