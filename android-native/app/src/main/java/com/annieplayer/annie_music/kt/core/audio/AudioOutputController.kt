@@ -36,6 +36,23 @@ class AudioOutputController(context: Context) {
     /** 最近一次选择的输出设备 id；-1 表示未显式指定，由系统路由（此时按优先级自动挑） */
     private var _preferredDeviceId: Int = NO_DEVICE
 
+    /** 设备插拔 / 手动切换后通知宿主刷新状态（backend 据此重算 route 与徽章） */
+    var onDevicesChanged: (() -> Unit)? = null
+
+    private val deviceCallback = object : android.media.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
+            onDevicesChanged?.invoke()
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
+            onDevicesChanged?.invoke()
+        }
+    }
+
+    init {
+        _audioManager.registerAudioDeviceCallback(deviceCallback, null)
+    }
+
     /** 输出设备描述（采样率 / 通道 / 编码为该设备上报的能力） */
     data class DeviceInfo(
         val id: Int,
@@ -64,7 +81,13 @@ class AudioOutputController(context: Context) {
         _audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)?.toIntOrNull() ?: 256
 
     fun listOutputDevices(): List<DeviceInfo> =
-        _audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { d -> _toDeviceInfo(d) }
+        _audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            // SCO 是通话音路、EARPIECE 是听筒，媒体播放不该出现在选择列表里
+            .filter {
+                it.type != AudioDeviceInfo.TYPE_BLUETOOTH_SCO &&
+                    it.type != AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+            }
+            .map { d -> _toDeviceInfo(d) }
 
     /**
      * 选择输出设备。返回该 id 是否存在；不存在则不改动当前选择。
@@ -72,12 +95,26 @@ class AudioOutputController(context: Context) {
      */
     fun selectOutputDevice(deviceId: Int): Boolean {
         val exists = _audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.id == deviceId }
-        if (exists) _preferredDeviceId = deviceId
+        if (exists) {
+            _preferredDeviceId = deviceId
+            onDevicesChanged?.invoke()
+        }
         return exists
     }
 
     /** 当前选择（未显式选择时按 USB -> 有线 -> 内置扬声器 的优先级自动挑） */
     fun currentOutputDevice(): DeviceInfo? = _findOutputDevice()?.let { _toDeviceInfo(it) }
+
+    /** 当前输出通路（徽章据此决定「能不能宣称直通」） */
+    fun currentRoute(): AudioRoute = _routeOf(_findOutputDevice())
+
+    /** 当前输出设备名（徽章详情用；取不到为空串） */
+    fun currentDeviceName(): String =
+        _findOutputDevice()?.productName?.toString().orEmpty()
+
+    /** 系统级 bit-perfect 是否值得尝试（API 34+ 且外接 USB） */
+    fun canAttemptBitPerfect(): Boolean =
+        isBitPerfectPassthroughSupported && currentRoute() == AudioRoute.usb
 
     /** 把所选设备作为 ExoPlayer 的首选输出设备（Media3 负责真正路由） */
     fun applyOutputDeviceToPlayer(player: ExoPlayer): Boolean {
@@ -168,7 +205,7 @@ class AudioOutputController(context: Context) {
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
         .build()
 
-    /** 显式选择优先；未选择时按 USB -> 有线耳机 -> 内置扬声器 挑（便于直通外接 DAC） */
+    /** 显式选择优先；未选择时按 USB -> 有线 -> 蓝牙 -> 内置扬声器 挑（对齐系统媒体路由习惯） */
     private fun _findOutputDevice(): AudioDeviceInfo? {
         val devices = _audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         if (_preferredDeviceId != NO_DEVICE) {
@@ -178,6 +215,12 @@ class AudioOutputController(context: Context) {
             it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
         } ?: devices.firstOrNull {
             it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET
+        } ?: devices.firstOrNull {
+            // 只认 A2DP（媒体）；SCO/LE 通话链路不选
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+        } ?: devices.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_BLE_SPEAKER
         } ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
     }
 
@@ -190,6 +233,22 @@ class AudioOutputController(context: Context) {
         encodings = d.encodings.toList(),
         isUsb = d.type == AudioDeviceInfo.TYPE_USB_DEVICE || d.type == AudioDeviceInfo.TYPE_USB_HEADSET,
     )
+
+    private fun _routeOf(d: AudioDeviceInfo?): AudioRoute = when (d?.type) {
+        AudioDeviceInfo.TYPE_USB_DEVICE,
+        AudioDeviceInfo.TYPE_USB_HEADSET -> AudioRoute.usb
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        AudioDeviceInfo.TYPE_LINE_ANALOG,
+        AudioDeviceInfo.TYPE_LINE_DIGITAL -> AudioRoute.wired
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        AudioDeviceInfo.TYPE_BLE_HEADSET,
+        AudioDeviceInfo.TYPE_BLE_SPEAKER -> AudioRoute.bluetooth
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> AudioRoute.speaker
+        else -> AudioRoute.other
+    }
 
     private companion object {
         const val NO_DEVICE: Int = -1

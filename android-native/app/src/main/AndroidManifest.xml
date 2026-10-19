@@ -17,6 +17,12 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
+    <!-- 蓝牙 codec 读取（当前 codec / 采样率 / 位深 / LDAC 码率）；12+ 为运行时权限 -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
     <application
         android:name=".AnnieApp"
         android:allowBackup="true"

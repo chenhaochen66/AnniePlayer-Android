@@ -88,5 +88,9 @@ dependencies {
     // 本库是协程原生实现（evaluate 为 suspend），能正确驱动异步。
     implementation("io.github.dokar3:quickjs-kt:1.0.15")
 
+    // FLAC 软解：用成熟的 jFLAC（LGPL，纯 Java），不再手写解码器。
+    // 只负责把一帧解成 PCM，渲染仍走 Media3 的 SimpleDecoder/Renderer。
+    implementation("org.jflac:jflac-codec:1.5.2")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

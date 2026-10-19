@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.annieplayer.annie_music.kt.core.audio.AudioOutputStatus
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.model.AudioInfo
 import com.annieplayer.annie_music.kt.data.model.LoopMode
@@ -85,6 +86,8 @@ data class PlayerState(
     val isLyricsVisible: Boolean = false,
     /** 正在播放音频的格式信息（引擎探测后下发；空 = 隐藏胶囊） */
     val audioInfo: AudioInfo = AudioInfo(),
+    /** 当前输出链路状态（模式 / 设备 / 是否重采样 / 是否 bit-perfect） */
+    val audioStatus: AudioOutputStatus? = null,
 ) {
     /**
      * 局部更新（对齐 Dart `PlayerState.copyWith`）。
@@ -105,6 +108,7 @@ data class PlayerState(
         downloadedIds: List<String>? = null,
         isLyricsVisible: Boolean? = null,
         audioInfo: AudioInfo? = null,
+        audioStatus: AudioOutputStatus? = null,
     ): PlayerState = PlayerState(
         queue = queue ?: this.queue,
         currentIndex = currentIndex ?: this.currentIndex,
@@ -118,6 +122,7 @@ data class PlayerState(
         downloadedIds = downloadedIds ?: this.downloadedIds,
         isLyricsVisible = isLyricsVisible ?: this.isLyricsVisible,
         audioInfo = audioInfo ?: this.audioInfo,
+        audioStatus = audioStatus ?: this.audioStatus,
     )
 }
 
@@ -280,6 +285,11 @@ class PlayerViewModel : ViewModel() {
                 val audioInfo = event["audioInfo"]
                 if (audioInfo is AudioInfo && !audioInfo.isEmpty) {
                     _state.value = _state.value.copyWith(audioInfo = audioInfo)
+                }
+
+                val audioStatus = event["audioStatus"]
+                if (audioStatus is AudioOutputStatus) {
+                    _state.value = _state.value.copyWith(audioStatus = audioStatus)
                 }
 
                 val isPlaying = event["isPlaying"]

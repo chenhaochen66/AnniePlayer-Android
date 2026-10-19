@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -47,6 +48,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.annieplayer.annie_music.kt.core.audio.AudioOutputMode
+import com.annieplayer.annie_music.kt.core.audio.EqPreset
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.playQualityAutoLabelOf
@@ -65,13 +68,51 @@ import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 /** 分组展开后子项错峰进场延迟 */
 private const val MoreSettingsItemStaggerMillis = 25
 
+/** 重采样可选目标率（0 = 跟随设备原生率） */
+private val ResampleRates: List<Int> = listOf(
+    0, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000,
+)
+
+private fun formatRateKhz(rate: Int): String =
+    if (rate % 1000 == 0) "${rate / 1000} kHz" else "%.1f kHz".format(rate / 1000f)
+
+private fun resampleRateLabel(rate: Int, autoTargetRate: Int = 0): String {
+    if (rate > 0) return formatRateKhz(rate)
+    return if (autoTargetRate > 0) {
+        "跟随设备（${formatRateKhz(autoTargetRate)}）"
+    } else {
+        "跟随设备（蓝牙旁路）"
+    }
+}
+
+private fun depthLabel(depth: Int): String = when (depth) {
+    16 -> "16 Bit"
+    24 -> "24 Bit"
+    32 -> "32 Bit (Float)"
+    else -> "跟随源"
+}
+
+/** 只列出当前设备声明支持的档位；0 = 跟随设备。设备列表为空时退回完整候选。 */
+private fun resampleOptions(deviceSampleRates: List<Int>, current: Int): List<Int> {
+    val supported = deviceSampleRates
+        .filter { it in 32_000..768_000 }
+        .distinct()
+        .sorted()
+    if (supported.isEmpty()) return ResampleRates
+    val result = mutableListOf(0)
+    result.addAll(supported)
+    // 设备切换后当前选中档可能已不支持，仍列出来方便用户改回去
+    if (current > 0 && current !in result) result.add(current)
+    return result.distinct().sorted()
+}
+
 /**
  * 分组头与设置项的**统一行高**。
  *
  * 组按钮要和它自己的设置项一样大，所以两者共用这个高度（内容垂直居中，
  * 副标题限一行避免溢出）。以后加设置项只要用同一高度就不会参差不齐。
  */
-private val MoreSettingRowHeight = 72.dp
+private val MoreSettingRowHeight = 80.dp
 
 // ── 设置项模型（新增设置只需在这里加一种项 / 在 moreSettingsGroups 里加一行） ──
 
@@ -148,6 +189,21 @@ fun moreSettingsGroups(
     onToggleWriteEnhancedLyrics: (Boolean) -> Unit,
     saveLrcFile: Boolean,
     onToggleSaveLrcFile: (Boolean) -> Unit,
+    audioMode: AudioOutputMode = AudioOutputMode.transparent,
+    onPickAudioMode: (AudioOutputMode) -> Unit = {},
+    eqPreset: EqPreset = EqPreset.flat,
+    onPickEqPreset: (EqPreset) -> Unit = {},
+    loudnessNormalization: Boolean = false,
+    onToggleLoudnessNormalization: (Boolean) -> Unit = {},
+    forceNativeRate: Boolean = false,
+    onToggleForceNativeRate: (Boolean) -> Unit = {},
+    resampleRate: Int = 0,
+    onPickResampleRate: (Int) -> Unit = {},
+    resampleDepth: Int = 0,
+    onPickResampleDepth: (Int) -> Unit = {},
+    autoTargetRate: Int = 0,
+    deviceSampleRates: List<Int> = emptyList(),
+    outputDetail: String = "",
     lxPluginEnabled: Boolean = false,
     lxPluginCount: Int = 0,
     onToggleLxPlugin: (Boolean) -> Unit = {},
@@ -193,6 +249,98 @@ fun moreSettingsGroups(
                     },
             ),
         ),
+    ),
+    MoreSettingGroup(
+        title = "音频输出",
+        items = buildList {
+            add(
+                MoreSettingDropdown(
+                    key = "audio-output-mode",
+                    label = "输出模式",
+                    subtitle = outputDetail.ifEmpty { "透明 = DSP 全旁路；调音 = EQ + 响度 + 限幅" },
+                    value = audioMode.label,
+                    options = AudioOutputMode.entries.map { mode ->
+                        MoreSettingOption(
+                            label = mode.label,
+                            selected = mode == audioMode,
+                            onSelect = { onPickAudioMode(mode) },
+                        )
+                    },
+                ),
+            )
+            // 透明模式下 DSP 整体旁路，这些选项放出来只会误导（改了也听不出来）
+            if (audioMode == AudioOutputMode.tuned) {
+                add(
+                    MoreSettingDropdown(
+                        key = "audio-eq-preset",
+                        label = "EQ 预设",
+                        subtitle = "调音模式专属；切换立即生效",
+                        value = eqPreset.label,
+                        options = EqPreset.entries.map { preset ->
+                            MoreSettingOption(
+                                label = preset.label,
+                                selected = preset == eqPreset,
+                                onSelect = { onPickEqPreset(preset) },
+                            )
+                        },
+                    ),
+                )
+                add(
+                    MoreSettingSwitch(
+                        key = "audio-loudness",
+                        label = "响度归一化",
+                        subtitle = "按 ReplayGain 标签调整增益；无标签的歌曲不做处理",
+                        checked = loudnessNormalization,
+                        onCheckedChange = onToggleLoudnessNormalization,
+                    ),
+                )
+            }
+            add(
+                MoreSettingSwitch(
+                    key = "audio-force-native-rate",
+                    label = "无 SRC 输出",
+                    subtitle = "输出前先统一采样率，避免系统混音器再转换一次",
+                    checked = forceNativeRate,
+                    onCheckedChange = onToggleForceNativeRate,
+                ),
+            )
+            if (forceNativeRate) {
+                add(
+                    MoreSettingDropdown(
+                        key = "audio-resample-rate",
+                        label = "重采样目标",
+                        subtitle = "跟随设备会按 USB / 有线 / 蓝牙自动选择，也可以手动指定固定档位",
+                        value = resampleRateLabel(resampleRate, autoTargetRate),
+                        options = resampleOptions(deviceSampleRates, resampleRate).map { rate ->
+                            MoreSettingOption(
+                                label = if (rate == 0) {
+                                    resampleRateLabel(0, autoTargetRate)
+                                } else {
+                                    formatRateKhz(rate)
+                                },
+                                selected = rate == resampleRate,
+                                onSelect = { onPickResampleRate(rate) },
+                            )
+                        },
+                    ),
+                )
+                add(
+                    MoreSettingDropdown(
+                        key = "audio-resample-depth",
+                        label = "输出位深",
+                        subtitle = "跟随源 = 保持解码位深；32 Bit 走 float，精度最高",
+                        value = depthLabel(resampleDepth),
+                        options = listOf(0, 16, 24, 32).map { depth ->
+                            MoreSettingOption(
+                                label = depthLabel(depth),
+                                selected = depth == resampleDepth,
+                                onSelect = { onPickResampleDepth(depth) },
+                            )
+                        },
+                    ),
+                )
+            }
+        },
     ),
     MoreSettingGroup(
         title = "落雪音源",
@@ -387,7 +535,7 @@ private fun MoreSettingsActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(MoreSettingRowHeight)
+            .heightIn(min = MoreSettingRowHeight)
             .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.card))
             .clickableNoRipple(onClick)
             .padding(AppSpacing.sp16),
@@ -405,7 +553,6 @@ private fun MoreSettingsActionRow(
                 text = subtitle,
                 color = AppColors.textTertiary,
                 fontSize = AppFontSize.sm,
-                maxLines = 1,
             )
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp12))
@@ -451,7 +598,7 @@ private fun MoreSettingsDropdownRow(item: MoreSettingDropdown) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(MoreSettingRowHeight)
+                .heightIn(min = MoreSettingRowHeight)
                 .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.card))
                 .clickableNoRipple { expanded = !expanded }
                 .padding(AppSpacing.sp16),
@@ -470,7 +617,6 @@ private fun MoreSettingsDropdownRow(item: MoreSettingDropdown) {
                         text = item.subtitle,
                         color = AppColors.textTertiary,
                         fontSize = AppFontSize.sm,
-                        maxLines = 1,
                     )
                 }
             }
@@ -666,7 +812,7 @@ private fun MoreSettingsSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(MoreSettingRowHeight)
+            .heightIn(min = MoreSettingRowHeight)
             .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.card))
             .clickableNoRipple { onCheckedChange(!checked) }
             .padding(AppSpacing.sp16),
@@ -684,7 +830,6 @@ private fun MoreSettingsSwitchRow(
                 text = subtitle,
                 color = AppColors.textTertiary,
                 fontSize = AppFontSize.sm,
-                maxLines = 1,
             )
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp12))

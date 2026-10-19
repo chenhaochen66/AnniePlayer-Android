@@ -2,6 +2,8 @@ package com.annieplayer.annie_music.kt.core.state
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.annieplayer.annie_music.kt.core.audio.AudioOutputMode
+import com.annieplayer.annie_music.kt.core.audio.EqPreset
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import kotlinx.coroutines.CompletableDeferred
@@ -21,6 +23,13 @@ object MoreSettings {
     private const val PLAY_QUALITY_AUTO = "auto"
     private const val KEY_WRITE_ENHANCED_LYRICS = "write-enhanced-lyrics"
     private const val KEY_SAVE_LRC_FILE = "save-lrc-file"
+    private const val KEY_AUDIO_MODE = "audio-output-mode"
+    private const val KEY_EQ_PRESET = "audio-eq-preset"
+    private const val KEY_LOUDNESS = "audio-loudness-normalization"
+    private const val KEY_FORCE_NATIVE_RATE = "audio-force-native-rate"
+    private const val KEY_RESAMPLE_RATE = "audio-resample-rate"
+    private const val KEY_RESAMPLE_DEPTH = "audio-resample-depth"
+    private const val KEY_SOFTWARE_FLAC = "audio-software-flac"
 
     private var _prefs: SharedPreferences? = null
 
@@ -45,6 +54,36 @@ object MoreSettings {
     /** 下载时是否在歌曲同目录另存一份同名 `.lrc`（内容与内嵌歌词完全一致）；默认 false */
     val saveLrcFile: StateFlow<Boolean> = _saveLrcFile.asStateFlow()
 
+    private val _audioMode = MutableStateFlow(AudioOutputMode.transparent)
+
+    /** 透明 / 调音（互斥；默认透明，保证「不做 DSP」是默认行为） */
+    val audioMode: StateFlow<AudioOutputMode> = _audioMode.asStateFlow()
+
+    private val _eqPreset = MutableStateFlow(EqPreset.flat)
+
+    /** 调音模式的 EQ 预设 */
+    val eqPreset: StateFlow<EqPreset> = _eqPreset.asStateFlow()
+
+    private val _loudnessNormalization = MutableStateFlow(false)
+
+    /** 调音模式的响度归一化（R128 / ReplayGain 标签） */
+    val loudnessNormalization: StateFlow<Boolean> = _loudnessNormalization.asStateFlow()
+
+    private val _forceNativeRate = MutableStateFlow(false)
+
+    /** 强制重采样到设备原生率（实验项，见 `SincResamplerAudioProcessor`） */
+    val forceNativeRate: StateFlow<Boolean> = _forceNativeRate.asStateFlow()
+
+    private val _resampleRate = MutableStateFlow(0)
+
+    /** 重采样目标率（Hz）；0 = 跟随设备原生率 */
+    val resampleRate: StateFlow<Int> = _resampleRate.asStateFlow()
+
+    private val _resampleDepth = MutableStateFlow(0)
+
+    /** 重采样输出位深；0 = 跟随输入，16 / 32（float） */
+    val resampleDepth: StateFlow<Int> = _resampleDepth.asStateFlow()
+
     /** 由 Application / Activity 调用以开启持久化（对齐 QobuzViewModel.init 模式） */
     fun init(context: Context) {
         _prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -63,6 +102,14 @@ object MoreSettings {
             _prefs?.getBoolean(KEY_WRITE_ENHANCED_LYRICS, false) ?: false
         _saveLrcFile.value =
             _prefs?.getBoolean(KEY_SAVE_LRC_FILE, false) ?: false
+        _audioMode.value = AudioOutputMode.fromKey(_prefs?.getString(KEY_AUDIO_MODE, null))
+        _eqPreset.value = EqPreset.fromKey(_prefs?.getString(KEY_EQ_PRESET, null))
+        _loudnessNormalization.value =
+            _prefs?.getBoolean(KEY_LOUDNESS, false) ?: false
+        _forceNativeRate.value =
+            _prefs?.getBoolean(KEY_FORCE_NATIVE_RATE, false) ?: false
+        _resampleRate.value = _prefs?.getInt(KEY_RESAMPLE_RATE, 0) ?: 0
+        _resampleDepth.value = _prefs?.getInt(KEY_RESAMPLE_DEPTH, 0) ?: 0
     }
 
     fun setWriteQobuzDownloadTranslation(value: Boolean) {
@@ -91,6 +138,36 @@ object MoreSettings {
     fun setSaveLrcFile(value: Boolean) {
         _saveLrcFile.value = value
         _prefs?.edit()?.putBoolean(KEY_SAVE_LRC_FILE, value)?.apply()
+    }
+
+    fun setAudioMode(mode: AudioOutputMode) {
+        _audioMode.value = mode
+        _prefs?.edit()?.putString(KEY_AUDIO_MODE, mode.key)?.apply()
+    }
+
+    fun setEqPreset(preset: EqPreset) {
+        _eqPreset.value = preset
+        _prefs?.edit()?.putString(KEY_EQ_PRESET, preset.key)?.apply()
+    }
+
+    fun setLoudnessNormalization(value: Boolean) {
+        _loudnessNormalization.value = value
+        _prefs?.edit()?.putBoolean(KEY_LOUDNESS, value)?.apply()
+    }
+
+    fun setForceNativeRate(value: Boolean) {
+        _forceNativeRate.value = value
+        _prefs?.edit()?.putBoolean(KEY_FORCE_NATIVE_RATE, value)?.apply()
+    }
+
+    fun setResampleRate(rate: Int) {
+        _resampleRate.value = rate
+        _prefs?.edit()?.putInt(KEY_RESAMPLE_RATE, rate)?.apply()
+    }
+
+    fun setResampleDepth(depth: Int) {
+        _resampleDepth.value = depth
+        _prefs?.edit()?.putInt(KEY_RESAMPLE_DEPTH, depth)?.apply()
     }
 }
 

@@ -62,6 +62,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.audio.AnnieAudioHolder
+import com.annieplayer.annie_music.kt.core.audio.AudioOutputController
+import com.annieplayer.annie_music.kt.core.audio.AudioOutputStatus
+import com.annieplayer.annie_music.kt.core.audio.AudioRoute
+import com.annieplayer.annie_music.kt.core.audio.AudioTone
 import com.annieplayer.annie_music.kt.core.state.PlayerState
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.data.model.AudioInfo
@@ -169,6 +174,14 @@ fun PlayerScreen(
     var coverFailed by remember(song.id) { mutableStateOf(false) }
     var fontScaleVisible by remember { mutableStateOf(false) }
     var fontScale by remember { mutableFloatStateOf(0.75f) }
+    var deviceSheetVisible by remember { mutableStateOf(false) }
+    var deviceList by remember { mutableStateOf<List<AudioOutputController.DeviceInfo>>(emptyList()) }
+
+    LaunchedEffect(deviceSheetVisible) {
+        if (deviceSheetVisible) {
+            deviceList = AnnieAudioHolder.audioOutput?.listOutputDevices().orEmpty()
+        }
+    }
 
     val pagerState = rememberPagerState(pageCount = { 2 })
     val scope = rememberCoroutineScope()
@@ -220,6 +233,9 @@ fun PlayerScreen(
                         )
                     }
                 },
+                deviceName = player.audioStatus?.deviceName.orEmpty(),
+                deviceRoute = player.audioStatus?.route ?: AudioRoute.other,
+                onOpenDevices = { deviceSheetVisible = true },
                 onClose = onClose,
             )
 
@@ -263,7 +279,8 @@ fun PlayerScreen(
                         }
                         PlayerAudioInfoChip(
                             info = player.audioInfo,
-                            maxWidth = screenW / 2 - AppSpacing.screenPaddingH,
+                            status = player.audioStatus,
+                            maxWidth = screenW - AppSpacing.screenPaddingH * 2,
                             resetKey = song.id to ui.playerOverlayVisible,
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
@@ -389,6 +406,26 @@ fun PlayerScreen(
             onToggleWordByWord = onToggleWordByWord,
             onClose = { fontScaleVisible = false },
         )
+
+        // ── 播放设备面板（顶栏右侧入口） ──
+        AudioDeviceSheet(
+            visible = deviceSheetVisible,
+            devices = deviceList,
+            currentDeviceId = if (deviceSheetVisible) {
+                AnnieAudioHolder.audioOutput?.currentOutputDevice()?.id ?: -1
+            } else {
+                -1
+            },
+            onSelect = { device ->
+                val controller = AnnieAudioHolder.audioOutput
+                if (controller != null) {
+                    controller.selectOutputDevice(device.id)
+                    AnnieAudioHolder.player?.let { controller.applyOutputDeviceToPlayer(it) }
+                }
+                deviceSheetVisible = false
+            },
+            onClose = { deviceSheetVisible = false },
+        )
     }
 }
 
@@ -402,24 +439,76 @@ fun PlayerScreen(
 private fun PlayerTopBar(
     pageIndex: Int,
     onPageSelected: (Int) -> Unit,
+    deviceName: String,
+    deviceRoute: AudioRoute,
+    onOpenDevices: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp6),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier.size(PlayerTopBarButtonSize).clickableNoRipple { onClose() },
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .size(PlayerTopBarButtonSize)
+                .clickableNoRipple { onClose() },
             contentAlignment = Alignment.Center,
         ) {
             PlayerChevronDownGlyph(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.white70)
         }
-        Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
+        Row(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalArrangement = Arrangement.Center,
+        ) {
             PlayerPageToggle(pageIndex = pageIndex, onPageSelected = onPageSelected)
         }
-        Spacer(modifier = Modifier.size(PlayerTopBarButtonSize))
+        PlayerDeviceButton(
+            name = deviceName,
+            route = deviceRoute,
+            onClick = onOpenDevices,
+            modifier = Modifier.align(Alignment.CenterEnd),
+        )
+    }
+}
+
+/** 顶栏右侧：当前输出设备（图标 + 名称），名称过长时滚动，点击打开设备面板 */
+@Composable
+private fun PlayerDeviceButton(
+    name: String,
+    route: AudioRoute,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val labelStyle = TextStyle(
+        color = AppColors.white70,
+        fontSize = AppFontSize.sm,
+        fontWeight = AppFontWeight.medium,
+    )
+    Row(
+        modifier = modifier
+            .widthIn(max = 92.dp)
+            .clip(RoundedCornerShape(AppRadius.pill))
+            .background(Color.White.copy(alpha = 0.08f))
+            .clickableNoRipple(onClick)
+            .padding(horizontal = AppSpacing.sp8, vertical = AppSpacing.sp4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        DeviceTypeGlyph(
+            route = route,
+            tint = AppColors.white70,
+            modifier = Modifier.size(AppIconSize.icon15),
+        )
+        Spacer(modifier = Modifier.width(AppSpacing.sp4))
+        MovingText(
+            text = name.ifEmpty { "设备" },
+            threshold = Int.MAX_VALUE,
+            speed = 60f,
+            pingPong = true,
+            style = labelStyle,
+            modifier = Modifier.widthIn(max = 56.dp),
+        )
     }
 }
 
@@ -511,63 +600,104 @@ private fun PlayerCoverImage(
 }
 
 /**
- * 音频信息胶囊（仅封面页）：圆盘图标 + `编码 · 位深 Bit / 采样率 kHz`。
+ * 音频信息胶囊（仅封面页）：左侧是**源格式**（`编码 · 位深 Bit / 采样率 kHz`），
+ * 右侧是**输出链路**（模式，开了重采样时补上重采样后的位深/采样率）。两个胶囊样式一致。
  *
- * [maxWidth] 限制胶囊最长只到封面水平中线，超出部分省略号截断；无有效信息时槽位仍占位，
- * 避免探测结果到达前后封面位置跳动。
+ * 无有效信息时槽位仍占位，避免探测结果到达前后封面位置跳动。
  */
 @Composable
 private fun PlayerAudioInfoChip(
     info: AudioInfo,
+    status: AudioOutputStatus?,
     maxWidth: Dp,
     resetKey: Any,
     modifier: Modifier = Modifier,
 ) {
-    val label = audioInfoLabel(info)
-    val labelStyle = TextStyle(
-        color = AppColors.white,
-        fontSize = AppFontSize.size15,
-        fontWeight = AppFontWeight.medium,
-    )
-    val windowWidth = maxWidth - PlayerAudioInfoIconBox - AppSpacing.sp8 - AppSpacing.sp10 * 2
+    val formatLabel = audioInfoLabel(info)
+    val outputLabel = audioOutputLabel(status)
+    val toneColor = when (status?.tone) {
+        AudioTone.good -> Color(0xFF4ADE80)
+        AudioTone.warn -> Color(0xFFFBBF24)
+        AudioTone.tuned -> Color(0xFF60A5FA)
+        else -> AppColors.white
+    }
+    val gap = AppSpacing.sp8
+    val pillMaxWidth = ((maxWidth - gap) / 2).coerceAtLeast(0.dp)
 
     Box(
         modifier = modifier.height(PlayerAudioInfoSlotHeight),
         contentAlignment = Alignment.CenterStart,
     ) {
-        if (!info.isEmpty) {
-            Row(
-                modifier = Modifier
-                    .widthIn(max = maxWidth)
-                    .clip(RoundedCornerShape(AppRadius.pill))
-                    .background(Color.White.copy(alpha = 0.14f))
-                    .padding(horizontal = AppSpacing.sp10, vertical = AppSpacing.sp4),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(PlayerAudioInfoIconBox)
-                        .clip(RoundedCornerShape(AppRadius.r4))
-                        .background(Color.White.copy(alpha = 0.18f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    AudioDiscGlyph(
-                        modifier = Modifier.size(AppIconSize.icon15),
-                        tint = AppColors.white,
-                    )
-                }
-                Spacer(modifier = Modifier.width(AppSpacing.sp8))
-                key(resetKey) {
-                    MovingText(
-                        text = label,
-                        threshold = Int.MAX_VALUE,
-                        speed = 90f,
-                        pingPong = true,
-                        style = labelStyle,
-                        modifier = Modifier.widthIn(max = windowWidth),
-                    )
-                }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (formatLabel.isNotEmpty()) {
+                AudioInfoPill(
+                    label = formatLabel,
+                    tone = AppColors.white,
+                    maxWidth = pillMaxWidth,
+                    resetKey = resetKey to "format",
+                )
             }
+            if (formatLabel.isNotEmpty() && outputLabel.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(gap))
+            }
+            if (outputLabel.isNotEmpty()) {
+                AudioInfoPill(
+                    label = outputLabel,
+                    tone = toneColor,
+                    maxWidth = pillMaxWidth,
+                    resetKey = resetKey to "output",
+                )
+            }
+        }
+    }
+}
+
+/** 单个信息胶囊：圆盘图标 + 跑马灯文本（源格式与输出链路共用同一套样式） */
+@Composable
+private fun AudioInfoPill(
+    label: String,
+    tone: Color,
+    maxWidth: Dp,
+    resetKey: Any,
+) {
+    val labelStyle = TextStyle(
+        color = AppColors.white,
+        fontSize = AppFontSize.size15,
+        fontWeight = AppFontWeight.medium,
+    )
+    val windowWidth =
+        (maxWidth - PlayerAudioInfoIconBox - AppSpacing.sp8 - AppSpacing.sp10 * 2).coerceAtLeast(0.dp)
+
+    Row(
+        modifier = Modifier
+            .widthIn(max = maxWidth)
+            .clip(RoundedCornerShape(AppRadius.pill))
+            .background(Color.White.copy(alpha = 0.14f))
+            .padding(horizontal = AppSpacing.sp10, vertical = AppSpacing.sp4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(PlayerAudioInfoIconBox)
+                .clip(RoundedCornerShape(AppRadius.r4))
+                .background(tone.copy(alpha = 0.22f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            AudioDiscGlyph(
+                modifier = Modifier.size(AppIconSize.icon15),
+                tint = tone,
+            )
+        }
+        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+        key(resetKey) {
+            MovingText(
+                text = label,
+                threshold = Int.MAX_VALUE,
+                speed = 90f,
+                pingPong = true,
+                style = labelStyle,
+                modifier = Modifier.widthIn(max = windowWidth),
+            )
         }
     }
 }
@@ -592,13 +722,7 @@ private fun AudioDiscGlyph(modifier: Modifier = Modifier, tint: Color) {
  * （`编码 · 320 kbps / 44.1 kHz`）。采样率整数 kHz 不带小数，带小数最多两位。
  */
 private fun audioInfoLabel(info: AudioInfo): String {
-    val rateText = when {
-        info.sampleRate <= 0 -> ""
-        info.sampleRate % 1000 == 0 -> "${info.sampleRate / 1000} kHz"
-        info.sampleRate % 100 == 0 -> "${info.sampleRate / 1000}.${(info.sampleRate % 1000) / 100} kHz"
-        else -> "${info.sampleRate / 1000}." +
-            (info.sampleRate % 1000).toString().padStart(3, '0').trimEnd('0') + " kHz"
-    }
+    val rateText = formatRateKhz(info.sampleRate)
     val headText = when {
         info.bitDepth > 0 -> "${info.bitDepth} Bit"
         info.bitrate > 0 -> "${info.bitrate / 1000} kbps"
@@ -610,6 +734,46 @@ private fun audioInfoLabel(info: AudioInfo): String {
         else -> "$headText / $rateText"
     }
     return listOf(info.codec, quality).filter { it.isNotEmpty() }.joinToString(" · ")
+}
+
+/**
+ * 输出链路胶囊文案：模式（`系统混音` / `重采样` / `Bit-Perfect` / `调音`），
+ * 若开了重采样则补上**重采样后的位深与采样率**（位深来自源，重采样只改采样率）。
+ */
+private fun audioOutputLabel(status: AudioOutputStatus?): String {
+    if (status == null) return ""
+    // 蓝牙：优先显示蓝牙链路自己的位深/采样率；开了重采样则显示重采样后的输出
+    if (status.route == AudioRoute.bluetooth) {
+        val resampled = status.resampledTo > 0
+        val rate = if (resampled) status.resampledTo else status.bluetoothRate
+        val depth = when {
+            status.outputDepth > 0 -> status.outputDepth
+            resampled -> status.sourceDepth
+            else -> status.bluetoothDepth
+        }
+        val rateText = formatRateKhz(rate)
+        val depthText = if (depth > 0) "$depth Bit / " else ""
+        val prefix = if (resampled) "重采样" else "蓝牙旁路"
+        return if (rateText.isEmpty()) prefix else "$prefix · $depthText$rateText"
+    }
+    val badge = status.badge
+    if (badge.isEmpty()) return ""
+    val rate = status.resampledTo
+    if (rate <= 0) return badge
+    val depthValue = if (status.outputDepth > 0) status.outputDepth else status.sourceDepth
+    val depth = if (depthValue > 0) "$depthValue Bit / " else ""
+    return "$badge · $depth${formatRateKhz(rate)}"
+}
+
+/** 采样率文案：整数 kHz 不带小数，带小数最多两位 */
+private fun formatRateKhz(rate: Int): String {
+    if (rate <= 0) return ""
+    return when {
+        rate % 1000 == 0 -> "${rate / 1000} kHz"
+        rate % 100 == 0 -> "${rate / 1000}.${(rate % 1000) / 100} kHz"
+        else -> "${rate / 1000}." +
+            (rate % 1000).toString().padStart(3, '0').trimEnd('0') + " kHz"
+    }
 }
 
 /** 「⋮」：MoreVert 的可用性在核心图标集中不确定，自绘三个圆点（对齐 26dp white60） */

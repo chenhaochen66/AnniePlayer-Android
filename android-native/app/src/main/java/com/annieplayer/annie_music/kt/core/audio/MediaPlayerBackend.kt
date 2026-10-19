@@ -29,6 +29,11 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionResult
 import com.annieplayer.annie_music.kt.MainActivity
+import com.annieplayer.annie_music.kt.core.audio.AudioOutputMode
+import com.annieplayer.annie_music.kt.core.audio.AudioOutputStatus
+import com.annieplayer.annie_music.kt.core.audio.AudioRoute
+import com.annieplayer.annie_music.kt.core.audio.EqPreset
+import com.annieplayer.annie_music.kt.core.state.MoreSettings
 import com.annieplayer.annie_music.kt.core.state.PlayerBackend
 import com.annieplayer.annie_music.kt.data.model.LoopMode
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlForBackend
@@ -117,8 +122,13 @@ class MediaPlayerBackend(
     private var _cachedSourceFactory: DefaultMediaSourceFactory? = null
     private var _plainSourceFactory: DefaultMediaSourceFactory? = null
     private var _audioOutput: AudioOutputController? = null
+    private var _renderersFactory: AnnieRenderersFactory? = null
     private var _progressJob: Job? = null
     private var _serviceStarted: Boolean = false
+    private var _lastAudioInfo: AudioInfo? = null
+    private var _lastMode: AudioOutputMode? = null
+    private var _lastForceNative: Boolean? = null
+    private var _lastResampleRate: Int? = null
 
     // ── 应用层队列状态（对齐 Dart 字段） ──
 
@@ -192,7 +202,11 @@ class MediaPlayerBackend(
             _plainSourceFactory = DefaultMediaSourceFactory(upstream)
 
             // 2) ExoPlayer（音频焦点 + 拔耳机暂停，等价 just_audio + audio_session 行为）
+            //    RenderersFactory 负责 float 输出 + 调音/重采样处理器链（方案阶段 1）
+            val renderersFactory = AnnieRenderersFactory(_context)
+            _renderersFactory = renderersFactory
             val player = ExoPlayer.Builder(_context)
+                .setRenderersFactory(renderersFactory)
                 .setMediaSourceFactory(_cachedSourceFactory ?: DefaultMediaSourceFactory(cacheFactory))
                 .setAudioAttributes(_mediaAudioAttributes, true)
                 .setHandleAudioBecomingNoisy(true)
@@ -223,6 +237,7 @@ class MediaPlayerBackend(
             AnnieAudioHolder.cache = cache
             AnnieAudioHolder.cachedSourceFactory = _cachedSourceFactory
             AnnieAudioHolder.plainSourceFactory = _plainSourceFactory
+            AnnieAudioHolder.renderersFactory = renderersFactory
             // 服务实例可能被系统回收（例如划掉任务且未在播放时 stopSelf）；一旦销毁需复位
             // _serviceStarted，否则后续播放不会再拉起前台服务/媒体通知。
             AnnieAudioHolder.onServiceStopped = { _serviceStarted = false }
@@ -231,6 +246,16 @@ class MediaPlayerBackend(
 
             // 4) bit-perfect groundwork
             _audioOutput = AudioOutputController(_context)
+            _audioOutput?.onDevicesChanged = {
+                BluetoothCodec.refresh()
+                _applyOutputPolicy(_lastAudioInfo)
+                // 设备/采样率能力变了，输出格式需要重新 configure 才生效
+                _reloadCurrentSource()
+            }
+            BluetoothCodec.onInfoChanged = { _applyOutputPolicy(_lastAudioInfo) }
+            AnnieAudioHolder.audioOutput = _audioOutput
+            _observeAudioSettings()
+            _applyOutputPolicy(null)
 
             // 5) 进度事件循环 + 初始状态
             _startProgressLoop()
@@ -258,6 +283,14 @@ class MediaPlayerBackend(
         _player = player
         _session = session
         _cache = AnnieAudioHolder.cache ?: sharedCache(_context)
+        _renderersFactory = AnnieAudioHolder.renderersFactory
+        _audioOutput = AnnieAudioHolder.audioOutput ?: AudioOutputController(_context)
+        _audioOutput?.onDevicesChanged = {
+            BluetoothCodec.refresh()
+            _applyOutputPolicy(_lastAudioInfo)
+            _reloadCurrentSource()
+        }
+        AnnieAudioHolder.audioOutput = _audioOutput
 
         // 复用旧实例的数据源工厂；若缺失（理论上不会）则以共享缓存重建
         if (AnnieAudioHolder.cachedSourceFactory == null) {
@@ -491,6 +524,9 @@ class MediaPlayerBackend(
 
         // 立即停掉上一首：解析直链可能耗时，否则旧歌会继续响（对齐 Dart unawaited(_player.pause())）
         _player?.pause()
+        // 换歌后格式未知，先把状态回落到「模式 + 设备」，探测完成后再补全格式
+        _lastAudioInfo = null
+        _applyOutputPolicy(null)
 
         val url = _resolveUrl(index, item, false)
         if (requestId != _playRequestId) return
@@ -767,8 +803,166 @@ class MediaPlayerBackend(
         _scope.launch {
             val info = _probeAudioInfo(url)
             if (gen != _generation || index != _currentAbsIndex) return@launch
+            _lastAudioInfo = info
+            _applyOutputPolicy(info)
             _emit(mapOf("audioInfo" to (info ?: AudioInfo())))
         }
+    }
+
+    /**
+     * 把「模式 / EQ 预设 / 响度 / 强制原生率」实时下发到处理器链。
+     *
+     * EQ 系数是整体替换的，播放中改预设立即生效；重采样开关会改变输出格式，
+     * 必须重新 `prepare` 才能重配 AudioSink —— 下一次切歌生效（副标题已注明）。
+     */
+    private fun _observeAudioSettings() {
+        _scope.launch {
+            kotlinx.coroutines.flow.combine(
+                MoreSettings.audioMode,
+                MoreSettings.eqPreset,
+                MoreSettings.loudnessNormalization,
+                MoreSettings.forceNativeRate,
+                MoreSettings.resampleRate,
+            ) { mode, _, _, force, rate -> Triple(mode, force, rate) }
+                .collect { (mode, force, rate) ->
+                    // 这几个开关会改变 AudioSink 的 configure 结果（processor 是否入链 / 输出采样率），
+                    // 光改参数不会重新评估 isActive，必须重建一次音源才会生效。
+                    val needReload = (_lastMode != null && _lastMode != mode) ||
+                        (_lastForceNative != null &&
+                            (_lastForceNative != force || _lastResampleRate != rate))
+                    _lastMode = mode
+                    _lastForceNative = force
+                    _lastResampleRate = rate
+                    _applyOutputPolicy(_lastAudioInfo)
+                    if (needReload) _reloadCurrentSource()
+                }
+        }
+        _scope.launch {
+            MoreSettings.resampleDepth.collect {
+                _applyOutputPolicy(_lastAudioInfo)
+                _reloadCurrentSource()
+            }
+        }
+    }
+
+    /** 用当前直链重建音源（保留播放位置），让处理器链按新设置重新 configure */
+    private fun _reloadCurrentSource() {
+        val p = _player ?: return
+        if (p.mediaItemCount == 0) return
+        val item = _queue.getOrNull(_currentAbsIndex) ?: return
+        val url = _urlCache[_cacheKeyOf(item)] ?: return
+        val position = p.currentPosition
+        val wasPlaying = p.isPlaying
+        if (_setSource(url, item)) {
+            if (position > 0) p.seekTo(position)
+            if (wasPlaying) p.play()
+        }
+    }
+
+    private fun _applyOutputPolicy(info: AudioInfo?) {
+        val out = _audioOutput ?: return
+        val factory = _renderersFactory
+        val mode = MoreSettings.audioMode.value
+        val preset = MoreSettings.eqPreset.value
+        val tuned = mode == AudioOutputMode.tuned
+        val eqOn = tuned && preset != EqPreset.flat
+        val loudnessOn = tuned && MoreSettings.loudnessNormalization.value
+        val loudnessDb = if (loudnessOn) info?.replayGainDb ?: 0f else 0f
+        // 限幅只在真的有正增益时才有意义：调音模式 + EQ 抬升或响度为正
+        val limiterOn = tuned && ((eqOn && preset.gainsDb.any { it > 0f }) || loudnessDb > 0f)
+        val loudnessApplied = loudnessOn && loudnessDb != 0f
+
+        factory?.tuning?.setParams(eqOn, preset.gainsDb, loudnessDb, limiterOn)
+
+        val nativeRate = out.nativeSampleRate()
+        val srcRate = info?.sampleRate ?: 0
+        val route = out.currentRoute()
+        val deviceRates = out.currentOutputDevice()?.sampleRates.orEmpty()
+        // 设备声明的最高率（USB DAC 才有意义）
+        val maxDeviceRate = deviceRates
+            .filter { it in 8_000..768_000 }
+            .maxOrNull()
+            ?: nativeRate
+        // 自动策略：
+        // - 蓝牙：旁路（codec 决定实际率，再重采样只会双重重采样）
+        // - USB DAC：设备最高率（HAL 可能 rate-match）
+        // - 3.5mm / 内置：系统 primary output 率（通常 48k），避免 mixer 再 SRC
+        val autoTargetRate = when (route) {
+            AudioRoute.bluetooth -> 0
+            AudioRoute.usb -> maxDeviceRate
+            AudioRoute.wired, AudioRoute.speaker -> nativeRate
+            else -> nativeRate
+        }
+        val configuredRate = MoreSettings.resampleRate.value
+        val requestedRate = if (MoreSettings.forceNativeRate.value) {
+            if (configuredRate > 0) configuredRate else autoTargetRate
+        } else {
+            0
+        }
+        // 设备没声明该档位时回退自动值，避免 AudioTrack 创建失败
+        val targetRate = when {
+            requestedRate <= 0 -> 0
+            deviceRates.isEmpty() || requestedRate in deviceRates || requestedRate == nativeRate ->
+                requestedRate
+            else -> autoTargetRate
+        }
+        val willResample = targetRate > 0 && srcRate > 0 && srcRate != targetRate
+        val needDepthConvert = MoreSettings.resampleDepth.value != 0
+        factory?.resampler?.setEnabled(willResample || needDepthConvert, targetRate)
+        factory?.resampler?.setOutputDepth(MoreSettings.resampleDepth.value)
+
+        // 输出位深：显式选了才非 0（跟随源 = 0，显示时回退源/蓝牙位深）
+        val outputDepth = when (MoreSettings.resampleDepth.value) {
+            16 -> 16
+            24 -> 24
+            32 -> 32
+            else -> 0
+        }
+
+        // 蓝牙链路：只认真实 codec 配置；读不到就退回系统输出线程率，不用设备最高率猜
+        val btCodec = if (route == AudioRoute.bluetooth) BluetoothCodec.info.value else null
+        val btRate = when {
+            route != AudioRoute.bluetooth -> 0
+            btCodec != null && btCodec.sampleRate > 0 -> btCodec.sampleRate
+            else -> nativeRate
+        }
+        val btDepth = when {
+            route != AudioRoute.bluetooth -> 0
+            btCodec != null && btCodec.bitsPerSample > 0 -> btCodec.bitsPerSample
+            else -> info?.bitDepth ?: 0
+        }
+
+        // 只有「透明 + 有源格式 + 外接 USB」才值得向系统申请 bit-perfect；
+        // 其余情况如实显示做不到（方案 1.2.3 的第三种状态）。
+        val bitPerfect = if (!tuned && srcRate > 0) {
+            out.applyBitPerfectPassthrough(srcRate, info?.bitDepth?.takeIf { it > 0 } ?: 16)
+        } else {
+            out.clearBitPerfectPassthrough()
+            false
+        }
+
+        _emit(
+            mapOf(
+                "audioStatus" to AudioOutputStatus(
+                    mode = mode,
+                    route = out.currentRoute(),
+                    deviceName = out.currentDeviceName(),
+                    nativeRate = nativeRate,
+                    deviceMaxRate = maxDeviceRate,
+                    deviceSampleRates = deviceRates,
+                    autoTargetRate = autoTargetRate,
+                    bluetoothRate = btRate,
+                    bluetoothDepth = btDepth,
+                    outputDepth = outputDepth,
+                    sourceRate = srcRate,
+                    sourceDepth = info?.bitDepth ?: 0,
+                    resampledTo = if (willResample) targetRate else 0,
+                    bitPerfect = bitPerfect,
+                    eqOn = eqOn,
+                    loudnessOn = loudnessApplied,
+                ),
+            ),
+        )
     }
 
     /**
@@ -842,6 +1036,11 @@ class MediaPlayerBackend(
             val codec = _formatCodec(audio.codec)
             val rate = audio.sampleRate?.toIntOrNull() ?: 0
             if (codec.isEmpty() && rate == 0) return@withContext null
+            Log.i(
+                _tag,
+                "[audio] route=${AudioFormatRouter.route(media.format.orEmpty(), audio.codec.orEmpty())} " +
+                    "container=${media.format}",
+            )
             AudioInfo(
                 codec = codec,
                 bitDepth = audio.getStringProperty("bits_per_raw_sample")?.toIntOrNull()
@@ -851,6 +1050,7 @@ class MediaPlayerBackend(
                 bitrate = audio.bitrate?.toIntOrNull()?.takeIf { it > 0 }
                     ?: media.bitrate?.toIntOrNull()?.takeIf { it > 0 }
                     ?: 0,
+                replayGainDb = _replayGainOf(media),
             )
         } catch (_: Throwable) {
             null
@@ -874,6 +1074,15 @@ class MediaPlayerBackend(
         if (c.isEmpty()) return ""
         if (c.startsWith("pcm", ignoreCase = true)) return "PCM"
         return c.uppercase()
+    }
+
+    /** 读 ReplayGain 曲目增益（dB）；没有标签或解析失败返回 0（= 不做响度处理）。 */
+    private fun _replayGainOf(media: com.arthenica.ffmpegkit.MediaInformation): Float {
+        val tags = media.tags ?: return 0f
+        val raw = tags.optString("REPLAYGAIN_TRACK_GAIN", "")
+            .ifEmpty { tags.optString("replaygain_track_gain", "") }
+        if (raw.isEmpty()) return 0f
+        return raw.trim().substringBefore(' ').toFloatOrNull()?.coerceIn(-24f, 24f) ?: 0f
     }
 
     /**
@@ -1023,6 +1232,14 @@ internal object AnnieAudioHolder {
 
     @Volatile
     var plainSourceFactory: DefaultMediaSourceFactory? = null
+
+    /** 自建 RenderersFactory（处理器链持有 EQ / 重采样参数，Activity 重建时需复用） */
+    @Volatile
+    var renderersFactory: AnnieRenderersFactory? = null
+
+    /** 输出设备控制器（播放页的设备切换面板直接读取/操作） */
+    @Volatile
+    var audioOutput: AudioOutputController? = null
 
     /** 服务 `onDestroy` 时的回调，用于让 backend 复位 `_serviceStarted`（否则后续播放不再起前台服务） */
     @Volatile

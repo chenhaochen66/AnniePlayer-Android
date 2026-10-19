@@ -163,6 +163,12 @@ fun AppShell(
 val writeQobuzDownloadTranslation by MoreSettings.writeQobuzDownloadTranslation.collectAsState()
 val writeEnhancedLyrics by MoreSettings.writeEnhancedLyrics.collectAsState()
 val saveLrcFile by MoreSettings.saveLrcFile.collectAsState()
+val audioMode by MoreSettings.audioMode.collectAsState()
+val eqPreset by MoreSettings.eqPreset.collectAsState()
+val loudnessNormalization by MoreSettings.loudnessNormalization.collectAsState()
+val forceNativeRate by MoreSettings.forceNativeRate.collectAsState()
+val resampleRate by MoreSettings.resampleRate.collectAsState()
+val resampleDepth by MoreSettings.resampleDepth.collectAsState()
 val playQualityMap by MoreSettings.playQuality.collectAsState()
 val lxPluginEnabled by LxPluginRegistry.enabled.collectAsState()
 val lxPlugins by LxPluginRegistry.plugins.collectAsState()
@@ -553,6 +559,31 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                     onToggleWriteEnhancedLyrics = { MoreSettings.setWriteEnhancedLyrics(it) },
                     saveLrcFile = saveLrcFile,
                     onToggleSaveLrcFile = { MoreSettings.setSaveLrcFile(it) },
+                    audioMode = audioMode,
+                    onPickAudioMode = { MoreSettings.setAudioMode(it) },
+                    eqPreset = eqPreset,
+                    onPickEqPreset = { MoreSettings.setEqPreset(it) },
+                    loudnessNormalization = loudnessNormalization,
+                    onToggleLoudnessNormalization = { MoreSettings.setLoudnessNormalization(it) },
+                    forceNativeRate = forceNativeRate,
+                    onToggleForceNativeRate = { MoreSettings.setForceNativeRate(it) },
+                    resampleRate = resampleRate,
+                    onPickResampleRate = { MoreSettings.setResampleRate(it) },
+                    resampleDepth = resampleDepth,
+                    onPickResampleDepth = { MoreSettings.setResampleDepth(it) },
+                    autoTargetRate = playerState.audioStatus?.autoTargetRate ?: 0,
+                    deviceSampleRates = playerState.audioStatus?.deviceSampleRates.orEmpty(),
+                    outputDetail = playerState.audioStatus?.let { s ->
+                        buildList {
+                            if (s.deviceName.isNotEmpty()) add(s.deviceName)
+                            if (s.deviceMaxRate > 0) {
+                                add("设备最高 ${s.deviceMaxRate / 1000} kHz")
+                            } else if (s.nativeRate > 0) {
+                                add("系统 ${s.nativeRate / 1000} kHz")
+                            }
+                            if (s.sourceRate > 0) add("源 ${s.sourceRate / 1000} kHz")
+                        }.joinToString(" · ")
+                    }.orEmpty(),
                     lxPluginEnabled = lxPluginEnabled,
                     lxPluginCount = lxPlugins.size,
                     onToggleLxPlugin = { LxPluginRegistry.setGlobalEnabled(it) },

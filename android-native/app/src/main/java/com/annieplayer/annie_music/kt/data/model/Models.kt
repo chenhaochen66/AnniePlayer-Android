@@ -434,6 +434,8 @@ data class AudioInfo(
     val sampleRate: Int = 0,
     /** 比特率（bit/s，如 320000；未知为 0）。无位深的有损格式用它顶替展示 */
     val bitrate: Int = 0,
+    /** ReplayGain 曲目增益（dB，来自标签；无标签为 0）。调音模式的响度归一化据此工作 */
+    val replayGainDb: Float = 0f,
 ) {
     /** 是否无有效信息（UI 据此隐藏胶囊） */
     val isEmpty: Boolean get() = codec.isEmpty() && sampleRate == 0

@@ -14,7 +14,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import com.annieplayer.annie_music.kt.core.audio.AnnieAudioHolder
+import com.annieplayer.annie_music.kt.core.audio.BluetoothCodec
 import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
 import com.annieplayer.annie_music.kt.core.platform.StoragePermissionDialog
 import com.annieplayer.annie_music.kt.core.platform.isManageStorageGranted
@@ -51,6 +53,12 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 拒绝也不阻塞播放 */ }
 
+    /** 蓝牙权限（Android 12+）：用于读取当前 codec / 采样率 / 码率 */
+    private val bluetoothPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) BluetoothCodec.onPermissionGranted()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -70,10 +78,19 @@ class MainActivity : ComponentActivity() {
         QobuzViewModel.init(applicationContext)
         MoreSettings.init(applicationContext)
         LxPluginRegistry.init(applicationContext)
+        BluetoothCodec.init(applicationContext)
 
         // Android 13+ 媒体通知需要 POST_NOTIFICATIONS
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        // Android 12+ 读取蓝牙 codec 需要 BLUETOOTH_CONNECT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            bluetoothPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
         }
 
         setContent {
