@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "com.annieplayer.annie_music.kt"
     compileSdk = 36
+    ndkVersion = "27.1.12297006"
 
     defaultConfig {
         applicationId = "com.annieplayer.annie_music.kt"
@@ -42,6 +43,12 @@ android {
     buildFeatures {
         compose = true
     }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
 }
 
 kotlin {
@@ -68,7 +75,10 @@ dependencies {
 
     // Media3：播放引擎 + 媒体会话（替代 Flutter 的 just_audio + audio_service）
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
     implementation("androidx.media3:media3-session:1.4.1")
+    // 分片/播放列表请求走共享 OkHttp（连接池 + HTTP/2 复用），见 MediaPlayerBackend.httpFactory
+    implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
 
     // 数据模型序列化（Models.kt 的 @Serializable）；版本由 Kotlin 插件对齐
@@ -94,3 +104,4 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
+
