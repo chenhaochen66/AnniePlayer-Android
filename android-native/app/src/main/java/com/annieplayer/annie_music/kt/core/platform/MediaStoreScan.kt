@@ -42,6 +42,14 @@ import java.io.FileInputStream
  */
 object MediaStoreScan {
 
+    /**
+     * 写入 MediaStore / 公共 Music 目录时的单次缓冲。
+     *
+     * 这两条路都是**整首全量复制**（私有临时文件 → 系统音乐库），默认 8KB 缓冲下一首
+     * 100MB 的无损要一万两千多次 read/write；256KB 降到四百次以内，复制耗时能压掉一截。
+     */
+    private const val COPY_BUFFER = 256 * 1024
+
     private var _appContext: Context? = null
 
     /** 由 Application / Activity 调用以绑定 ContentResolver 所需的上下文。 */
@@ -169,7 +177,7 @@ object MediaStoreScan {
             FileInputStream(file).use { input ->
                 val output = resolver.openOutputStream(uri)
                 if (output == null) throw IllegalStateException("openOutputStream returned null")
-                output.use { out -> input.copyTo(out) }
+                output.use { out -> input.copyTo(out, COPY_BUFFER) }
             }
             val done = ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }
             resolver.update(uri, done, null, null)
@@ -194,7 +202,7 @@ object MediaStoreScan {
             if (!targetDir.exists()) targetDir.mkdirs()
             val target = File(targetDir, displayName)
             if (target.exists()) target.delete()
-            file.copyTo(target, overwrite = true)
+            file.copyTo(target, overwrite = true, bufferSize = COPY_BUFFER)
             MediaScannerConnection.scanFile(context, arrayOf(target.absolutePath), null, null)
         } catch (_: Exception) {
             // 与 RN 版一致：失败静默

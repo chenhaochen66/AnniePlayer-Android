@@ -683,6 +683,8 @@ suspend fun getQQAlbumSongs(albumMid: String): AlbumSongsPage {
         val list = if (listRaw is List<*>) listRaw else emptyList<Any?>()
         // 发行时间在 `data.aDate`（形如 2013-06-03；同一响应内，无需额外请求）
         val pub = if (data is Map<*, *>) _s(data["aDate"]) else ""
+        // 专辑流派（如 "Pop 流行"）
+        val genre = if (data is Map<*, *>) _s(data["genre"]) else ""
         // 专辑歌手在 `data.singer[]`（与 `list[].singer` 是「歌曲歌手」不同）
         val albumSingerRaw = if (data is Map<*, *>) data["singer"] else null
         val albumArtist = if (albumSingerRaw is List<*>) {
@@ -742,6 +744,7 @@ suspend fun getQQAlbumSongs(albumMid: String): AlbumSongsPage {
                     artistNames = artistNames,
                     // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
                     artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),
+                    genre = genre.ifEmpty { null },
                 ),
             )
         }

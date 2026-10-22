@@ -55,11 +55,12 @@ fun SearchBarField(
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
     hint: String = "搜索歌曲、歌手...",
+    horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(start = horizontalPadding, end = horizontalPadding, top = 8.dp, bottom = 8.dp)
             .height(36.dp)
             .background(FieldBg, RoundedCornerShape(10.dp))
             .padding(start = 10.dp),

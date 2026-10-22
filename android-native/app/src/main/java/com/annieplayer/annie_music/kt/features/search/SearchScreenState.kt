@@ -6,22 +6,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
-import com.annieplayer.annie_music.kt.core.state.AlbumDetailEntry
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SearchSelectionViewModel
-import com.annieplayer.annie_music.kt.core.state.SingerDetailData
-import com.annieplayer.annie_music.kt.core.state.SingerDetailEntry
-import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.Artist
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Song
-import com.annieplayer.annie_music.kt.data.resolveArtist
 import com.annieplayer.annie_music.kt.data.searchAlbumByPlatform
 import com.annieplayer.annie_music.kt.data.searchArtistByPlatform
-import com.annieplayer.annie_music.kt.data.sources.fetchKugouSongAuthors
+import com.annieplayer.annie_music.kt.data.sources.AppleStorefront
+import com.annieplayer.annie_music.kt.data.sources.AppleMusicSettings
+import com.annieplayer.annie_music.kt.data.sources.appleMusicStorefront
+import com.annieplayer.annie_music.kt.data.sources.fetchAppleStorefronts
+import com.annieplayer.annie_music.kt.data.sources.searchAppleMusic
 import com.annieplayer.annie_music.kt.data.sources.parseKkboxUrl
 import com.annieplayer.annie_music.kt.data.sources.parseQobuzUrl
 import com.annieplayer.annie_music.kt.data.sources.searchKugouMusic
@@ -29,7 +27,6 @@ import com.annieplayer.annie_music.kt.data.sources.searchMusic
 import com.annieplayer.annie_music.kt.data.sources.searchNeteaseMusic
 import com.annieplayer.annie_music.kt.data.sources.searchQQMusic
 import com.annieplayer.annie_music.kt.data.sources.searchQobuzTracks
-import com.annieplayer.annie_music.kt.widgets.SongArtistRef
 import com.annieplayer.annie_music.kt.widgets.SongSearchColumn
 import com.annieplayer.annie_music.kt.widgets.ModeDropdownMode
 import kotlinx.coroutines.CancellationException
@@ -45,7 +42,6 @@ import kotlinx.coroutines.launch
 @Stable
 class SearchScreenState(
     private val scope: CoroutineScope,
-    private val uiViewModel: UiViewModel,
     private val playerViewModel: PlayerViewModel,
     private val downloadViewModel: DownloadViewModel,
     private val selectionViewModel: SearchSelectionViewModel,
@@ -80,6 +76,11 @@ class SearchScreenState(
     var artistsLoading by mutableStateOf(false)
     var artistGeneration by mutableIntStateOf(0)
 
+    // ── Apple Music 单曲搜索（单列 + 国家选择） ──
+    var appleCountry by mutableStateOf(appleMusicStorefront)
+    var appleStorefronts by mutableStateOf<List<AppleStorefront>>(emptyList())
+    var appleStorefrontsLoading by mutableStateOf(false)
+
     // ── 浮层 / 下载 / 路由等本地状态 ──
     var sourcePickerVisible by mutableStateOf(false)
     var saveDirPath by mutableStateOf<String?>(null)
@@ -101,42 +102,75 @@ class SearchScreenState(
                 offset = (page - 1) * kSearchPageSize,
             )
             SearchSource.kkbox -> emptyList()
+            SearchSource.apple -> searchAppleMusic(query, page = page, limit = kAppleSearchPageSize)
         }
 
-    /** 按当前源分组发起双列搜索（两列各自独立返回） */
+    /** 按当前源分组发起双列搜索（两列各自独立返回；单列源只有一列） */
     fun startSongSearch(query: String) {
         val group = sourceGroups[sourceGroupIndex]
+        val sources = listOfNotNull(group.left, group.right)
         songGeneration += 1
         val generation = songGeneration
-        songColumns = listOf(
-            SongSearchColumn(source = group.left, songs = emptyList(), isLoading = true),
-            SongSearchColumn(source = group.right, songs = emptyList(), isLoading = true),
-        )
-        scope.launch {
-            val result = try {
-                searchBySource(group.left, query, 1)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                emptyList()
-            }
-            if (generation != songGeneration) return@launch
-            songColumns = songColumns.map {
-                if (it.source == group.left) SongSearchColumn(group.left, result, false) else it
+        songColumns = sources.map {
+            SongSearchColumn(source = it, songs = emptyList(), isLoading = true)
+        }
+        sources.forEach { source ->
+            scope.launch {
+                val result = try {
+                    searchBySource(source, query, 1)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+                if (generation != songGeneration) return@launch
+                songColumns = songColumns.map {
+                    if (it.source == source) SongSearchColumn(source, result, false) else it
+                }
             }
         }
+    }
+
+    /** 加载 Apple Music 地区表（只请求一次）。 */
+    fun loadAppleStorefronts() {
+        if (appleStorefronts.isNotEmpty() || appleStorefrontsLoading) return
+        appleStorefrontsLoading = true
         scope.launch {
-            val result = try {
-                searchBySource(group.right, query, 1)
+            val list = try {
+                fetchAppleStorefronts()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
                 emptyList()
             }
-            if (generation != songGeneration) return@launch
-            songColumns = songColumns.map {
-                if (it.source == group.right) SongSearchColumn(group.right, result, false) else it
+            appleStorefronts = list
+            appleStorefrontsLoading = false
+            if (list.isNotEmpty() && list.none { it.code == appleCountry }) {
+                selectAppleCountry(list.first().code)
             }
+        }
+    }
+
+    /** 当前搜索是否使用 Apple Music（单曲 Apple 源 / 专辑或歌手选 Apple）。 */
+    val showAppleCountry: Boolean
+        get() = when (mode) {
+            ModeDropdownMode.song ->
+                sourceGroups.getOrNull(sourceGroupIndex)?.contains(SearchSource.apple) == true
+            ModeDropdownMode.album -> albumPlatform == MusicPlatform.apple
+            ModeDropdownMode.singer -> artistPlatform == MusicPlatform.apple
+            else -> false
+        }
+
+    /** 切换 Apple Music 国家/地区；当前搜索重新按新地区请求。 */
+    fun selectAppleCountry(code: String) {
+        if (code.isEmpty()) return
+        appleCountry = code
+        AppleMusicSettings.setStorefront(code)
+        when (mode) {
+            ModeDropdownMode.song -> if (songSubmitted.isNotEmpty()) startSongSearch(songSubmitted)
+            ModeDropdownMode.album -> if (albumSubmitted.isNotEmpty()) startAlbumSearch(albumSubmitted)
+            ModeDropdownMode.singer -> if (artistSubmitted.isNotEmpty()) startArtistSearch(artistSubmitted)
+            else -> Unit
         }
     }
 
@@ -241,14 +275,17 @@ class SearchScreenState(
             if (index < 0 || index >= albumSearchPlatforms.size) return
             if (mode == ModeDropdownMode.singer) {
                 artistPlatform = albumSearchPlatforms[index]
+                if (artistPlatform == MusicPlatform.apple) loadAppleStorefronts()
                 startArtistSearch(artistSubmitted)
             } else {
                 albumPlatform = albumSearchPlatforms[index]
+                if (albumPlatform == MusicPlatform.apple) loadAppleStorefronts()
                 startAlbumSearch(albumSubmitted)
             }
         } else {
             if (index < 0 || index >= sourceGroups.size) return
             sourceGroupIndex = index
+            if (sourceGroups[index].contains(SearchSource.apple)) loadAppleStorefronts()
             startSongSearch(songSubmitted)
         }
     }
@@ -286,61 +323,4 @@ class SearchScreenState(
         kkboxDetailRoute = parsed.type to parsed.id
     }
 
-    /** ⋮ → 歌手：有 id 直接开；没有则按名字搜索一次（对齐 Dart `openArtistDetail`） */
-    fun openArtistDetail(artist: SongArtistRef) {
-        // 必须用「被点 ⋮ 的那首歌」：平台要从它取，酷狗还要按它的 hash 补作者 id。
-        // 之前用 currentSong（正在播放的歌），两者不同源时会拿错平台的 id 去查，
-        // 表现为「跳过去的歌手名字对、曲目却是别人的」。
-        val song = uiViewModel.state.value.songActionsSong
-            ?: playerViewModel.state.value.currentSong
-            ?: return
-        scope.launch {
-            var knownId = if (artist.id.isEmpty()) null else artist.id
-            // 酷狗的专辑/歌单都不带歌手 id：这里按歌曲 hash 逐曲补一次
-            // （接口单曲限，结果落盘缓存 → 二次及以后秒开）
-            if (knownId == null && song.platform == MusicPlatform.kugou) {
-                knownId = fetchKugouSongAuthors(song.id.removePrefix("kugou:"))
-                    .firstOrNull { it.name == artist.name }
-                    ?.id
-            }
-            val resolved = resolveArtist(
-                song.platform,
-                artist.name,
-                knownId = knownId,
-            )
-            if (resolved == null || resolved.id.isEmpty()) {
-                snackbarHostState.showSnackbar("未找到歌手「${artist.name}」")
-                return@launch
-            }
-            // 详情浮层在播放页之下：先收起播放页；歌手详情**压入真栈**（上层的其它详情不被收起，
-            // 返回时逐层退回）。旧实现会先关掉其它详情（closeOtherDetailOverlays）。
-            uiViewModel.setPlayerOverlayVisible(false)
-            uiViewModel.pushDetail(
-                SingerDetailEntry(
-                    SingerDetailData(
-                        id = resolved.id,
-                        name = resolved.name,
-                        picture = resolved.picture,
-                        platform = song.platform,
-                    ),
-                ),
-            )
-        }
-    }
-
-    /** ⋮ → 专辑：先收起播放页，再把专辑详情压入真栈（上层详情不被收起） */
-    fun openAlbumDetail(song: Song) {
-        uiViewModel.setPlayerOverlayVisible(false)
-        uiViewModel.pushDetail(
-            AlbumDetailEntry(
-                AlbumDetailData(
-                    id = song.albumId ?: "",
-                    cover = song.cover,
-                    name = song.album ?: "",
-                    artist = song.albumArtist ?: song.artist,
-                    platform = song.platform,
-                ),
-            ),
-        )
-    }
 }

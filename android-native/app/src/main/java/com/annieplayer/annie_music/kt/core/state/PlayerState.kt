@@ -276,11 +276,16 @@ class PlayerViewModel : ViewModel() {
                     _state.value = _state.value.copyWith(
                         currentIndex = idx,
                         currentSong = song,
-                        // 切歌先清空，等引擎探测结果下发后再填充
+                        // 切歌先清空音质胶囊，等引擎探测/解析结果下发后再填充
                         audioInfo = if (songChanged) AudioInfo() else null,
                     )
                     if (songChanged) _onSongChanged(song)
                 }
+
+                // 随机模式下引擎提前定好的「下一首」：点「下一首」时用它做乐观 UI，
+                // 保证界面切的歌和实际播的是同一首（此前两边各掷一次随机会不一致）
+                val nextIdx = event["nextIndex"]
+                if (nextIdx is Int) _shuffleNextHint = nextIdx
 
                 val audioInfo = event["audioInfo"]
                 if (audioInfo is AudioInfo && !audioInfo.isEmpty) {
@@ -309,10 +314,13 @@ class PlayerViewModel : ViewModel() {
         }
     }
 
-    /** 引擎调用（fire-and-forget，异常静默，对齐 Dart 未 await 的调用点） */
     /** 清理播放缓存（转发给引擎；未接线时返回 0） */
     suspend fun clearPlaybackCache(): Long = _backend?.clearPlaybackCache() ?: 0L
 
+    /** 随机模式下引擎提前定好的下一首下标（`nextIndex` 事件）；null = 还没有 */
+    private var _shuffleNextHint: Int? = null
+
+    /** 引擎调用（fire-and-forget，异常静默，对齐 Dart 未 await 的调用点） */
     private fun _backendCall(block: suspend (PlayerBackend) -> Unit) {
         val b = _backend ?: return
         viewModelScope.launch {
@@ -362,6 +370,8 @@ class PlayerViewModel : ViewModel() {
     /** 设置队列并从 startIndex 开播；整体重建 state，但**沿用当前循环模式**（切歌不该把模式打回顺序） */
     fun setQueue(songs: List<Song>, startIndex: Int = 0) {
         val mode = _state.value.loopMode
+        // 换队列：随机下一首的提示作废（下标已经对不上了）
+        _shuffleNextHint = null
         _state.value = PlayerState(
             queue = songs,
             currentIndex = startIndex,
@@ -397,11 +407,16 @@ class PlayerViewModel : ViewModel() {
         )
     }
 
+    /**
+     * 下一首：**先把 UI 切过去**（封面/标题/歌手/进度条/歌词立刻跟着点的那一下走），
+     * 音频在后台解析 + 加载，出声比信息慢是正常的，信息不需要等出声。
+     */
     fun next() {
         val st = _state.value
         if (st.queue.isEmpty()) return
         val nextIndex: Int = when (st.loopMode) {
-            LoopMode.shuffle -> (System.currentTimeMillis() % st.queue.size).toInt()
+            // 随机：认引擎提前定好的那首（没有提示就原地不动，等引擎的 absoluteIndex 事件纠正）
+            LoopMode.shuffle -> _shuffleNextHint ?: st.currentIndex
             LoopMode.single -> st.currentIndex
             LoopMode.sequential -> (st.currentIndex + 1) % st.queue.size
         }
@@ -414,10 +429,9 @@ class PlayerViewModel : ViewModel() {
     fun previous() {
         val st = _state.value
         if (st.queue.isEmpty()) return
-        val prevIndex: Int = if (st.loopMode == LoopMode.shuffle) {
-            (System.currentTimeMillis() % st.queue.size).toInt()
-        } else {
-            (st.currentIndex - 1 + st.queue.size) % st.queue.size
+        val prevIndex: Int = when (st.loopMode) {
+            LoopMode.shuffle -> _shuffleNextHint ?: st.currentIndex
+            else -> (st.currentIndex - 1 + st.queue.size) % st.queue.size
         }
         val prevSong = st.queue[prevIndex]
         _state.value = st.copyWith(currentIndex = prevIndex, currentSong = prevSong, isPlaying = true)
@@ -437,6 +451,7 @@ class PlayerViewModel : ViewModel() {
         val st = _state.value
         if (index < 0 || index >= st.queue.size) return
         val song = st.queue[index]
+        // 同 [next]：UI 立刻切，音频随后加载
         _state.value = st.copyWith(currentIndex = index, currentSong = song, isPlaying = true)
         _onSongChanged(song)
         _backendCall { it.skipTo(index) }

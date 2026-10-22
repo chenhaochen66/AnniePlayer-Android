@@ -251,33 +251,35 @@ fun SongSearchResults(
             )
         }
 
-        // ── 中间列分隔线（上下各留 8dp，撑满行高） ──
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .padding(vertical = AppSpacing.sp8)
-                .width(AppBorder.thin)
-                .background(AppColors.whiteA04),
-        )
-
-        // ── 右列 ──
-        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-            SongSearchColumnBody(
-                column = right,
-                pending = rightPending,
-                songs = rightSongs,
-                pageSize = pageSize,
-                hasMoreBySource = hasMoreBySource,
-                loadingMoreBySource = loadingMoreBySource,
-                onLoadMore = { src -> loadMore(src) },
-                activeSongId = activeSongId,
-                selectedSongs = selectedSongs,
-                query = query,
-                onPlay = onPlay,
-                onDownload = onDownload,
-                onToggleSelect = onToggleSelect,
-                downloadStatusOf = downloadStatusOf,
+        // ── 中间列分隔线（上下各留 8dp，撑满行高；单列时不画） ──
+        if (right != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(vertical = AppSpacing.sp8)
+                    .width(AppBorder.thin)
+                    .background(AppColors.whiteA04),
             )
+
+            // ── 右列 ──
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                SongSearchColumnBody(
+                    column = right,
+                    pending = rightPending,
+                    songs = rightSongs,
+                    pageSize = pageSize,
+                    hasMoreBySource = hasMoreBySource,
+                    loadingMoreBySource = loadingMoreBySource,
+                    onLoadMore = { src -> loadMore(src) },
+                    activeSongId = activeSongId,
+                    selectedSongs = selectedSongs,
+                    query = query,
+                    onPlay = onPlay,
+                    onDownload = onDownload,
+                    onToggleSelect = onToggleSelect,
+                    downloadStatusOf = downloadStatusOf,
+                )
+            }
         }
     }
 }

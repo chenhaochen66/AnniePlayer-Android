@@ -3,7 +3,12 @@ package com.annieplayer.annie_music.kt.core.state
 import android.content.Context
 import android.content.SharedPreferences
 import com.annieplayer.annie_music.kt.core.audio.AudioOutputMode
-import com.annieplayer.annie_music.kt.core.audio.EqPreset
+import com.annieplayer.annie_music.kt.core.audio.FilterType
+import com.annieplayer.annie_music.kt.core.audio.GraphicEqPreset
+import com.annieplayer.annie_music.kt.core.audio.MsebValues
+import com.annieplayer.annie_music.kt.core.audio.PeqBand
+import com.annieplayer.annie_music.kt.core.audio.TuningEngine
+import com.annieplayer.annie_music.kt.core.audio.defaultPeqBands
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import kotlinx.coroutines.CompletableDeferred
@@ -24,7 +29,12 @@ object MoreSettings {
     private const val KEY_WRITE_ENHANCED_LYRICS = "write-enhanced-lyrics"
     private const val KEY_SAVE_LRC_FILE = "save-lrc-file"
     private const val KEY_AUDIO_MODE = "audio-output-mode"
-    private const val KEY_EQ_PRESET = "audio-eq-preset"
+    private const val KEY_TUNING_ENGINE = "audio-tuning-engine"
+    private const val KEY_GRAPHIC_GAINS = "audio-graphic-gains"
+    private const val KEY_GRAPHIC_AMP = "audio-graphic-amp"
+    private const val KEY_PEQ_BANDS = "audio-peq-bands"
+    private const val KEY_PEQ_AMP = "audio-peq-amp"
+    private const val KEY_MSEB = "audio-mseb"
     private const val KEY_LOUDNESS = "audio-loudness-normalization"
     private const val KEY_FORCE_NATIVE_RATE = "audio-force-native-rate"
     private const val KEY_RESAMPLE_RATE = "audio-resample-rate"
@@ -59,10 +69,35 @@ object MoreSettings {
     /** 透明 / 调音（互斥；默认透明，保证「不做 DSP」是默认行为） */
     val audioMode: StateFlow<AudioOutputMode> = _audioMode.asStateFlow()
 
-    private val _eqPreset = MutableStateFlow(EqPreset.flat)
+    private val _tuningEngine = MutableStateFlow(TuningEngine.graphic)
 
-    /** 调音模式的 EQ 预设 */
-    val eqPreset: StateFlow<EqPreset> = _eqPreset.asStateFlow()
+    /** 调音引擎：均衡器 / PEQ / MSEB（互斥） */
+    val tuningEngine: StateFlow<TuningEngine> = _tuningEngine.asStateFlow()
+
+    private val _graphicGains = MutableStateFlow(FloatArray(10))
+
+    /** 图示 EQ 10 段增益（dB） */
+    val graphicGains: StateFlow<FloatArray> = _graphicGains.asStateFlow()
+
+    private val _graphicAmp = MutableStateFlow(0f)
+
+    /** 图示 EQ 前级 Amp（dB） */
+    val graphicAmp: StateFlow<Float> = _graphicAmp.asStateFlow()
+
+    private val _peqBands = MutableStateFlow(defaultPeqBands())
+
+    /** 32 段参量 EQ */
+    val peqBands: StateFlow<List<PeqBand>> = _peqBands.asStateFlow()
+
+    private val _peqAmp = MutableStateFlow(0f)
+
+    /** PEQ 前级（dB，范围 -9~+2） */
+    val peqAmp: StateFlow<Float> = _peqAmp.asStateFlow()
+
+    private val _mseb = MutableStateFlow(MsebValues())
+
+    /** MSEB 九个滑块 + 前级 */
+    val mseb: StateFlow<MsebValues> = _mseb.asStateFlow()
 
     private val _loudnessNormalization = MutableStateFlow(false)
 
@@ -103,7 +138,12 @@ object MoreSettings {
         _saveLrcFile.value =
             _prefs?.getBoolean(KEY_SAVE_LRC_FILE, false) ?: false
         _audioMode.value = AudioOutputMode.fromKey(_prefs?.getString(KEY_AUDIO_MODE, null))
-        _eqPreset.value = EqPreset.fromKey(_prefs?.getString(KEY_EQ_PRESET, null))
+        _tuningEngine.value = TuningEngine.fromKey(_prefs?.getString(KEY_TUNING_ENGINE, null))
+        _graphicGains.value = decodeFloats(_prefs?.getString(KEY_GRAPHIC_GAINS, null), 10)
+        _graphicAmp.value = _prefs?.getFloat(KEY_GRAPHIC_AMP, 0f) ?: 0f
+        _peqBands.value = decodePeq(_prefs?.getString(KEY_PEQ_BANDS, null))
+        _peqAmp.value = _prefs?.getFloat(KEY_PEQ_AMP, 0f) ?: 0f
+        _mseb.value = decodeMseb(_prefs?.getString(KEY_MSEB, null))
         _loudnessNormalization.value =
             _prefs?.getBoolean(KEY_LOUDNESS, false) ?: false
         _forceNativeRate.value =
@@ -145,9 +185,57 @@ object MoreSettings {
         _prefs?.edit()?.putString(KEY_AUDIO_MODE, mode.key)?.apply()
     }
 
-    fun setEqPreset(preset: EqPreset) {
-        _eqPreset.value = preset
-        _prefs?.edit()?.putString(KEY_EQ_PRESET, preset.key)?.apply()
+    fun setTuningEngine(engine: TuningEngine) {
+        _tuningEngine.value = engine
+        _prefs?.edit()?.putString(KEY_TUNING_ENGINE, engine.key)?.apply()
+    }
+
+    fun setGraphicBand(index: Int, gainDb: Float) {
+        val next = _graphicGains.value.copyOf()
+        if (index !in next.indices) return
+        next[index] = gainDb
+        _graphicGains.value = next
+        _prefs?.edit()?.putString(KEY_GRAPHIC_GAINS, encodeFloats(next))?.apply()
+    }
+
+    fun setGraphicAmp(db: Float) {
+        _graphicAmp.value = db
+        _prefs?.edit()?.putFloat(KEY_GRAPHIC_AMP, db)?.apply()
+    }
+
+    fun applyGraphicPreset(preset: GraphicEqPreset) {
+        val gains = preset.values.drop(1).toFloatArray()
+        _graphicGains.value = gains
+        // 预设只换 10 段曲线，Amp 保持用户当前值（避免每次切预设音量跳变）
+        _prefs?.edit()?.putString(KEY_GRAPHIC_GAINS, encodeFloats(gains))?.apply()
+    }
+
+    fun setPeqBand(index: Int, band: PeqBand) {
+        val next = _peqBands.value.toMutableList()
+        if (index !in next.indices) return
+        next[index] = band
+        _peqBands.value = next
+        _prefs?.edit()?.putString(KEY_PEQ_BANDS, encodePeq(next))?.apply()
+    }
+
+    fun setPeqAmp(db: Float) {
+        _peqAmp.value = db
+        _prefs?.edit()?.putFloat(KEY_PEQ_AMP, db)?.apply()
+    }
+
+    fun resetPeq() {
+        val next = defaultPeqBands()
+        _peqBands.value = next
+        _peqAmp.value = 0f
+        _prefs?.edit()
+            ?.putString(KEY_PEQ_BANDS, encodePeq(next))
+            ?.putFloat(KEY_PEQ_AMP, 0f)
+            ?.apply()
+    }
+
+    fun setMseb(values: MsebValues) {
+        _mseb.value = values
+        _prefs?.edit()?.putString(KEY_MSEB, encodeMseb(values))?.apply()
     }
 
     fun setLoudnessNormalization(value: Boolean) {
@@ -206,4 +294,57 @@ object TranslatePicker {
         pending?.complete(lang)
         pending = null
     }
+}
+
+private fun encodeFloats(values: FloatArray): String = values.joinToString(",")
+
+private fun decodeFloats(raw: String?, size: Int): FloatArray {
+    val out = FloatArray(size)
+    val parts = raw?.split(",") ?: return out
+    for (i in 0 until minOf(size, parts.size)) {
+        out[i] = parts[i].toFloatOrNull() ?: 0f
+    }
+    return out
+}
+
+private fun encodePeq(bands: List<PeqBand>): String = bands.joinToString(";") { band ->
+    "${if (band.enabled) 1 else 0}|${band.freq}|${band.q}|${band.gainDb}|${band.type.key}"
+}
+
+private fun decodePeq(raw: String?): List<PeqBand> {
+    if (raw.isNullOrBlank()) return defaultPeqBands()
+    val parsed = raw.split(";").mapNotNull { item ->
+        val p = item.split("|")
+        if (p.size != 5) return@mapNotNull null
+        PeqBand(
+            enabled = p[0] == "1",
+            freq = p[1].toFloatOrNull() ?: 1000f,
+            q = p[2].toFloatOrNull() ?: 1f,
+            gainDb = p[3].toFloatOrNull() ?: 0f,
+            type = FilterType.fromKey(p[4]),
+        )
+    }
+    return if (parsed.size == 32) parsed else defaultPeqBands()
+}
+
+private fun encodeMseb(v: MsebValues): String = listOf(
+    v.masterTemperature, v.bass0, v.bass1, v.thickness, v.vocal,
+    v.female, v.maleVocal, v.instruments, v.air, v.preamp,
+).joinToString(",")
+
+private fun decodeMseb(raw: String?): MsebValues {
+    val values = raw?.split(",")?.mapNotNull { it.toIntOrNull() } ?: return MsebValues()
+    if (values.size != 10) return MsebValues()
+    return MsebValues(
+        masterTemperature = values[0],
+        bass0 = values[1],
+        bass1 = values[2],
+        thickness = values[3],
+        vocal = values[4],
+        female = values[5],
+        maleVocal = values[6],
+        instruments = values[7],
+        air = values[8],
+        preamp = values[9],
+    )
 }

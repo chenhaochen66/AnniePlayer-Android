@@ -73,6 +73,7 @@ fun qobuzQualityLabel(q: Quality): String = when (q) {
     Quality.flac -> "FLAC 16bit/44.1kHz"
     Quality.k320k -> "MP3 320"
     Quality.k128k -> "MP3 128"
+    else -> q.label
 }
 
 /** 专辑规格文案（位深 / 采样率 / Hi-Res）；无数据返回空串 */
@@ -420,6 +421,18 @@ fun mapTrackToQobuzTrack(raw: Map<String, Any?>): QobuzTrack {
     }
 
     val discRaw = _firstTruthy(listOf(raw["media_number"], raw["disc_number"]))
+    val composerRaw = raw["composer"]
+    val composerName = when {
+        composerRaw is Map<*, *> -> composerRaw["name"]?.toString()
+        composerRaw != null -> composerRaw.toString()
+        else -> null
+    }?.takeIf { it.isNotBlank() }
+    val albumGenreRaw = if (album is Map<*, *>) album["genre"] else null
+    val genreName = when {
+        albumGenreRaw is Map<*, *> -> albumGenreRaw["name"]?.toString()
+        albumGenreRaw != null -> albumGenreRaw.toString()
+        else -> null
+    }?.takeIf { it.isNotBlank() }
 
     // 只用 performer（该曲演唱者）：performers 逗号串会把制作人/工程师也算进来
     val performerId = if (performer is Map<*, *>) (performer["id"] ?: "").toString() else ""
@@ -447,6 +460,8 @@ fun mapTrackToQobuzTrack(raw: Map<String, Any?>): QobuzTrack {
         isrc = raw["isrc"]?.toString()?.takeIf { it.isNotEmpty() },
         version = raw["version"]?.toString()?.takeIf { it.isNotEmpty() },
         copyright = raw["copyright"]?.toString()?.takeIf { it.isNotEmpty() },
+        composer = composerName,
+        genre = genreName,
         artistNames = artistNames,
         artistIds = artistIds,
     )
@@ -534,6 +549,9 @@ fun qobuzTrackToSong(track: QobuzTrack, hires: Boolean = false): Song = Song(
     },
     artistNames = track.artistNames,
     artistIds = track.artistIds,
+    composer = track.composer,
+    genre = track.genre,
+    isrc = track.isrc,
 )
 
 /** Qobuz 专辑 -> [Album]（封面放 `pic`，`buildAlbumCoverUrl` 对 qobuz 直接取它）。 */

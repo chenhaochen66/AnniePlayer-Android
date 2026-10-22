@@ -758,7 +758,7 @@ private fun audioOutputLabel(status: AudioOutputStatus?): String {
     }
     val badge = status.badge
     if (badge.isEmpty()) return ""
-    val rate = status.resampledTo
+    val rate = if (status.resampledTo > 0) status.resampledTo else status.sourceRate
     if (rate <= 0) return badge
     val depthValue = if (status.outputDepth > 0) status.outputDepth else status.sourceDepth
     val depth = if (depthValue > 0) "$depthValue Bit / " else ""

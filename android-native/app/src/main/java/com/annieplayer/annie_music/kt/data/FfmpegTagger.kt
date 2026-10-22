@@ -36,6 +36,8 @@ internal object FfmpegTagger {
         trackNumber: String?,
         discNumber: String?,
         releaseDate: String?,
+        composer: String? = null,
+        genre: String? = null,
         isrc: String? = null,
         version: String? = null,
         copyright: String? = null,
@@ -62,6 +64,8 @@ internal object FfmpegTagger {
         if (!trackNumber.isNullOrEmpty()) args += listOf("-metadata", "track=$trackNumber")
         if (!discNumber.isNullOrEmpty()) args += listOf("-metadata", "disc=$discNumber")
         if (!releaseDate.isNullOrEmpty()) args += listOf("-metadata", "date=$releaseDate")
+    if (!composer.isNullOrEmpty()) args += listOf("-metadata", "composer=$composer")
+    if (!genre.isNullOrEmpty()) args += listOf("-metadata", "genre=$genre")
     if (!isrc.isNullOrEmpty()) args += listOf("-metadata", "ISRC=$isrc")
     if (!version.isNullOrEmpty()) args += listOf("-metadata", "comment=$version")
     if (!copyright.isNullOrEmpty()) args += listOf("-metadata", "copyright=$copyright")

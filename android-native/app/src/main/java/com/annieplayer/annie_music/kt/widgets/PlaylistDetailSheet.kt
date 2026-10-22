@@ -70,6 +70,7 @@ import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
+import com.annieplayer.annie_music.kt.data.playQualityLabelOf
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
@@ -369,6 +370,15 @@ private fun PlaylistDetailContent(
                 sizeOf = { q ->
                     val selected = st.songs.filter { st.selectedIds.contains(it.id) }
                     if (selected.size == 1) selected.first().qualitySizes[q] else null
+                },
+                // 选中歌单是单一平台时用该平台的专属档位名（Apple 的 ALAC 两档、Qobuz 的
+                // FLAC Hires Max），混选时退回通用名
+                labelOf = { q ->
+                    val platforms = st.songs
+                        .filter { st.selectedIds.contains(it.id) }
+                        .map { it.platform }
+                        .distinct()
+                    if (platforms.size == 1) playQualityLabelOf(platforms.first(), q) else q.label
                 },
                     onSelect = { q ->
                         // 跑在全局串行队列上（同 AlbumDetailSheet）：弹窗一关作用域就作废

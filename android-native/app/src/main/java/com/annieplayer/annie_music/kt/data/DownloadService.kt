@@ -65,6 +65,15 @@ object DownloadService {
 
     private const val TAG = "DownloadService"
 
+    /**
+     * 落盘/搬移用的单次缓冲。
+     *
+     * 下载走的是单条 HTTP 流（不像 Apple 分片那样能并发），缓冲大小直接决定 syscall 次数：
+     * 8KB（Kotlin `copyTo` 默认）下一首 100MB 的无损要一万两千多次 read/write，
+     * 256KB 时降到四百次以内，在 UFS 上就能吃满顺序写带宽。
+     */
+    private const val COPY_BUFFER = 256 * 1024
+
     /** Chrome UA（与 Flutter `download_service.dart` 的 `_chromeUa` 完全一致） */
     private const val _chromeUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
@@ -80,6 +89,24 @@ object DownloadService {
     /** 临时目录；未 [init] 时回退 JVM 临时目录，保证 API 在 init 前可工作。 */
     private fun _tempDir(): File =
         _cacheDir ?: File(System.getProperty("java.io.tmpdir") ?: ".")
+
+    /** Apple 下载等外部流程复用的临时目录。 */
+    internal fun tempDirectory(): File = _tempDir()
+
+    /** 与 [downloadSong] 相同的下载目录（含末尾分隔符）。 */
+    internal fun downloadDirectory(): String {
+        val customDir = DownloadDirService.getDownloadDirPath()
+        return if (!customDir.isNullOrEmpty()) {
+            if (customDir.endsWith("/") || customDir.endsWith("\\")) customDir
+            else customDir + File.separator
+        } else {
+            _tempDir().absolutePath + File.separator + "downloads" + File.separator
+        }
+    }
+
+    /** 用户是否设置了自定义下载目录（非默认私有 downloads/）。 */
+    internal fun hasCustomDownloadDirectory(): Boolean =
+        !DownloadDirService.getDownloadDirPath().isNullOrEmpty()
 
     /** 活跃下载（对齐 Dart `ActiveDownload`），用于暂停/取消 */
     private class ActiveDownload(val call: Call, val tempPath: String) {
@@ -250,8 +277,11 @@ object DownloadService {
         trackNumber: String? = null,
         discNumber: String? = null,
         releaseDate: String? = null,
+        composer: String? = null,
+        genre: String? = null,
+        isrc: String? = null,
     ): String {
-        var isrcValue: String? = null
+        var isrcValue: String? = isrc
         var versionValue: String? = null
         var copyrightValue: String? = null
         if (songId.startsWith("qobuz:")) {
@@ -345,6 +375,8 @@ object DownloadService {
                     trackNumber = trackNumber,
                     discNumber = discNumber,
                     releaseDate = releaseDate,
+                    composer = composer,
+                    genre = genre,
                     isrc = isrcValue,
                     version = versionValue,
                     copyright = copyrightValue,
@@ -364,6 +396,8 @@ object DownloadService {
                         trackNumber = trackNumber,
                         discNumber = discNumber,
                         releaseDate = releaseDate,
+                        composer = composer,
+                        genre = genre,
                         isrc = isrcValue,
                         version = versionValue,
                         copyright = copyrightValue,
@@ -448,7 +482,9 @@ object DownloadService {
 
     /** 扩展名：flac/hires 用 `.flac`，其余 `.mp3`（对齐 Dart `_ext`）。 */
     private fun _ext(q: Quality): String =
-        if (q == Quality.flac || q == Quality.hires) ".flac" else ".mp3"
+        if (q == Quality.flac || q == Quality.hires) ".flac"
+        else if (q == Quality.atmos || q == Quality.alac || q == Quality.aac256) ".m4a"
+        else ".mp3"
 
     /**
      * 嗅探真实音频格式（读文件头 4 字节）。
@@ -482,7 +518,7 @@ object DownloadService {
             val total = body.contentLength()
             body.byteStream().use { input ->
                 tmpFile.outputStream().use { output ->
-                    val buf = ByteArray(64 * 1024)
+                    val buf = ByteArray(COPY_BUFFER)
                     var received = 0L
                     var lastPct = -1
                     var n = input.read(buf)
@@ -531,7 +567,9 @@ object DownloadService {
                             false
                         } else {
                             body.byteStream().use { input ->
-                                coverTmp.outputStream().use { output -> input.copyTo(output) }
+                                coverTmp.outputStream().use { output ->
+                                    input.copyTo(output, COPY_BUFFER)
+                                }
                             }
                             true
                         }
@@ -563,6 +601,8 @@ object DownloadService {
         trackNumber: String? = null,
         discNumber: String? = null,
         releaseDate: String? = null,
+        composer: String? = null,
+        genre: String? = null,
         coverCacheKey: String = inputPath,
     ) {
         val safeTitle = decodeHtmlEntities(title)
@@ -581,6 +621,8 @@ object DownloadService {
                     trackNumber = trackNumber,
                     discNumber = discNumber,
                     releaseDate = releaseDate,
+                    composer = composer,
+                    genre = genre,
                 )
             } catch (ex: Throwable) {
                 Log.w(TAG, "[tag] tag failed (with cover): $ex")
@@ -596,6 +638,8 @@ object DownloadService {
                         trackNumber = trackNumber,
                         discNumber = discNumber,
                         releaseDate = releaseDate,
+                        composer = composer,
+                        genre = genre,
                     )
                 } catch (ex2: Throwable) {
                     Log.w(TAG, "[tag] tag failed (no cover) too, using raw: $ex2")
@@ -626,6 +670,8 @@ object DownloadService {
         trackNumber: String?,
         discNumber: String?,
         releaseDate: String?,
+        composer: String? = null,
+        genre: String? = null,
         isrc: String? = null,
         version: String? = null,
         copyright: String? = null,
@@ -642,6 +688,8 @@ object DownloadService {
             trackNumber = trackNumber,
             discNumber = discNumber,
             releaseDate = releaseDate,
+            composer = composer,
+            genre = genre,
             isrc = isrc,
             version = version,
             copyright = copyright,

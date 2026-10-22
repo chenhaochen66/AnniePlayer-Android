@@ -71,7 +71,7 @@ import com.annieplayer.annie_music.kt.data.fetchAlbumSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
+import com.annieplayer.annie_music.kt.data.playQualityLabelOf
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
 import com.annieplayer.annie_music.kt.data.model.DownloadTask
@@ -240,6 +240,9 @@ private fun AlbumDetailContent(
         trackNumber = s.track?.toString(),
         discNumber = s.discNumber?.toString(),
         releaseDate = st.releaseDate.ifEmpty { null },
+        composer = s.composer,
+        genre = s.genre,
+        isrc = s.isrc,
     )
 
     fun load() {
@@ -309,6 +312,9 @@ private fun AlbumDetailContent(
                     albumArtist = data.artist,
                     trackNumber = if (s.track != null) s.track.toString() else "${i + 1}",
                     releaseDate = st.releaseDate.ifEmpty { null },
+                    composer = song.composer,
+                    genre = song.genre,
+                    isrc = song.isrc,
                 ),
                 onProgress = { p -> downloadViewModel.updateProgress(s.id, (p * 100).coerceIn(0.0, 100.0)) },
             )
@@ -438,9 +444,7 @@ private fun AlbumDetailContent(
                 // 与曲目实际可用音质一致（Qobuz 专辑含 Hi-Res，其余三档）
                 qualities = batchDownloadQualities(pickerSongs),
                 sizeOf = { q -> if (pickerSongs.size == 1) pickerSongs.first().qualitySizes[q] else null },
-                labelOf = { q ->
-                    if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
-                },
+                labelOf = { q -> playQualityLabelOf(data.platform, q) },
                     onSelect = { q ->
                         // 跑在全局串行队列上：本弹窗的作用域一关就作废，
                         // 若用 scope.launch，弹窗一关剩下的歌会全部抛 ForgottenCoroutineScopeException

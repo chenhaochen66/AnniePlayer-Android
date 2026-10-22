@@ -42,8 +42,22 @@ import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 
-/** 档位排序（对齐 Dart `_qualityOrder` / RN `QUALITY_ORDER`）。 */
-private val QualityPickerOrder = listOf(Quality.hires, Quality.flac, Quality.k320k, Quality.k128k)
+/**
+ * 档位排序（高 → 低；对齐 Dart `_qualityOrder` / RN `QUALITY_ORDER`）。
+ *
+ * **ALAC 超高解析（[Quality.hires]）排在 ALAC 无损（[Quality.alac]）之上**：Apple 的这两档
+ * 是同一编解码器的两个规格，超高解析才是更高的那档；同时这也是「默认播放音质」列表的顺序
+ * （[com.annieplayer.annie_music.kt.data.playQualityTiersOf]），两个入口必须一致。
+ */
+private val QualityPickerOrder = listOf(
+    Quality.atmos,
+    Quality.hires,
+    Quality.alac,
+    Quality.aac256,
+    Quality.flac,
+    Quality.k320k,
+    Quality.k128k,
+)
 
 /** 每档音质的描述 / 主题色 / 图标形状（对齐 RN `QUALITY_DETAILS`）。 */
 private class QualityPickerDetail(
@@ -57,6 +71,9 @@ private val QualityPickerDetails: Map<Quality, QualityPickerDetail> = mapOf(
     Quality.k320k to QualityPickerDetail("MP3 320kbps", AppColors.primary, isDisc = false),
     Quality.flac to QualityPickerDetail("FLAC 无损", AppColors.warning, isDisc = true),
     Quality.hires to QualityPickerDetail("Hi-Res 高解析", AppColors.hires, isDisc = true),
+    Quality.aac256 to QualityPickerDetail("AAC-LC 256kbps 立体声", AppColors.primary, isDisc = false),
+    Quality.alac to QualityPickerDetail("ALAC 无损", AppColors.warning, isDisc = true),
+    Quality.atmos to QualityPickerDetail("Dolby Atmos 空间音频", AppColors.hires, isDisc = true),
 )
 
 /**
@@ -84,6 +101,7 @@ fun QualityPickerSheet(
     labelOf: (Quality) -> String = { it.label },
     sizeOf: (Quality) -> Long? = { null },
     specOf: (Quality) -> String? = { null },
+    descOf: (Quality) -> String? = { null },
     avoidMiniPlayer: Boolean = false,
     miniPlayerVisible: Boolean = false,
 ) {
@@ -195,6 +213,7 @@ fun QualityPickerSheet(
                         labelOf = labelOf,
                         sizeOf = sizeOf,
                         specOf = specOf,
+                        descOf = descOf,
                     )
                     Spacer(modifier = Modifier.height(AppSpacing.sp8))
                 }
@@ -236,6 +255,7 @@ private fun QualityPickerOptionRow(
     labelOf: (Quality) -> String,
     sizeOf: (Quality) -> Long?,
     specOf: (Quality) -> String?,
+    descOf: (Quality) -> String?,
 ) {
     val detail = QualityPickerDetails.getValue(quality)
     val interaction = remember { MutableInteractionSource() }
@@ -275,7 +295,7 @@ private fun QualityPickerOptionRow(
             Spacer(modifier = Modifier.height(AppSpacing.sp1))
             Text(
                 text = buildString {
-                    append(detail.desc)
+                    append(descOf(quality) ?: detail.desc)
                     val extra = specOf(quality) ?: sizeOf(quality)?.let { qualitySizeLabel(it) }
                     if (!extra.isNullOrEmpty()) append(" · ").append(extra)
                 },

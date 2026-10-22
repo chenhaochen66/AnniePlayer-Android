@@ -16,7 +16,16 @@ import com.annieplayer.annie_music.kt.data.sources.enrichKuwoSong
 import com.annieplayer.annie_music.kt.data.sources.enrichKkboxSong
 import com.annieplayer.annie_music.kt.data.sources.enrichNeteaseSong
 import com.annieplayer.annie_music.kt.data.sources.enrichQQSong
+import com.annieplayer.annie_music.kt.data.sources.fetchAppleArtistAvatar
+import com.annieplayer.annie_music.kt.data.sources.fetchAppleArtistBio
+import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.fetchAppleLyric
 import com.annieplayer.annie_music.kt.data.sources.fetchKugouArtistInfo
+import com.annieplayer.annie_music.kt.data.sources.getAppleAlbumSongs
+import com.annieplayer.annie_music.kt.data.sources.getAppleArtistAlbums
+import com.annieplayer.annie_music.kt.data.sources.getAppleArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.searchAppleAlbums
+import com.annieplayer.annie_music.kt.data.sources.searchAppleArtists
+import com.annieplayer.annie_music.kt.data.sources.searchAppleMusic
 import com.annieplayer.annie_music.kt.data.sources.fetchKugouLyric
 import com.annieplayer.annie_music.kt.data.sources.fetchKugouMusicUrl
 import com.annieplayer.annie_music.kt.data.sources.fetchKuwoArtistAvatar
@@ -250,20 +259,29 @@ fun playQualityTiersOf(platform: MusicPlatform): List<Quality> = when (platform)
     MusicPlatform.qobuz -> listOf(Quality.hires, Quality.flac, Quality.k320k)
     MusicPlatform.qq, MusicPlatform.kuwo ->
         listOf(Quality.flac, Quality.k320k, Quality.k128k)
+    MusicPlatform.apple -> listOf(Quality.atmos, Quality.hires, Quality.alac, Quality.aac256)
     MusicPlatform.kkbox -> emptyList()
 }
 
-/** 档位显示名：Qobuz 用它自己的（`MP3 320` / `FLAC 16bit…`），其余用通用 [Quality.label] */
-fun playQualityLabelOf(platform: MusicPlatform, quality: Quality): String =
-    if (platform == MusicPlatform.qobuz) qobuzQualityLabel(quality) else quality.label
+/** 档位显示名：Qobuz / Apple 用自己的档位命名，其余用通用 [Quality.label] */
+fun playQualityLabelOf(platform: MusicPlatform, quality: Quality): String = when {
+    platform == MusicPlatform.qobuz -> qobuzQualityLabel(quality)
+    platform == MusicPlatform.apple && quality == Quality.alac -> "ALAC 无损"
+    platform == MusicPlatform.apple && quality == Quality.hires -> "ALAC 超高解析"
+    else -> quality.label
+}
 
 /**
  * 「自动」档显示名 —— 顺带写出它实际取到的档，避免看着像"没档位"。
  *
  * 国内四平台自动 = 320k（`builtinPlayUrl` 既有规则）；**Qobuz 自动 = FLAC Hires Max**（`qobuzHiresFormatId`）。
  */
-fun playQualityAutoLabelOf(platform: MusicPlatform): String =
-    if (platform == MusicPlatform.qobuz) "自动（FLAC Hires Max）" else "自动（320k）"
+fun playQualityAutoLabelOf(platform: MusicPlatform): String = when (platform) {
+    MusicPlatform.qobuz -> "自动（FLAC Hires Max）"
+    // Apple 的「自动」= ALAC 超高解析，曲目没有该档时按 ALAC 无损 → AAC 256 降级
+    MusicPlatform.apple -> "自动（ALAC 超高解析）"
+    else -> "自动（320k）"
+}
 
 /**
  * 内置播放直链（netease 走 c.wwwweb.top，qq/kugou 走长青解析，其余走 kuwo）。
@@ -285,6 +303,7 @@ internal suspend fun builtinPlayUrl(song: Song, quality: Quality? = null): Strin
         )
         MusicPlatform.qobuz -> fetchQobuzUrl(song)
         MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoPlayUrl(song.id)
+        MusicPlatform.apple -> error("Apple Music 播放暂未接入")
     }
 }
 
@@ -318,6 +337,7 @@ private suspend fun _builtinPlayUrlAt(song: Song, quality: Quality): String = wh
     MusicPlatform.kugou -> fetchKugouMusicUrl(song.id.replaceFirst(Regex("^kugou:"), ""), quality.value)
     MusicPlatform.qobuz -> fetchQobuzUrl(song, quality)
     MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoPlayUrl(song.id, quality)
+    MusicPlatform.apple -> error("Apple Music 播放暂未接入")
 }
 
 /** 内置下载直链 */
@@ -333,6 +353,7 @@ internal suspend fun builtinDownloadUrl(song: Song, quality: Quality): String = 
     )
     MusicPlatform.qobuz -> fetchQobuzUrl(song, quality)
     MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoDownloadUrl(song.id, quality)
+    MusicPlatform.apple -> error("Apple Music 下载暂未接入")
 }
 
 /** Qobuz 直链（需 token；[quality] 为空表示播放，取最高档） */
@@ -358,6 +379,7 @@ suspend fun searchAlbumByPlatform(
         limit = pageSize,
         offset = (page - 1) * pageSize,
     )
+    MusicPlatform.apple -> searchAppleAlbums(query, page = page, limit = pageSize)
     MusicPlatform.kuwo, MusicPlatform.kkbox ->
         searchAlbum(query, page = page, pageSize = pageSize)
 }
@@ -398,6 +420,9 @@ suspend fun fetchAlbumSongsByPlatform(
         val r = getAlbumSongs(albumId)
         RepoAlbumSongs(r.songs, r.pub)
     }
+    MusicPlatform.apple -> getAppleAlbumSongs(albumId).let {
+        RepoAlbumSongs(it.songs, it.pub)
+    }
 }
 
 /**
@@ -423,6 +448,7 @@ suspend fun fetchArtistAvatarByPlatform(
     MusicPlatform.netease -> fetchNeteaseArtistAvatar(artistId)
     MusicPlatform.kuwo -> fetchKuwoArtistAvatar(name)
     MusicPlatform.qobuz -> fetchQobuzArtistPicture(artistId)
+    MusicPlatform.apple -> fetchAppleArtistAvatar(artistId, name)
     MusicPlatform.kkbox -> ""
 }
 
@@ -441,6 +467,7 @@ suspend fun fetchArtistBioByPlatform(
     MusicPlatform.qq -> fetchQQArtistBio(artistId)
     MusicPlatform.kugou -> fetchKugouArtistInfo(artistId).intro
     MusicPlatform.kuwo -> fetchKuwoArtistBio(name)
+    MusicPlatform.apple -> fetchAppleArtistBio(artistId, name)
     MusicPlatform.qobuz, MusicPlatform.kkbox -> ""
 }
 
@@ -481,6 +508,7 @@ suspend fun searchArtistByPlatform(
     MusicPlatform.qq -> searchQQArtist(query)
     MusicPlatform.kugou -> searchKugouArtist(query)
     MusicPlatform.qobuz -> searchQobuzArtists(query)
+    MusicPlatform.apple -> searchAppleArtists(query)
     MusicPlatform.kuwo, MusicPlatform.kkbox -> searchArtist(query)
 }
 
@@ -510,6 +538,10 @@ suspend fun fetchArtistSongsByPlatform(
         val r = getArtistSongs(artistId, page)
         RepoArtistSongs(r.songs, r.total)
     }
+    MusicPlatform.apple -> {
+        val r = getAppleArtistSongs(artistId)
+        RepoArtistSongs(r.songs, r.total, pageable = false)
+    }
 }
 
 /**
@@ -526,6 +558,7 @@ suspend fun fetchArtistAlbumsByPlatform(
     MusicPlatform.qq -> getQQArtistAlbums(artistId, artistName)
     MusicPlatform.kugou -> getKugouArtistAlbums(artistId)
     MusicPlatform.qobuz -> getQobuzArtistPage(artistId).albums
+    MusicPlatform.apple -> getAppleArtistAlbums(artistId)
     MusicPlatform.kuwo, MusicPlatform.kkbox -> getArtistAlbums(artistId)
 }
 
@@ -552,7 +585,18 @@ suspend fun fetchLyric(
 
     // 译文语言要进 key：同一首歌换语言是不同结果，共用 key 会一直命中旧译文；
     // autoPickTranslate 也进 key，否则「自动取第一个译文」的缓存会被「只要原文」的下载分支命中。
-    val cacheKey = "lyric:v5:${song.id}:${song.lyricTranslateLang.orEmpty()}:" +
+    // Apple 还要带上数据源标记：ak1ra 与本机 wrapper-lite 给出的歌词可能一个空一个有，
+    // 不带源标识时切源后会一直命中另一边的旧缓存（表现为「切了源歌词还是不出来」）。
+    val appleSrcTag = if (song.platform == MusicPlatform.apple) {
+        if (com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleServiceSettings.useLocal) {
+            ":local"
+        } else {
+            ":remote"
+        }
+    } else {
+        ""
+    }
+    val cacheKey = "lyric:v6:${song.id}$appleSrcTag:${song.lyricTranslateLang.orEmpty()}:" +
         (if (autoPickTranslate) "auto" else "raw")
     val cached = cacheService.get<String>(cacheKey)
     if (cached != null) {
@@ -603,34 +647,44 @@ suspend fun fetchLyric(
                     translateLang = r.translateLang,
                 )
             }
+        } else if (song.platform == MusicPlatform.apple) {
+            val r = fetchAppleLyric(song.id)
+            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
         } else {
             val r = fetchKuwoLyric(song.id, song.title, song.artist)
             LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
         }
-        cacheService.set(
-            cacheKey,
-            anyToJsonElement(
-                mapOf<String, Any?>(
-                    "lrc" to result.lrc,
-                    "tlyric" to result.tlyric,
-                    "wordLyric" to result.wordLyric,
-                    "translateLangs" to result.translateLangs,
-                    "translateLang" to result.translateLang,
-                ),
-            ).toString(),
-            _lyricCacheTtl,
-        )
+        // 空歌词不落缓存：否则一次瞬时失败（网络抖动 / 服务未起）会在 TTL 内一直返回空，
+        // 表现为「明明服务好了歌词还是不出来」。
+        if (result.lrc.isNotEmpty()) {
+            cacheService.set(
+                cacheKey,
+                anyToJsonElement(
+                    mapOf<String, Any?>(
+                        "lrc" to result.lrc,
+                        "tlyric" to result.tlyric,
+                        "wordLyric" to result.wordLyric,
+                        "translateLangs" to result.translateLangs,
+                        "translateLang" to result.translateLang,
+                    ),
+                ).toString(),
+                _lyricCacheTtl,
+            )
+        }
         result
     } catch (_: Throwable) {
-        // 拉取失败：缓存并返回占位，避免 60 分钟内反复请求同一首（对齐 RN 行为）
+        // 拉取失败：Apple 走的是本机服务，一次失败不该锁死 60 分钟（服务可能刚被拉起），
+        // 所以 Apple 不缓存占位；其它平台沿用原行为，避免反复请求。
         val fallback = LyricResult(lrc = "[00:00.00]暂无歌词", tlyric = null)
-        cacheService.set(
-            cacheKey,
-            anyToJsonElement(
-                mapOf<String, Any?>("lrc" to fallback.lrc, "tlyric" to fallback.tlyric),
-            ).toString(),
-            _lyricCacheTtl,
-        )
+        if (song.platform != MusicPlatform.apple) {
+            cacheService.set(
+                cacheKey,
+                anyToJsonElement(
+                    mapOf<String, Any?>("lrc" to fallback.lrc, "tlyric" to fallback.tlyric),
+                ).toString(),
+                _lyricCacheTtl,
+            )
+        }
         fallback
     }
 }
@@ -690,6 +744,9 @@ suspend fun enrichSong(song: Song): Map<String, Any?> = when (song.platform) {
             "discNumber" to t.discNumber?.toString(),
             "releaseDate" to (t.releaseDateOriginal ?: t.year.takeIf { it > 0 }?.toString()),
             "albumArtist" to t.albumArtist,
+            "composer" to t.composer,
+            "genre" to t.genre,
+            "isrc" to t.isrc,
         )
     }
     MusicPlatform.netease -> {
@@ -710,4 +767,5 @@ suspend fun enrichSong(song: Song): Map<String, Any?> = when (song.platform) {
             "albumArtist" to r.albumArtist,
         )
     }
+    MusicPlatform.apple -> emptyMap()
 }

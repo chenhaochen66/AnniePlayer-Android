@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
@@ -228,13 +229,13 @@ private fun SongTileCard(
     }
 }
 
-/** 第三行 meta：`时长 · 最高音质 · 源名`（如 `3:34 · FLAC · 酷我`） */
+/** 第三行 meta：`时长 · 音质标 · 源名`（如 `3:34 · FLAC · 酷我`） */
 @Composable
 private fun SongTileMetaLine(song: Song, sourceLabel: String?) {
-    val parts = remember(song.duration, song.qualities, sourceLabel) {
+    val parts = remember(song.duration, song.qualities, song.platform, sourceLabel) {
         buildList<Pair<String, Boolean>> {
             if (song.duration > 0) add(formatDuration(song.duration) to false)
-            topQualityLabel(song.qualities)?.let { add(it to true) }
+            for (label in qualityLabels(song)) add(label to true)
             if (!sourceLabel.isNullOrEmpty()) add(sourceLabel to false)
         }
     }
@@ -274,13 +275,45 @@ private fun SongTileMetaLine(song: Song, sourceLabel: String?) {
 private fun formatDuration(seconds: Int): String =
     "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
 
-/** 取最高音质短标签（HiRes / FLAC / 320K / 128K）—— 对齐 Flutter `_topQualityLabel` */
+/**
+ * 音质短标签（可多个）。
+ *
+ * Apple：按档位逐个列出（同一条目可能同时具备多档），顺序固定为
+ * `Hi-Res → Dolby → ALAC → AAC 256`；一个都没有才不标。
+ *
+ * 其它平台仍然只显示「最高那一档」。
+ */
+private fun qualityLabels(song: Song): List<String> =
+    if (song.platform == MusicPlatform.apple) {
+        buildList {
+            if (Quality.hires in song.qualities) add("Hi-Res")
+            if (Quality.atmos in song.qualities) add("Dolby")
+            if (Quality.alac in song.qualities) add("ALAC")
+            if (Quality.aac256 in song.qualities) add("AAC 256")
+        }
+    } else {
+        listOfNotNull(topQualityLabel(song.qualities))
+    }
+
+/** 取最高音质短标签（HiRes / ALAC / 320K / 128K）—— 对齐 Flutter `_topQualityLabel` */
 private fun topQualityLabel(qualities: List<Quality>): String? {
     if (qualities.isEmpty()) return null
-    val order = listOf(Quality.hires, Quality.flac, Quality.k320k, Quality.k128k)
+    // Atmos → ALAC 超高解析 → ALAC 无损 → AAC 256 → …：与音质选择弹窗同一套次序
+    val order = listOf(
+        Quality.atmos,
+        Quality.hires,
+        Quality.alac,
+        Quality.aac256,
+        Quality.flac,
+        Quality.k320k,
+        Quality.k128k,
+    )
     for (q in order) {
         if (q !in qualities) continue
         return when (q) {
+            Quality.atmos -> "ATMOS"
+            Quality.alac -> "ALAC"
+            Quality.aac256 -> "AAC 256"
             Quality.hires -> "HiRes"
             Quality.flac -> "FLAC"
             Quality.k320k -> "320K"

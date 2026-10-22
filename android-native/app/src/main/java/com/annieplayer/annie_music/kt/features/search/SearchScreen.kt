@@ -3,11 +3,14 @@ package com.annieplayer.annie_music.kt.features.search
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -36,6 +39,7 @@ import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.AlbumSearchResults
+import com.annieplayer.annie_music.kt.widgets.AppleCountryButton
 import com.annieplayer.annie_music.kt.widgets.AppTopBar
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
@@ -116,21 +120,33 @@ fun SearchScreen(
                             )
                         },
                     )
-                    // 模式切换
-                    Box(
-                        modifier = Modifier.padding(
-                            start = AppSpacing.sp16,
-                            end = AppSpacing.sp16,
-                            bottom = AppSpacing.sp8,
-                        ),
+                    // 模式切换（Apple Music 时同一行最右侧显示国家/地区选择）
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = AppSpacing.sp16,
+                                end = AppSpacing.sp16,
+                                bottom = AppSpacing.sp8,
+                            ),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                     ) {
                         ModeDropdown(
                             mode = mode,
                             open = modePickerVisible,
                             onToggle = { modePickerVisible = !modePickerVisible },
                             onSelect = { handleModeSelect(it) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.weight(1f),
                         )
+                        if (showAppleCountry) {
+                            Spacer(modifier = Modifier.width(AppSpacing.sp8))
+                            AppleCountryButton(
+                                code = appleCountry,
+                                storefronts = appleStorefronts,
+                                loading = appleStorefrontsLoading,
+                                onSelect = { selectAppleCountry(it) },
+                            )
+                        }
                     }
                     // 待下载条
                     if (mode == ModeDropdownMode.song && selection.selectedSongs.isNotEmpty()) {
@@ -164,6 +180,7 @@ fun SearchScreen(
                                 onLoadMore = { source, page -> searchBySource(source, songSubmitted, page) },
                                 activeSongId = currentSong?.id,
                                 selectedSongs = selection.selectedSongs,
+                                pageSize = if (showAppleCountry) kAppleSearchPageSize else kSearchPageSize,
                                 downloadStatusOf = { song -> downloadTasks[song.id]?.status },
                             )
                             ModeDropdownMode.album -> AlbumSearchResults(

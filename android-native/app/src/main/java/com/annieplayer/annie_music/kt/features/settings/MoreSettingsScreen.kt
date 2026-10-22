@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,7 +50,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.annieplayer.annie_music.kt.core.audio.AudioOutputMode
-import com.annieplayer.annie_music.kt.core.audio.EqPreset
+import com.annieplayer.annie_music.kt.core.audio.TuningEngine
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.playQualityAutoLabelOf
@@ -191,9 +192,10 @@ fun moreSettingsGroups(
     onToggleSaveLrcFile: (Boolean) -> Unit,
     audioMode: AudioOutputMode = AudioOutputMode.transparent,
     onPickAudioMode: (AudioOutputMode) -> Unit = {},
-    eqPreset: EqPreset = EqPreset.flat,
-    onPickEqPreset: (EqPreset) -> Unit = {},
-    loudnessNormalization: Boolean = false,
+    tuningEngine: TuningEngine = TuningEngine.graphic,
+    onPickTuningEngine: (TuningEngine) -> Unit = {},
+    onOpenTuning: () -> Unit = {},
+    tuningSummary: String = "",    loudnessNormalization: Boolean = false,
     onToggleLoudnessNormalization: (Boolean) -> Unit = {},
     forceNativeRate: Boolean = false,
     onToggleForceNativeRate: (Boolean) -> Unit = {},
@@ -257,7 +259,7 @@ fun moreSettingsGroups(
                 MoreSettingDropdown(
                     key = "audio-output-mode",
                     label = "输出模式",
-                    subtitle = outputDetail.ifEmpty { "透明 = DSP 全旁路；调音 = EQ + 响度 + 限幅" },
+                    subtitle = outputDetail.ifEmpty { "透明 = DSP 全旁路；调音 = 均衡器 / PEQ / MSEB + 响度 + 限幅" },
                     value = audioMode.label,
                     options = AudioOutputMode.entries.map { mode ->
                         MoreSettingOption(
@@ -272,17 +274,25 @@ fun moreSettingsGroups(
             if (audioMode == AudioOutputMode.tuned) {
                 add(
                     MoreSettingDropdown(
-                        key = "audio-eq-preset",
-                        label = "EQ 预设",
-                        subtitle = "调音模式专属；切换立即生效",
-                        value = eqPreset.label,
-                        options = EqPreset.entries.map { preset ->
+                        key = "audio-tuning-engine",
+                        label = "调音引擎",
+                        subtitle = "均衡器 / PEQ / MSEB 互斥；切换立即生效",
+                        value = tuningEngine.label,
+                        options = TuningEngine.entries.map { engine ->
                             MoreSettingOption(
-                                label = preset.label,
-                                selected = preset == eqPreset,
-                                onSelect = { onPickEqPreset(preset) },
+                                label = engine.label,
+                                selected = engine == tuningEngine,
+                                onSelect = { onPickTuningEngine(engine) },
                             )
                         },
+                    ),
+                )
+                add(
+                    MoreSettingAction(
+                        key = "audio-tuning-open",
+                        label = "调音设置",
+                        subtitle = tuningSummary.ifEmpty { "进入均衡器 / PEQ / MSEB 编辑" },
+                        onClick = onOpenTuning,
                     ),
                 )
                 add(
@@ -833,6 +843,15 @@ private fun MoreSettingsSwitchRow(
             )
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp12))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = AppColors.background,
+                checkedTrackColor = AppColors.white,
+                uncheckedThumbColor = AppColors.white54,
+                uncheckedTrackColor = AppColors.whiteA06,
+            ),
+        )
     }
 }

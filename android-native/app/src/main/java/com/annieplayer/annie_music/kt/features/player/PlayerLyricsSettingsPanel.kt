@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -98,6 +99,12 @@ fun PlayerFontScalePanel(
             Switch(
                 checked = showWordByWord,
                 onCheckedChange = { onToggleWordByWord() },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = AppColors.background,
+                    checkedTrackColor = AppColors.white,
+                    uncheckedThumbColor = AppColors.white54,
+                    uncheckedTrackColor = AppColors.whiteA06,
+                ),
             )
         }
     }

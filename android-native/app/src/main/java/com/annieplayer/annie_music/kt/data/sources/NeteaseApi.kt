@@ -450,6 +450,10 @@ suspend fun getNeteaseAlbumSongs(albumId: String): AlbumSongsPage {
                 if (first is Map<*, *>) decodeHtmlEntities((first["name"] ?: "").toString()) else ""
             }
         }
+        val albumGenre = (albumMap?.get("tags") as? List<*>)
+            ?.mapNotNull { it?.toString()?.takeIf { s -> s.isNotBlank() } }
+            ?.joinToString(" / ")
+            .orEmpty()
         val out = ArrayList<AlbumSong>()
         for (m in _listOfMaps(list)) {
             // 注意：`/api/album/{id}` 是旧接口 —— 歌手字段是 `artists`（不是 `ar`）、
@@ -481,6 +485,8 @@ suspend fun getNeteaseAlbumSongs(albumId: String): AlbumSongsPage {
                     qualitySizes = parseNeteaseQualitySizes(m),
                     artistNames = artistNames,
                     artistIds = artistIds,
+                    composer = (m["composer"] as? String)?.takeIf { it.isNotBlank() },
+                    genre = albumGenre.ifEmpty { null },
                 ),
             )
         }

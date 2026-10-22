@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 后台播放保活（对齐 Flutter 版 WAKE_LOCK） -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 菜单「耗电优化」开关：拉起系统的「允许后台运行」对话框（加入电池优化白名单） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 下载写入公共 Music 目录：API 29+ 走 MediaStore RELATIVE_PATH，28 及以下需要该权限 -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"

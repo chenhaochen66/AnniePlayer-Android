@@ -24,6 +24,7 @@ enum class MusicPlatform(val label: String) {
     qq("QQ"),
     kugou("酷狗"),
     qobuz("Qobuz"),
+    apple("Apple Music"),
     ;
 
     companion object {
@@ -63,6 +64,15 @@ enum class Quality(
 
     @SerialName("hires")
     hires("hires", "HiRes", "4000kflac"),
+
+    @SerialName("aac256")
+    aac256("aac256", "AAC 256kbps", "aac256"),
+
+    @SerialName("alac")
+    alac("alac", "ALAC 无损", "alac"),
+
+    @SerialName("atmos")
+    atmos("atmos", "Dolby Atmos", "atmos"),
     ;
 
     companion object {
@@ -103,6 +113,12 @@ data class Song(
     val artistNames: List<String> = emptyList(),
     /** 歌手 id 列表（与 [artistNames] 按下标对应；平台拿不到时为空列表） */
     val artistIds: List<String> = emptyList(),
+    /** 作曲 / 词曲作者（有则写 tag） */
+    val composer: String? = null,
+    /** 流派（有则写 tag） */
+    val genre: String? = null,
+    /** ISRC（有则写 tag） */
+    val isrc: String? = null,
 ) {
     /**
      * 局部更新（对齐 Dart `Song.copyWith`：仅这几个字段可改，其余原样拷贝）。
@@ -142,6 +158,9 @@ data class Song(
         releaseDate = releaseDate,
         artistNames = artistNames,
         artistIds = artistIds,
+        composer = composer,
+        genre = genre,
+        isrc = isrc,
     )
 }
 
@@ -273,6 +292,12 @@ data class AlbumSong(
     val artistNames: List<String> = emptyList(),
     /** 歌手 id 列表（与 [artistNames] 按下标对应；平台拿不到时为空） */
     val artistIds: List<String> = emptyList(),
+    /** 作曲 / 词曲作者 */
+    val composer: String? = null,
+    /** 流派 */
+    val genre: String? = null,
+    /** ISRC */
+    val isrc: String? = null,
 )
 
 /** 歌手 */
@@ -304,6 +329,10 @@ data class QobuzTrack(
     val isrc: String? = null,
     val version: String? = null,
     val copyright: String? = null,
+    /** 作曲 */
+    val composer: String? = null,
+    /** 流派（专辑 genre 回退） */
+    val genre: String? = null,
     /** 多歌手名（performers 逗号串拆分；单歌手时取 performer.name） */
     val artistNames: List<String> = emptyList(),
     /** 与 [artistNames] 下标对应；仅单歌手时拿得到 performer.id */

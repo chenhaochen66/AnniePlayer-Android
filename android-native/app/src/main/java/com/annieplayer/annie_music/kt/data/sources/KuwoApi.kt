@@ -274,6 +274,7 @@ fun buildAlbumCoverUrl(album: Album): String = when (album.platform) {
     MusicPlatform.kuwo,
     MusicPlatform.kkbox,
     MusicPlatform.qobuz,
+    MusicPlatform.apple,
     -> _buildKuwoAlbumCoverUrl(album)
 }
 
@@ -857,6 +858,8 @@ suspend fun getAlbumSongs(albumId: String): KuwoAlbumSongs {
             artistNames = artistNames.ifEmpty { listOf(artistNameRaw) },
             // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
             artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),
+            composer = _s(item["composer"]).ifEmpty { null },
+            genre = _s(item["genre"]).ifEmpty { null },
         )
     }
     return KuwoAlbumSongs(songs = songs, pub = pub)

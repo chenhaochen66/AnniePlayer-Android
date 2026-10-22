@@ -28,6 +28,11 @@ import com.annieplayer.annie_music.kt.data.AssetCache
 import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.network.CacheService
+import com.annieplayer.annie_music.kt.data.sources.AppleMusicSettings
+import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleChallenge
+import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleFixedKey
+import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleServiceSettings
+import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleWebViewFetch
 import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
 import com.annieplayer.annie_music.kt.features.shell.AppShell
 import com.annieplayer.annie_music.kt.ui.theme.AnnieTheme
@@ -73,6 +78,11 @@ class MainActivity : ComponentActivity() {
         AssetCache.init(applicationContext)
         DownloadDirService.init(applicationContext)
         DownloadService.init(applicationContext)
+        AppleMusicSettings.init(applicationContext)
+        AppleFixedKey.init(applicationContext)
+        AppleChallenge.init(applicationContext)
+        AppleWebViewFetch.init(applicationContext)
+        AppleServiceSettings.init(applicationContext)
         PlayerViewModel.init(applicationContext)
         KkboxViewModel.init(applicationContext)
         QobuzViewModel.init(applicationContext)

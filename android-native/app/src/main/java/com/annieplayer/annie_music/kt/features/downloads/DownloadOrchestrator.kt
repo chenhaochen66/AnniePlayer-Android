@@ -14,14 +14,31 @@ import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
+import com.annieplayer.annie_music.kt.data.playQualityTiersOf
 import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
+import com.annieplayer.annie_music.kt.data.sources.enrichAppleSong
+import com.annieplayer.annie_music.kt.data.sources.apple.AppleDownloader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-/** 音质从高到低（Quality 枚举声明顺序不保证是这个次序，故显式排一份） */
-private val _qualityRank = listOf(Quality.hires, Quality.flac, Quality.k320k, Quality.k128k)
+/**
+ * 音质从高到低（Quality 枚举声明顺序不保证是这个次序，故显式排一份）。
+ *
+ * 与 `QualityPicker` 的排序表、`playQualityTiersOf` 保持同一套次序：
+ * Atmos → ALAC 超高解析 → ALAC 无损 → AAC 256 → FLAC → 320K → 128K。
+ */
+private val _qualityRank = listOf(
+    Quality.atmos,
+    Quality.hires,
+    Quality.alac,
+    Quality.aac256,
+    Quality.flac,
+    Quality.k320k,
+    Quality.k128k,
+)
 
 /**
  * 批量下载的音质候选：取选中歌曲**真实** qualities 的并集，按高→低排序；为空回退三档。
@@ -32,6 +49,9 @@ private val _qualityRank = listOf(Quality.hires, Quality.flac, Quality.k320k, Qu
  * 某首没有所选档位时下载侧会自然降级（歌单页走 `bestQuality`，其它页有字节嗅探兜底）。
  */
 fun batchDownloadQualities(songs: List<Song>): List<Quality> {
+    if (songs.isNotEmpty() && songs.all { it.platform == MusicPlatform.apple }) {
+        return playQualityTiersOf(MusicPlatform.apple)
+    }
     val set = songs.flatMap { it.qualities }.toSet()
     if (set.isEmpty()) return listOf(Quality.flac, Quality.k320k, Quality.k128k)
     return _qualityRank.filter { it in set }
@@ -45,6 +65,9 @@ data class DownloadMeta(
     val trackNumber: String? = null,
     val discNumber: String? = null,
     val releaseDate: String? = null,
+    val composer: String? = null,
+    val genre: String? = null,
+    val isrc: String? = null,
 )
 
 /**
@@ -69,30 +92,42 @@ suspend fun downloadOneAndRegister(
     // 用户已在下载列表里取消这一首（批量是一个批次一个任务，只能靠标记跳过）
     if (consumeCancelledSong(song.id)) return false
     return try {
-        val url = fetchDownloadUrlBySong(song, quality)
         val lyric = resolveDownloadLyric(
             song = song,
             writeTranslation = MoreSettings.writeQobuzDownloadTranslation.value,
             pickTranslate = { it.firstOrNull() },
         )
-        val extra = enrichSong(song)
-        val filePath = DownloadService.downloadSong(
-            songId = song.id,
-            title = song.title,
-            artist = song.artist,
-            coverUrl = meta.coverUrl ?: song.cover,
-            album = meta.album ?: song.album,
-            downloadUrl = url,
-            quality = quality,
-            onProgress = onProgress,
-            lyric = lyric.lrc,
-            tlyric = lyric.tlyric,
-            wordLyric = lyric.wordLyric,
-            albumArtist = extra["albumArtist"]?.toString() ?: meta.albumArtist ?: song.albumArtist,
-            trackNumber = meta.trackNumber ?: song.trackNumber ?: extra["trackNumber"]?.toString(),
-            discNumber = meta.discNumber ?: song.discNumber ?: extra["discNumber"]?.toString(),
-            releaseDate = meta.releaseDate ?: song.releaseDate ?: extra["releaseDate"]?.toString(),
-        )
+        val filePath = if (song.platform == MusicPlatform.apple) {
+            AppleDownloader.download(
+                song = song,
+                quality = quality,
+                lyric = DownloadService.mergeLyrics(lyric.lrc, lyric.tlyric, lyric.wordLyric),
+                onProgress = onProgress,
+            )
+        } else {
+            val url = fetchDownloadUrlBySong(song, quality)
+            val extra = enrichSong(song)
+            DownloadService.downloadSong(
+                songId = song.id,
+                title = song.title,
+                artist = song.artist,
+                coverUrl = meta.coverUrl ?: song.cover,
+                album = meta.album ?: song.album,
+                downloadUrl = url,
+                quality = quality,
+                onProgress = onProgress,
+                lyric = lyric.lrc,
+                tlyric = lyric.tlyric,
+                wordLyric = lyric.wordLyric,
+                albumArtist = extra["albumArtist"]?.toString() ?: meta.albumArtist ?: song.albumArtist,
+                trackNumber = meta.trackNumber ?: song.trackNumber ?: extra["trackNumber"]?.toString(),
+                discNumber = meta.discNumber ?: song.discNumber ?: extra["discNumber"]?.toString(),
+                releaseDate = meta.releaseDate ?: song.releaseDate ?: extra["releaseDate"]?.toString(),
+                composer = meta.composer ?: song.composer ?: extra["composer"]?.toString(),
+                genre = meta.genre ?: song.genre ?: extra["genre"]?.toString(),
+                isrc = meta.isrc ?: song.isrc ?: extra["isrc"]?.toString(),
+            )
+        }
         downloadViewModel.completeTask(song.id, filePath)
         playerViewModel.addDownloadedId(song.id)
         playerViewModel.addToQueue(song)
@@ -147,7 +182,14 @@ class DownloadOrchestrator(
 
     /** 打开 ⋮ 歌曲操作面板 */
     fun openActions(song: Song) {
-        uiViewModel.setSongActionsVisible(true, song)
+        if (song.platform != MusicPlatform.apple) {
+            uiViewModel.setSongActionsVisible(true, song)
+            return
+        }
+        scope.launch {
+            val enriched = runCatching { enrichAppleSong(song) }.getOrDefault(song)
+            uiViewModel.setSongActionsVisible(true, enriched)
+        }
     }
 
     /**
@@ -168,25 +210,41 @@ class DownloadOrchestrator(
             downloadingId = songId
             enqueueDownload(songId) {
                 try {
-                    val url = fetchDownloadUrlBySong(song, quality)
-                    val extra = enrichSong(song)
-                    DownloadService.downloadSong(
-                        songId = songId,
-                        title = song.title,
-                        artist = song.artist,
-                        coverUrl = song.cover,
-                        album = song.album,
-                        downloadUrl = url,
-                        quality = quality,
-                        onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
-                        lyric = lyricResult.lrc,
-                        tlyric = lyricResult.tlyric,
-                        wordLyric = lyricResult.wordLyric,
-                        albumArtist = extra["albumArtist"]?.toString() ?: song.albumArtist,
-                        trackNumber = song.trackNumber ?: extra["trackNumber"]?.toString(),
-                        discNumber = song.discNumber ?: extra["discNumber"]?.toString(),
-                        releaseDate = song.releaseDate ?: extra["releaseDate"]?.toString(),
-                    )
+                    if (song.platform == MusicPlatform.apple) {
+                        AppleDownloader.download(
+                            song = song,
+                            quality = quality,
+                            lyric = DownloadService.mergeLyrics(
+                                lyricResult.lrc,
+                                lyricResult.tlyric,
+                                lyricResult.wordLyric,
+                            ),
+                            onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
+                        )
+                    } else {
+                        val url = fetchDownloadUrlBySong(song, quality)
+                        val extra = enrichSong(song)
+                        DownloadService.downloadSong(
+                            songId = songId,
+                            title = song.title,
+                            artist = song.artist,
+                            coverUrl = song.cover,
+                            album = song.album,
+                            downloadUrl = url,
+                            quality = quality,
+                            onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
+                            lyric = lyricResult.lrc,
+                            tlyric = lyricResult.tlyric,
+                            wordLyric = lyricResult.wordLyric,
+                            albumArtist = extra["albumArtist"]?.toString() ?: song.albumArtist,
+                            trackNumber = song.trackNumber ?: extra["trackNumber"]?.toString(),
+                            discNumber = song.discNumber ?: extra["discNumber"]?.toString(),
+                            releaseDate = song.releaseDate ?: extra["releaseDate"]?.toString(),
+                            composer = song.composer ?: extra["composer"]?.toString(),
+                            genre = song.genre ?: extra["genre"]?.toString(),
+                            isrc = song.isrc ?: extra["isrc"]?.toString(),
+                        )
+                    }
                     downloadViewModel.completeTask(songId)
                     playerViewModel.addDownloadedId(songId)
                     playerViewModel.addToQueue(song)

@@ -69,6 +69,7 @@ fun lxQualityString(quality: Quality): String = when (quality) {
     Quality.k320k -> "320k"
     Quality.flac -> "flac"
     Quality.hires -> "flac24bit"
+    else -> "flac"
 }
 
 /**

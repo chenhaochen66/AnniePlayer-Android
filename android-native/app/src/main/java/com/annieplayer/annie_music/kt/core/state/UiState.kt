@@ -118,6 +118,8 @@ data class UiState(
     /** 「落雪音源」插件管理页是否可见 */
     val lxPluginManagerVisible: Boolean = false,
     val qobuzTokenVisible: Boolean = false,
+    /** 「Apple Music 服务」（本机 wrapper-lite）浮层是否可见 */
+    val appleServiceVisible: Boolean = false,
     val kkboxAccountVisible: Boolean = false,
     val showLyricsTranslation: Boolean = true,
     /** 逐字歌词展示开关（有逐字数据时生效） */
@@ -148,6 +150,7 @@ data class UiState(
         moreSettingsVisible: Boolean? = null,
         lxPluginManagerVisible: Boolean? = null,
         qobuzTokenVisible: Boolean? = null,
+        appleServiceVisible: Boolean? = null,
         kkboxAccountVisible: Boolean? = null,
         showLyricsTranslation: Boolean? = null,
         showWordByWord: Boolean? = null,
@@ -170,6 +173,7 @@ data class UiState(
         moreSettingsVisible = moreSettingsVisible ?: this.moreSettingsVisible,
         lxPluginManagerVisible = lxPluginManagerVisible ?: this.lxPluginManagerVisible,
         qobuzTokenVisible = qobuzTokenVisible ?: this.qobuzTokenVisible,
+        appleServiceVisible = appleServiceVisible ?: this.appleServiceVisible,
         kkboxAccountVisible = kkboxAccountVisible ?: this.kkboxAccountVisible,
         showLyricsTranslation = showLyricsTranslation ?: this.showLyricsTranslation,
         showWordByWord = showWordByWord ?: this.showWordByWord,
@@ -239,6 +243,10 @@ class UiViewModel : ViewModel() {
 
     fun setQobuzTokenVisible(visible: Boolean) {
         _state.value = _state.value.copyWith(qobuzTokenVisible = visible)
+    }
+
+    fun setAppleServiceVisible(visible: Boolean) {
+        _state.value = _state.value.copyWith(appleServiceVisible = visible)
     }
 
     fun setKkboxAccountVisible(visible: Boolean) {

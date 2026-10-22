@@ -11,11 +11,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,9 +35,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.annieplayer.annie_music.kt.core.audio.MediaPlayerBackend
+import com.annieplayer.annie_music.kt.core.audio.TuningEngine
 import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
+import com.annieplayer.annie_music.kt.core.platform.exitAppCompletely
+import com.annieplayer.annie_music.kt.core.platform.isIgnoringBatteryOptimizations
 import com.annieplayer.annie_music.kt.core.platform.isManageStorageGranted
+import com.annieplayer.annie_music.kt.core.platform.openBatteryOptimizationSettings
+import com.annieplayer.annie_music.kt.core.platform.requestIgnoreBatteryOptimizations
 import com.annieplayer.annie_music.kt.core.platform.requestManageStorage
 import com.annieplayer.annie_music.kt.core.state.AppShellViewModel
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailEntry
@@ -62,7 +75,8 @@ import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
 import com.annieplayer.annie_music.kt.features.kkbox.KkboxDetailScreen
 import com.annieplayer.annie_music.kt.features.library.LocalLibraryScreen
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
+import com.annieplayer.annie_music.kt.data.playQualityLabelOf
+import com.annieplayer.annie_music.kt.data.playQualityTiersOf
 import com.annieplayer.annie_music.kt.data.sources.kkboxSidProvider
 import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
 import com.annieplayer.annie_music.kt.features.playlist.PlaylistParseScreen
@@ -71,8 +85,11 @@ import com.annieplayer.annie_music.kt.features.player.PlayerScreen
 import com.annieplayer.annie_music.kt.features.qobuz.QobuzDetailScreen
 import com.annieplayer.annie_music.kt.features.search.SearchScreen
 import com.annieplayer.annie_music.kt.features.search.SearchScreenState
+import com.annieplayer.annie_music.kt.features.details.DetailNavigator
 import com.annieplayer.annie_music.kt.ui.theme.Annie
+import com.annieplayer.annie_music.kt.ui.theme.AnnieTypography
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
+import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
 import com.annieplayer.annie_music.kt.widgets.AlbumDetailSheet
 import com.annieplayer.annie_music.kt.widgets.CacheClearModal
 import com.annieplayer.annie_music.kt.widgets.ContactModal
@@ -87,10 +104,12 @@ import com.annieplayer.annie_music.kt.widgets.MenuDrawer
 import com.annieplayer.annie_music.kt.widgets.MenuDrawerCacheSize
 import com.annieplayer.annie_music.kt.widgets.PlayerOverlay
 import com.annieplayer.annie_music.kt.widgets.PlaylistDetailSheet
+import com.annieplayer.annie_music.kt.widgets.AppleServiceSheet
 import com.annieplayer.annie_music.kt.widgets.QobuzTokenSheet
 import com.annieplayer.annie_music.kt.features.downloads.DownloadOrchestrator
 import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
 import com.annieplayer.annie_music.kt.features.settings.MoreSettingsScreen
+import com.annieplayer.annie_music.kt.features.settings.TuningSheet
 import com.annieplayer.annie_music.kt.features.settings.moreSettingsGroups
 import com.annieplayer.annie_music.kt.widgets.QualityPickerSheet
 import com.annieplayer.annie_music.kt.widgets.TranslatePickerSheet
@@ -164,7 +183,7 @@ val writeQobuzDownloadTranslation by MoreSettings.writeQobuzDownloadTranslation.
 val writeEnhancedLyrics by MoreSettings.writeEnhancedLyrics.collectAsState()
 val saveLrcFile by MoreSettings.saveLrcFile.collectAsState()
 val audioMode by MoreSettings.audioMode.collectAsState()
-val eqPreset by MoreSettings.eqPreset.collectAsState()
+val tuningEngine by MoreSettings.tuningEngine.collectAsState()
 val loudnessNormalization by MoreSettings.loudnessNormalization.collectAsState()
 val forceNativeRate by MoreSettings.forceNativeRate.collectAsState()
 val resampleRate by MoreSettings.resampleRate.collectAsState()
@@ -193,10 +212,19 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
     val st = remember(scope) {
         SearchScreenState(
             scope = scope,
-            uiViewModel = uiViewModel,
             playerViewModel = playerViewModel,
             downloadViewModel = downloadViewModel,
             selectionViewModel = selectionViewModel,
+            snackbarHostState = snackbarHostState,
+        )
+    }
+
+    // 详情跳转（歌手 / 专辑）：从 SearchScreenState 拆出，供全局 ⋮ 面板使用
+    val detailNavigator = remember(scope) {
+        DetailNavigator(
+            scope = scope,
+            uiViewModel = uiViewModel,
+            playerViewModel = playerViewModel,
             snackbarHostState = snackbarHostState,
         )
     }
@@ -224,8 +252,24 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
     // 「所有文件访问」权限状态：抽屉打开时重新检测（对齐 Flutter `_ManageStorageRow._granted`）
     val ctx = LocalContext.current
     var storageGranted by remember { mutableStateOf<Boolean?>(null) }
+    // 「耗电优化」白名单状态：抽屉打开时 + 从系统设置页回来（ON_RESUME）时重新检测
+    var batteryExempt by remember { mutableStateOf<Boolean?>(null) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                batteryExempt = isIgnoringBatteryOptimizations(ctx)
+                storageGranted = isManageStorageGranted(ctx)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     LaunchedEffect(uiState.drawerVisible) {
-        if (uiState.drawerVisible) storageGranted = isManageStorageGranted(ctx)
+        if (uiState.drawerVisible) {
+            storageGranted = isManageStorageGranted(ctx)
+            batteryExempt = isIgnoringBatteryOptimizations(ctx)
+        }
     }
 
     // SAF 选择下载目录（对齐 Flutter `menu_drawer.dart` 的 `pickDownloadDir()` 入口；
@@ -267,6 +311,7 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
         }
     }
     var lxImportUrlVisible by remember { mutableStateOf(false) }
+    var tuningVisible by remember { mutableStateOf(false) }
     var lxImporting by remember { mutableStateOf(false) }
 
     // 数据层的提示（如"未添加落雪插件"）用安卓原生 Toast 告知
@@ -368,11 +413,23 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
     // 观感与搜索页一致。此前面板内联在详情 sheet 内，必被后声明的 AppBottomBar 压住下半截。
     val detailPickerHost = remember { DetailQualityPickerHost() }
 
+    // 返回手势退出确认：第一次返回弹窗，弹窗还开着再按一次返回（或点「退出」）才真退出
+    var exitConfirm by remember { mutableStateOf(false) }
+
     with(st) {
     // 主页面判定：没有任何浮层 / 抽屉 / sheet（`anyOverlayVisible` 已含 ⇄ 源选择与批量音质
     // 面板），且没有打开 Qobuz / KKBOX 全屏详情页。主页面显示常驻毛玻璃底栏；
     // 其余二级页面一律换成旧迷你播放条（两者互斥、画在同一槽位，不会同时出现）。
     val isPrimaryPage = !anyOverlayVisible && qobuzDetailRoute == null && kkboxDetailRoute == null
+    // 菜单抽屉及其子页面（设置 / 下载 / 缓存 / 插件 / 账号）一律不显示底部胶囊（含迷你播放态）
+    val hideBottomBar = uiState.drawerVisible ||
+        uiState.moreSettingsVisible ||
+        uiState.lxPluginManagerVisible ||
+        uiState.downloadQueueVisible ||
+        uiState.qobuzTokenVisible ||
+        uiState.kkboxAccountVisible ||
+        uiState.cacheClearVisible ||
+        uiState.contactVisible
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = AppColors.background,
@@ -385,6 +442,12 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
         // 状态栏后面（状态栏那一条露出纯色底，看着像「没做全屏」）；② 自带 inset 的浮层被缩两次。
         // 注意**不要**改用 safeDrawingPadding：它含 IME 内边距，键盘一弹就会把迷你条和 ⇄ 一起顶上去。
         Box(modifier = Modifier.fillMaxSize()) {
+            // 根返回：**声明在最前面 → 优先级最低**，所有浮层 / 播放页 / tab 切换都先吃返回事件，
+            // 只有回到「搜索页主界面」时才落到这里 —— 弹一次确认窗。
+            // 确认窗开着时再按一次返回由弹窗自己的 dismissOnBackPress 接住（见文件末尾），
+            // 于是「两次返回手势 = 退出」。
+            BackHandler(enabled = !exitConfirm) { exitConfirm = true }
+
             // tab 返回键：声明在全部浮层之前 → 任何打开的 sheet/播放页仍优先吃掉返回事件。
             // 只有在非默认 tab（搜索）时才拦截，退回搜索。
             BackHandler(enabled = selectedTab != AppTab.Search) {
@@ -477,6 +540,7 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 // 从抽屉进入子页面时**不收抽屉**：子页面声明在抽屉之后（z 序更高）会自然盖住抽屉，
                 // 返回后仍停在抽屉里，方便连续改多项设置。
                 onQobuzToken = { uiViewModel.setQobuzTokenVisible(true) },
+                onAppleService = { uiViewModel.setAppleServiceVisible(true) },
                 onKkboxAccount = { uiViewModel.setKkboxAccountVisible(true) },
                 onDownloadQueue = { uiViewModel.setDownloadQueueVisible(true) },
                 onMoreSettings = { uiViewModel.setMoreSettingsVisible(true) },
@@ -499,6 +563,14 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 // 「所有文件访问」权限流程尚未移植：保持未授权文案，点击暂为空操作
                 storageGranted = storageGranted,
                 onRequestStorage = { requestManageStorage(ctx) },
+                batteryExempt = batteryExempt,
+                onToggleBattery = { target ->
+                    if (target) {
+                        requestIgnoreBatteryOptimizations(ctx)
+                    } else {
+                        openBatteryOptimizationSettings(ctx)
+                    }
+                },
                 saveDirPath = saveDirPath,
                 saveDirLoading = false,
                 onPickSaveDir = { dirPicker.launch(null) },
@@ -532,6 +604,10 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
             )
 
             // ── Qobuz Token / KKBOX 账号管理浮层（抽屉入口；之前仅置位布尔、未挂载） ──
+            AppleServiceSheet(
+                visible = uiState.appleServiceVisible,
+                onClose = { uiViewModel.setAppleServiceVisible(false) },
+            )
             QobuzTokenSheet(
                 visible = uiState.qobuzTokenVisible,
                 qobuzViewModel = qobuzViewModel,
@@ -561,8 +637,14 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                     onToggleSaveLrcFile = { MoreSettings.setSaveLrcFile(it) },
                     audioMode = audioMode,
                     onPickAudioMode = { MoreSettings.setAudioMode(it) },
-                    eqPreset = eqPreset,
-                    onPickEqPreset = { MoreSettings.setEqPreset(it) },
+                    tuningEngine = tuningEngine,
+                    onPickTuningEngine = { MoreSettings.setTuningEngine(it) },
+                    onOpenTuning = { tuningVisible = true },
+                    tuningSummary = when (tuningEngine) {
+                        TuningEngine.graphic -> "均衡器 · 10 段"
+                        TuningEngine.parametric -> "PEQ · 32 段"
+                        TuningEngine.mseb -> "MSEB · 9 滑块"
+                    },
                     loudnessNormalization = loudnessNormalization,
                     onToggleLoudnessNormalization = { MoreSettings.setLoudnessNormalization(it) },
                     forceNativeRate = forceNativeRate,
@@ -594,6 +676,11 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 onClose = { uiViewModel.setMoreSettingsVisible(false) },
             )
 
+            TuningSheet(
+                visible = tuningVisible,
+                onClose = { tuningVisible = false },
+            )
+
             // ── 落雪插件管理页（声明在更多设置之后 → 盖住它；返回先关本页、再关设置页） ──
             LxPluginManagerSheet(
                 visible = uiState.lxPluginManagerVisible,
@@ -611,22 +698,24 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
             // 声明在本槽位 → 之后声明的浮层（播放页、各 sheet、详情路由）天然把它盖住；
             // 例外：Qobuz Token / KKBOX 账号两个配置页声明在**本槽位之前**（见上方），
             // 于是迷你播放器浮在它们之上常驻可见（弹窗类 sheet 仍在其后声明、仍盖住它）。
-            AppBottomBar(
-                selectedTab = selectedTab,
-                onSelectTab = { appShellViewModel.selectTab(it) },
-                isMiniPlayer = !isPrimaryPage,
-                bottomInset = bottomInset,
-                coverUrl = currentSong?.cover.orEmpty(),
-                fallbackCoverUrl = colorState.currentCoverUrl,
-                title = currentSong?.title.orEmpty(),
-                artist = currentSong?.artist.orEmpty(),
-                isPlaying = playerState.isPlaying,
-                currentTime = playerState.currentTime,
-                duration = playerState.duration,
-                onOpenPlayer = { uiViewModel.setPlayerOverlayVisible(true) },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter),
-            )
+            if (!hideBottomBar) {
+                AppBottomBar(
+                    selectedTab = selectedTab,
+                    onSelectTab = { appShellViewModel.selectTab(it) },
+                    isMiniPlayer = !isPrimaryPage,
+                    bottomInset = bottomInset,
+                    coverUrl = currentSong?.cover.orEmpty(),
+                    fallbackCoverUrl = colorState.currentCoverUrl,
+                    title = currentSong?.title.orEmpty(),
+                    artist = currentSong?.artist.orEmpty(),
+                    isPlaying = playerState.isPlaying,
+                    currentTime = playerState.currentTime,
+                    duration = playerState.duration,
+                    onOpenPlayer = { uiViewModel.setPlayerOverlayVisible(true) },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter),
+                )
+            }
 
             // ── 全屏播放页浮层（RN zIndex 300） ──
             PlayerOverlay(
@@ -704,8 +793,8 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 song = uiState.songActionsSong ?: currentSong,
                 onClose = { uiViewModel.setSongActionsVisible(false) },
                 onDownload = { song -> uiViewModel.setPicker(true, song = song) },
-                onOpenArtist = { artist -> openArtistDetail(artist) },
-                onOpenAlbum = { song -> openAlbumDetail(song) },
+                onOpenArtist = { artist -> detailNavigator.openArtistDetail(artist) },
+                onOpenAlbum = { song -> detailNavigator.openAlbumDetail(song) },
             )
 
             // ── 下载音质选择（单曲） ──
@@ -714,11 +803,7 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                         qualities = uiState.pickerSong?.qualities ?: listOf(Quality.k128k),
                         sizeOf = { q -> uiState.pickerSong?.qualitySizes?.get(q) },
                         labelOf = { q ->
-                            if (uiState.pickerSong?.platform == MusicPlatform.qobuz) {
-                                qobuzQualityLabel(q)
-                            } else {
-                                q.label
-                            }
+                            uiState.pickerSong?.platform?.let { playQualityLabelOf(it, q) } ?: q.label
                         },
                 onSelect = { quality ->
                     uiViewModel.setPicker(false)
@@ -739,10 +824,9 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                             }
                         },
                         labelOf = { q ->
-                            if (selection.selectedSongs.isNotEmpty() &&
-                                selection.selectedSongs.all { it.platform == MusicPlatform.qobuz }
-                            ) {
-                                qobuzQualityLabel(q)
+                            val platforms = selection.selectedSongs.map { it.platform }.distinct()
+                            if (platforms.size == 1) {
+                                playQualityLabelOf(platforms.first(), q)
                             } else {
                                 q.label
                             }
@@ -889,6 +973,46 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                     }
                 },
             )
+
+            // ── 退出确认（返回手势第二次） ──
+            // 声明在最上层：弹窗是 Dialog，返回键由它自己的 `onDismissRequest` 接住。
+            // 这里**故意**让「返回」等于「退出」：第一次返回只是叫出这个窗，第二次返回才真的退出，
+            // 与 WrapperLite 的「退出应用？」一致；点「取消」或点窗外可撤回。
+            if (exitConfirm) {
+                AlertDialog(
+                    onDismissRequest = {
+                        exitConfirm = false
+                        exitAppCompletely(ctx)
+                    },
+                    // 点窗外不撤（误触代价太大），只有明确的「取消」和返回键两条路
+                    properties = DialogProperties(dismissOnClickOutside = false),
+                    containerColor = AppColors.surface,
+                    title = {
+                        Text(text = "退出安妮音乐盒？", style = AnnieTypography.dialogTitle)
+                    },
+                    text = {
+                        Text(
+                            text = "退出会停止播放与下载，并结束全部后台进程（通知栏的播放卡片也会消失）。",
+                            style = AnnieTypography.caption,
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                exitConfirm = false
+                                exitAppCompletely(ctx)
+                            },
+                        ) {
+                            Text(text = "退出", color = AppColors.danger, fontWeight = AppFontWeight.semiBold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { exitConfirm = false }) {
+                            Text(text = "取消", color = AppColors.textTertiary)
+                        }
+                    },
+                )
+            }
         }
     }
     }

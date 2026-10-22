@@ -21,17 +21,20 @@ enum class SearchSource(
     kugou("酷狗"),
     qobuz("Qobuz"),
     kkbox("KKBOX"),
+    apple("Apple Music"),
     ;
 }
 
-/** 双列源分组：[left] 为左列，[right] 为右列。 */
+/** 双列源分组：[left] 为左列，[right] 为右列；[right] 为 null 时只显示一列。 */
 class SourceGroup(
     val left: SearchSource,
-    val right: SearchSource,
+    val right: SearchSource? = null,
 ) {
-    /** 面板按钮文案，如 `酷我 & 网易`。 */
+    /** 面板按钮文案，如 `酷我 & 网易`；单列源直接显示源名。 */
     val label: String
-        get() = "${left.label} & ${right.label}"
+        get() = if (right == null) left.label else "${left.label} & ${right.label}"
+
+    fun contains(source: SearchSource): Boolean = left == source || right == source
 }
 
 /**
@@ -39,6 +42,9 @@ class SourceGroup(
  * （QQ 接口单次上限正好 60，这样四个源首屏都只需 1 次请求）。
  */
 const val kSearchPageSize: Int = 60
+
+/** Apple Music 搜索单次上限 25（官方 amp-api 的 limit 上限）。 */
+const val kAppleSearchPageSize: Int = 25
 
 /**
  * 专辑搜索支持的平台（单源选择；专辑结果是网格，所以一次只展示一个源）。
@@ -51,6 +57,7 @@ val albumSearchPlatforms: List<MusicPlatform> = listOf(
     MusicPlatform.qq,
     MusicPlatform.kugou,
     MusicPlatform.qobuz,
+    MusicPlatform.apple,
 )
 
 /** 歌手搜索支持的平台，与 [albumSearchPlatforms] 同一份列表（对齐 Flutter 复用行为）。 */
@@ -61,4 +68,5 @@ val sourceGroups: List<SourceGroup> = listOf(
     SourceGroup(SearchSource.kuwo, SearchSource.netease),
     SourceGroup(SearchSource.qq, SearchSource.kugou),
     SourceGroup(SearchSource.qobuz, SearchSource.kkbox),
+    SourceGroup(SearchSource.apple),
 )

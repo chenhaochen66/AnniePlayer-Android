@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -82,6 +84,7 @@ import kotlin.math.roundToInt
 fun MenuDrawer(
     visible: Boolean,
     onClose: () -> Unit,
+    onAppleService: () -> Unit,
     onQobuzToken: () -> Unit,
     onKkboxAccount: () -> Unit,
     onDownloadQueue: () -> Unit,
@@ -91,6 +94,10 @@ fun MenuDrawer(
     /** null = 检查中；与 Flutter `_ManageStorageRow._granted` 同义 */
     storageGranted: Boolean?,
     onRequestStorage: () -> Unit,
+    /** 是否已在「电池优化」白名单里；null = 检查中 */
+    batteryExempt: Boolean?,
+    /** 参数 = 目标状态：true 申请加入白名单，false 跳系统设置页移除 */
+    onToggleBattery: (Boolean) -> Unit,
     saveDirPath: String?,
     saveDirLoading: Boolean,
     onPickSaveDir: () -> Unit,
@@ -171,8 +178,8 @@ fun MenuDrawer(
             }
             Spacer(modifier = Modifier.height(AppSpacing.sp32))
 
-            // ── 账号配置 ──
-            MenuDrawerSectionLabel(text = "账号配置")
+            // ── 系统（权限类，独立于账号；不再混在「账号配置」里） ──
+            MenuDrawerSectionLabel(text = "系统")
             MenuDrawerRow(
                 label = "所有文件访问",
                 onTap = { if (storageGranted != true) onRequestStorage() },
@@ -182,6 +189,28 @@ fun MenuDrawer(
                     false -> "未授权，点击去开启"
                 },
                 icon = { MenuDrawerFolderOpenIcon(tint = AppColors.white54) },
+            )
+            MenuDrawerSwitchRow(
+                label = "耗电优化",
+                subtitle = when (batteryExempt) {
+                    null -> "检查中..."
+                    true -> "已加入白名单（熄屏后不被冻结）"
+                    false -> "受系统限制，熄屏后可能被冻结"
+                },
+                checked = batteryExempt == true,
+                onCheckedChange = onToggleBattery,
+                icon = { MenuDrawerBatteryIcon(tint = AppColors.white54) },
+            )
+            Spacer(modifier = Modifier.height(AppSpacing.sp8))
+
+            // ── 账号配置 ──
+            MenuDrawerSectionLabel(text = "账号配置")
+            MenuDrawerRow(
+                label = "Apple Music 服务",
+                onTap = {
+                    onAppleService()
+                },
+                icon = { MenuDrawerKeyIcon(tint = AppColors.white54) },
             )
             MenuDrawerRow(
                 label = "Qobuz Token 管理",
@@ -399,6 +428,65 @@ private fun MenuDrawerRow(
             contentDescription = null,
             tint = AppColors.white24,
             modifier = Modifier.size(AppIconSize.icon16),
+        )
+    }
+}
+
+/**
+ * 抽屉开关行：与 [MenuDrawerRow] 同一张卡片，右侧换成 [Switch]。
+ *
+ * 整行可点（等价于点开关本身），开关配色沿用 Apple Music 服务页那套
+ * 「白色轨道 + 底色滑块」，与「更多设置」里的其它开关保持一致。
+ */
+@Composable
+private fun MenuDrawerSwitchRow(
+    label: String,
+    subtitle: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    icon: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = AppSpacing.sp12)
+            .clip(RoundedCornerShape(AppRadius.card))
+            .background(AppColors.whiteA03)
+            .clickableNoRipple { onCheckedChange(!checked) }
+            .padding(start = AppSpacing.sp16, top = AppSpacing.sp10, end = AppSpacing.sp12, bottom = AppSpacing.sp10),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.size(AppIconSize.icon18), contentAlignment = Alignment.Center) {
+            icon()
+        }
+        Spacer(modifier = Modifier.width(AppSpacing.sp10))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = AppColors.white,
+                fontSize = AppFontSize.size15,
+                fontWeight = AppFontWeight.semiBold,
+            )
+            if (subtitle != null) {
+                Spacer(modifier = Modifier.height(AppSpacing.sp2))
+                Text(
+                    text = subtitle,
+                    color = AppColors.white30,
+                    fontSize = AppFontSize.xs,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = AppColors.background,
+                checkedTrackColor = AppColors.white,
+                uncheckedThumbColor = AppColors.white54,
+                uncheckedTrackColor = AppColors.whiteA06,
+                uncheckedBorderColor = AppColors.white24,
+            ),
         )
     }
 }
@@ -671,6 +759,62 @@ private fun MenuDrawerGlobeIcon(modifier: Modifier = Modifier.fillMaxSize(), tin
             start = Offset(w * 0.08f, h * 0.50f),
             end = Offset(w * 0.92f, h * 0.50f),
             strokeWidth = stroke,
+        )
+    }
+}
+
+/** 电池（`material-icons-core` 里没有 `battery_*`）：机身轮廓 + 正极小凸起 + 内部电量条。 */
+@Composable
+private fun MenuDrawerBatteryIcon(modifier: Modifier = Modifier.fillMaxSize(), tint: Color = AppColors.white54) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.09f
+        // 机身：横置电池，左侧留出正极凸起
+        val body = Path().apply {
+            moveTo(w * 0.07f, h * 0.28f)
+            lineTo(w * 0.80f, h * 0.28f)
+            lineTo(w * 0.80f, h * 0.72f)
+            lineTo(w * 0.07f, h * 0.72f)
+            close()
+        }
+        drawPath(path = body, color = tint, style = Stroke(width = stroke, join = StrokeJoin.Round))
+        // 正极凸起
+        drawLine(
+            color = tint,
+            start = Offset(w * 0.80f, h * 0.42f),
+            end = Offset(w * 0.93f, h * 0.42f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = tint,
+            start = Offset(w * 0.93f, h * 0.42f),
+            end = Offset(w * 0.93f, h * 0.58f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = tint,
+            start = Offset(w * 0.93f, h * 0.58f),
+            end = Offset(w * 0.80f, h * 0.58f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        // 电量条（两格，示意「有电」而不是满格）
+        drawLine(
+            color = tint,
+            start = Offset(w * 0.20f, h * 0.50f),
+            end = Offset(w * 0.38f, h * 0.50f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = tint,
+            start = Offset(w * 0.48f, h * 0.50f),
+            end = Offset(w * 0.66f, h * 0.50f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
         )
     }
 }

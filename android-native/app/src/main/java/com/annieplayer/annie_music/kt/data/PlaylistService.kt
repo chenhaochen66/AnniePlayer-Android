@@ -131,6 +131,7 @@ object PlaylistService {
         // 对齐 Dart `default: return null`（kkbox / qobuz 不支持歌单链接）
         MusicPlatform.kkbox,
         MusicPlatform.qobuz,
+        MusicPlatform.apple,
         -> null
     }
 }

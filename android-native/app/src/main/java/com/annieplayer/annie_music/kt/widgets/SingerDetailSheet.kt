@@ -34,6 +34,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -104,8 +105,9 @@ import com.annieplayer.annie_music.kt.data.fetchArtistSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
+import com.annieplayer.annie_music.kt.data.playQualityLabelOf
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
+import com.annieplayer.annie_music.kt.data.sources.getAppleArtistReleases
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
@@ -127,6 +129,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -196,6 +199,11 @@ private class SingerDetailState {
     var albumLoading by mutableStateOf(false)
     var albumSortAsc by mutableStateOf(false)
 
+    /** Apple：专辑与 EP/单曲分开显示 */
+    var appleAlbums by mutableStateOf<List<Album>>(emptyList())
+    var appleSingles by mutableStateOf<List<Album>>(emptyList())
+    var appleReleaseSection by mutableStateOf<AppleReleaseSection?>(null)
+
     val selectedSongs = mutableStateListOf<Song>()
 
     /** 多选模式显式开关（长按行或头部「多选」chip 进入；「取消」/ 批量下载完成后退出）。 */
@@ -264,10 +272,18 @@ private fun SingerDetailContent(
     suspend fun loadAlbums() {
         st.albumLoading = true
         try {
-            val result = fetchArtistAlbumsByPlatform(data.platform, data.id, artistName = data.name)
-            st.albums = result
+            if (data.platform == MusicPlatform.apple) {
+                val releases = getAppleArtistReleases(data.id)
+                st.appleSingles = releases.singles
+                st.appleAlbums = releases.albums
+                st.albums = releases.singles + releases.albums
+            } else {
+                st.albums = fetchArtistAlbumsByPlatform(data.platform, data.id, artistName = data.name)
+            }
         } catch (_: Exception) {
             st.albums = emptyList()
+            st.appleSingles = emptyList()
+            st.appleAlbums = emptyList()
         } finally {
             st.albumLoading = false
         }
@@ -302,8 +318,18 @@ private fun SingerDetailContent(
                 // 「能进多选但没有可选项」的空壳状态（真机反馈）。
                 st.selectMode = false
                 st.selectedSongs.clear()
+                st.appleReleaseSection = null
                 scope.launch { loadAlbums() }
             }
+    }
+
+    /** Apple overview「全部」：只进对应的 EP/单曲或专辑段，而不是两段一起看。 */
+    fun openAppleReleaseSection(section: AppleReleaseSection) {
+        st.appleReleaseSection = section
+        st.tab = "album"
+        st.selectMode = false
+        st.selectedSongs.clear()
+        if (st.albums.isEmpty()) scope.launch { loadAlbums() }
     }
 
     fun toggleSelect(song: Song) {
@@ -377,7 +403,12 @@ private fun SingerDetailContent(
                 playerViewModel = playerViewModel,
                 song = song,
                 quality = quality,
-                meta = DownloadMeta(albumArtist = song.albumArtist ?: artistName),
+                meta = DownloadMeta(
+                    albumArtist = song.albumArtist ?: artistName,
+                    composer = song.composer,
+                    genre = song.genre,
+                    isrc = song.isrc,
+                ),
                 onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
             )
         }
@@ -388,11 +419,21 @@ private fun SingerDetailContent(
     }
 
     LaunchedEffect(Unit) {
-        loadSongs(1)
-        // overview 需要同时有「Most popular 前几首」与「Albums 横滑」，进页就把两者都拉上
-        loadAlbums()
-        loadAvatarIfNeeded()
-        loadBioIfNeeded()
+        if (data.platform == MusicPlatform.apple) {
+            // Apple 详情涉及歌曲、专辑、EP/单曲、头像、简介多个接口，并行拉取
+            coroutineScope {
+                launch { loadSongs(1) }
+                launch { loadAlbums() }
+                launch { loadAvatarIfNeeded() }
+                launch { loadBioIfNeeded() }
+            }
+        } else {
+            loadSongs(1)
+            // overview 需要同时有「Most popular 前几首」与「Albums 横滑」，进页就把两者都拉上
+            loadAlbums()
+            loadAvatarIfNeeded()
+            loadBioIfNeeded()
+        }
     }
 
     // 返回手势：本页音质选择器优先；更高层浮层可见时让位（见 OverlayStack.kt）
@@ -589,12 +630,20 @@ private fun SingerDetailContent(
                                 st = st,
                                 data = data,
                                 artistName = artistName,
+                                apple = data.platform == MusicPlatform.apple,
                                 activeSongId = playerState.currentSong?.id,
                                 onPlay = { scope.launch { playSong(it) } },
                                 onDownload = { uiViewModel.setSongActionsVisible(true, it) },
                                 onOpenAlbum = { openAlbum(it) },
                                 onSeeAllSongs = { switchTab("song") },
-                                onSeeAllAlbums = { switchTab("album") },
+                                onSeeAllSingles = { openAppleReleaseSection(AppleReleaseSection.singles) },
+                                onSeeAllAlbums = {
+                                    if (data.platform == MusicPlatform.apple) {
+                                        openAppleReleaseSection(AppleReleaseSection.albums)
+                                    } else {
+                                        switchTab("album")
+                                    }
+                                },
                             )
 
                             "song" -> SingerDetailSongs(
@@ -612,6 +661,8 @@ private fun SingerDetailContent(
 
                             else -> SingerDetailAlbums(
                                 st = st,
+                                apple = data.platform == MusicPlatform.apple,
+                                filter = st.appleReleaseSection,
                                 onSortToggle = { st.albumSortAsc = !st.albumSortAsc },
                                 onOpenAlbum = { openAlbum(it) },
                             )
@@ -633,9 +684,7 @@ private fun SingerDetailContent(
                 sizeOf = { q ->
                     if (st.selectedSongs.size == 1) st.selectedSongs.first().qualitySizes[q] else null
                 },
-                labelOf = { q ->
-                    if (data.platform == MusicPlatform.qobuz) qobuzQualityLabel(q) else q.label
-                },
+                labelOf = { q -> playQualityLabelOf(data.platform, q) },
                     onSelect = { q ->
                         // 跑在全局串行队列上（同 AlbumDetailSheet）：弹窗一关作用域就作废
                         enqueueDownload("singerSheet_batch_" + System.currentTimeMillis()) { batchDownload(q) }
@@ -809,16 +858,28 @@ private fun SingerDetailOverview(
     st: SingerDetailState,
     data: SingerDetailData,
     artistName: String,
+    apple: Boolean,
     activeSongId: String?,
     onPlay: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onOpenAlbum: (Album) -> Unit,
     onSeeAllSongs: () -> Unit,
+    onSeeAllSingles: () -> Unit,
     onSeeAllAlbums: () -> Unit,
 ) {
-    // 「专辑」段只展示最近的若干张（按 pub 倒序，空值排最后）
-    val recentAlbums = remember(st.albums) {
-        st.albums.sortedByDescending { it.pub }.take(SingerDetailOverviewAlbumCount)
+    // 「专辑」段只展示最近的若干张（按 pub 倒序，空值排最后）；Apple 两段也各只放预览
+    val recentAlbums = remember(st.albums, apple) {
+        if (apple) {
+            emptyList()
+        } else {
+            st.albums.sortedByDescending { it.pub }.take(SingerDetailOverviewAlbumCount)
+        }
+    }
+    val appleSingles = remember(st.appleSingles) {
+        st.appleSingles.sortedByDescending { it.pub }.take(SingerDetailOverviewAlbumCount)
+    }
+    val appleAlbums = remember(st.appleAlbums) {
+        st.appleAlbums.sortedByDescending { it.pub }.take(SingerDetailOverviewAlbumCount)
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -872,36 +933,95 @@ private fun SingerDetailOverview(
                 }
             }
         }
-        item { SingerDetailSectionHeader(title = "专辑", onSeeAll = onSeeAllAlbums) }
-        item {
-            if (st.albumLoading && recentAlbums.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(SingerDetailAlbumCardHeight),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(AppIconSize.icon24),
-                        color = AppColors.primary,
+        if (apple) {
+            if (appleSingles.isNotEmpty()) {
+                item { SingerDetailSectionHeader(title = "单曲 / EP", onSeeAll = onSeeAllSingles) }
+                item {
+                    SingerDetailReleaseShelf(
+                        albums = appleSingles,
+                        loading = st.albumLoading,
+                        onOpenAlbum = onOpenAlbum,
                     )
                 }
-            } else {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = AppSpacing.sp16),
-                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.sp10),
-                ) {
-                    items(count = recentAlbums.size) { i ->
-                        val album = recentAlbums[i]
-                        SingerDetailAlbumCard(
-                            album = album,
-                            coverUrl = buildAlbumCoverUrl(album),
-                            modifier = Modifier
-                                .width(SingerDetailAlbumCardWidth)
-                                .height(SingerDetailAlbumCardHeight),
-                            onTap = onOpenAlbum,
+            }
+            if (appleAlbums.isNotEmpty()) {
+                item { SingerDetailSectionHeader(title = "专辑", onSeeAll = onSeeAllAlbums) }
+                item {
+                    SingerDetailReleaseShelf(
+                        albums = appleAlbums,
+                        loading = st.albumLoading,
+                        onOpenAlbum = onOpenAlbum,
+                    )
+                }
+            }
+        } else {
+            item { SingerDetailSectionHeader(title = "专辑", onSeeAll = onSeeAllAlbums) }
+            item {
+                if (st.albumLoading && recentAlbums.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(SingerDetailAlbumCardHeight),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(AppIconSize.icon24),
+                            color = AppColors.primary,
                         )
+                    }
+                } else {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = AppSpacing.sp16),
+                        horizontalArrangement = Arrangement.spacedBy(AppSpacing.sp10),
+                    ) {
+                        items(count = recentAlbums.size) { i ->
+                            val album = recentAlbums[i]
+                            SingerDetailAlbumCard(
+                                album = album,
+                                coverUrl = buildAlbumCoverUrl(album),
+                                modifier = Modifier
+                                    .width(SingerDetailAlbumCardWidth)
+                                    .height(SingerDetailAlbumCardHeight),
+                                onTap = onOpenAlbum,
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SingerDetailReleaseShelf(
+    albums: List<Album>,
+    loading: Boolean,
+    onOpenAlbum: (Album) -> Unit,
+) {
+    if (loading && albums.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxWidth().height(SingerDetailAlbumCardHeight),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(AppIconSize.icon24),
+                color = AppColors.primary,
+            )
+        }
+        return
+    }
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = AppSpacing.sp16),
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.sp10),
+    ) {
+        items(count = albums.size) { i ->
+            val album = albums[i]
+            SingerDetailAlbumCard(
+                album = album,
+                coverUrl = buildAlbumCoverUrl(album),
+                modifier = Modifier
+                    .width(SingerDetailAlbumCardWidth)
+                    .height(SingerDetailAlbumCardHeight),
+                onTap = onOpenAlbum,
+            )
         }
     }
 }
@@ -1030,9 +1150,32 @@ private fun SingerDetailSectionHeader(title: String, onSeeAll: () -> Unit) {
     }
 }
 
-/** 「Hi-Res」角标（歌曲行用；由 `Song.qualities` 是否含 hires 决定是否渲染） */
+/**
+ * 音质角标（歌曲行用）。
+ *
+ * Apple 只标两类特殊规格，且可以同时出现：高解析无损 → `Hi-Res`、Dolby Atmos → `Dolby`；
+ * 两者都没有（普通 ALAC / AAC）就不渲染角标。其它平台沿用原行为：无损类统一标 `Hi-Res`。
+ */
+private fun SingerDetailQualityBadges(song: Song): List<String> =
+    if (song.platform == MusicPlatform.apple) {
+        buildList {
+            if (Quality.hires in song.qualities) add("Hi-Res")
+            if (Quality.atmos in song.qualities) add("Dolby")
+        }
+    } else {
+        if (song.qualities.any {
+                it == Quality.hires || it == Quality.atmos || it == Quality.alac
+            }
+        ) {
+            listOf("Hi-Res")
+        } else {
+            emptyList()
+        }
+    }
+
+/** 音质角标（单个文案；Apple 的歌曲行最多渲染两个：Hi-Res / Dolby） */
 @Composable
-private fun SingerDetailHiResBadge(modifier: Modifier = Modifier) {
+private fun SingerDetailQualityBadge(label: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(percent = 25))
@@ -1040,7 +1183,7 @@ private fun SingerDetailHiResBadge(modifier: Modifier = Modifier) {
             .padding(horizontal = AppSpacing.sp4, vertical = 1.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = "Hi-Res", color = AppColors.primary, fontSize = AppFontSize.size10)
+        Text(text = label, color = AppColors.primary, fontSize = AppFontSize.size10)
     }
 }
 
@@ -1222,9 +1365,9 @@ private fun SingerDetailSongRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (song.qualities.contains(Quality.hires)) {
-                    Spacer(modifier = Modifier.width(AppSpacing.sp6))
-                    SingerDetailHiResBadge()
+                for (badge in SingerDetailQualityBadges(song)) {
+                    Spacer(modifier = Modifier.width(AppSpacing.sp4))
+                    SingerDetailQualityBadge(label = badge)
                 }
                 if (selected) {
                     Spacer(modifier = Modifier.width(AppSpacing.sp4))
@@ -1368,15 +1511,32 @@ private fun SingerDetailPageButton(
 // 专辑 Tab
 // ================================================================================================
 
+/** Apple 发行物子页筛选：从 overview 的「全部」进入时只看对应一段。 */
+private enum class AppleReleaseSection { singles, albums }
+
 @Composable
 private fun SingerDetailAlbums(
     st: SingerDetailState,
+    apple: Boolean,
+    filter: AppleReleaseSection?,
     onSortToggle: () -> Unit,
     onOpenAlbum: (Album) -> Unit,
 ) {
     if (st.albumLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = AppColors.primary)
+        }
+        return
+    }
+    if (apple && filter == AppleReleaseSection.singles && st.appleSingles.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(text = "暂无单曲 / EP", color = AppColors.white30, fontSize = AppFontSize.base)
+        }
+        return
+    }
+    if (apple && filter == AppleReleaseSection.albums && st.appleAlbums.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(text = "暂无专辑", color = AppColors.white30, fontSize = AppFontSize.base)
         }
         return
     }
@@ -1387,7 +1547,7 @@ private fun SingerDetailAlbums(
         return
     }
 
-    val sorted = st.albums.sortedWith(
+    fun sortedAlbums(list: List<Album>): List<Album> = list.sortedWith(
         Comparator { a, b ->
             val da = a.pub
             val db = b.pub
@@ -1400,6 +1560,9 @@ private fun SingerDetailAlbums(
             }
         },
     )
+    val sorted = sortedAlbums(st.albums)
+    val sortedSingles = sortedAlbums(st.appleSingles)
+    val sortedAppleAlbums = sortedAlbums(st.appleAlbums)
 
     Column(modifier = Modifier.fillMaxSize()) {
         // 时间正序 / 倒序切换
@@ -1444,17 +1607,63 @@ private fun SingerDetailAlbums(
                 verticalArrangement = Arrangement.spacedBy(AppSpacing.sp10),
                 horizontalArrangement = Arrangement.spacedBy(AppSpacing.sp10),
             ) {
-                items(items = sorted, key = { it.albumid }) { album ->
-                    SingerDetailAlbumCard(
-                        album = album,
-                        coverUrl = buildAlbumCoverUrl(album),
-                        modifier = Modifier.height(cardHeight),
-                        onTap = onOpenAlbum,
-                    )
+                if (apple) {
+                    if ((filter == null || filter == AppleReleaseSection.singles) &&
+                        sortedSingles.isNotEmpty()
+                    ) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SingerDetailReleaseHeader("EP / 单曲")
+                        }
+                        items(items = sortedSingles, key = { it.albumid }) { album ->
+                            SingerDetailAlbumCard(
+                                album = album,
+                                coverUrl = buildAlbumCoverUrl(album),
+                                modifier = Modifier.height(cardHeight),
+                                onTap = onOpenAlbum,
+                            )
+                        }
+                    }
+                    if ((filter == null || filter == AppleReleaseSection.albums) &&
+                        sortedAppleAlbums.isNotEmpty()
+                    ) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SingerDetailReleaseHeader("专辑")
+                        }
+                        items(items = sortedAppleAlbums, key = { it.albumid }) { album ->
+                            SingerDetailAlbumCard(
+                                album = album,
+                                coverUrl = buildAlbumCoverUrl(album),
+                                modifier = Modifier.height(cardHeight),
+                                onTap = onOpenAlbum,
+                            )
+                        }
+                    }
+                } else {
+                    items(items = sorted, key = { it.albumid }) { album ->
+                        SingerDetailAlbumCard(
+                            album = album,
+                            coverUrl = buildAlbumCoverUrl(album),
+                            modifier = Modifier.height(cardHeight),
+                            onTap = onOpenAlbum,
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SingerDetailReleaseHeader(title: String) {
+    Text(
+        text = title,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = AppSpacing.sp8, top = AppSpacing.sp8, bottom = AppSpacing.sp2),
+        color = AppColors.textPrimary,
+        fontSize = AppFontSize.size15,
+        fontWeight = FontWeight.SemiBold,
+    )
 }
 
 /** 专辑卡片（对齐 Dart `_SingerAlbumCard`）：封面 = 卡宽 - 12，圆角 12 / 封面圆角 8 */
