@@ -30,3 +30,21 @@ android-native/.kotlin/
 android-native/build/
 android-native/app/build/
 android-native/local.properties
+# NDK/CMake 外部构建目录（cmake 每次自动重新生成）
+android-native/.cxx/
+android-native/app/.cxx/
+
+# wrapper-lite-app（QEMU 包装器）构建产物与本地配置
+# 注意：只忽略「能重新生成」的东西。下面这些是**必须留在 git 里**的依赖，别加进来：
+#   app/src/main/assets/guest/      initramfs.dat / vmlinuz / data.empty.dat（运行时必需的 guest 资产）
+#   app/src/main/assets/lib/        QEMU 的 84 个 aarch64 依赖库
+#   app/src/main/assets/qemu-fw/    QEMU firmware / keymaps
+#   app/src/main/jniLibs/           libqemu_x86_64.so（QEMU 可执行文件）
+#   assets-src/data.empty.img       生成 data.empty.dat 的空白 ext4 源镜像
+android-native/wrapper-lite-app/.gradle/
+android-native/wrapper-lite-app/.kotlin/
+android-native/wrapper-lite-app/build/
+android-native/wrapper-lite-app/app/build/
+android-native/wrapper-lite-app/.cxx/
+android-native/wrapper-lite-app/app/.cxx/
+android-native/wrapper-lite-app/local.properties
