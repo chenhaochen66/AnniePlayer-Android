@@ -86,6 +86,9 @@ class MusicSessionService : MediaSessionService() {
         // 会话与播放器都由 MediaPlayerBackend 创建并复用，服务只是它们的宿主，所以这里不释放
         // 任何东西，只复位 backend 的前台服务启动标志（否则后续播放不会再拉起服务/通知）。
         AnnieAudioHolder.onServiceStopped?.invoke()
+        // Apple 本机 HLS 代理跟着「播放会话」走，不跟服务走：服务只是通知/前台的宿主，
+        // 销毁它的时候播放器可能还在从 127.0.0.1 拉分片。关会话的职责在
+        // `ApplePlaybackServer.start()`（换歌）与 `MediaPlayerBackend._setSource`（换到非 Apple）。
         super.onDestroy()
     }
 

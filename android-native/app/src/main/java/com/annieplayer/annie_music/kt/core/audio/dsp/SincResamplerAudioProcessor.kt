@@ -31,6 +31,12 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
 
     @Volatile private var _targetDepth: Int = 0
 
+    /** 原生重采样句柄；0 = 走 Kotlin fallback（仅用于 native 不可用时） */
+    @Volatile private var _nativeHandle: Long = 0L
+
+    /** MP3 默认 dither（TPDF）；只在最终 16bit 量化时加 */
+    @Volatile private var _dither: Boolean = false
+
     private var _srcRate: Int = 0
     private var _dstRate: Int = 0
     private var _ratio: Double = 1.0
@@ -48,6 +54,7 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
 
     private var _coeffs: Array<FloatArray> = emptyArray()
     private var _scratch = FloatArray(0)
+    private val _rng = java.util.Random()
 
     /**
      * [enabled] 关闭或目标率无效时本次配置直接旁路。
@@ -58,18 +65,26 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
         _targetRate = targetRate
     }
 
-    /** 输出位深：0 = 跟随输入，16 / 32（float） */
+    /** 输出位深：0 = 跟随输入，16 / 24 / 32（float） */
     fun setOutputDepth(depth: Int) {
         _targetDepth = depth
+    }
+
+    /** MP3 默认开；只有最终输出 16bit 时才真正加噪 */
+    fun setDither(enabled: Boolean) {
+        _dither = enabled
     }
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         _active = false
         val encoding = inputAudioFormat.encoding
-        if (encoding != C.ENCODING_PCM_16BIT && encoding != C.ENCODING_PCM_FLOAT) {
+        if (encoding != C.ENCODING_PCM_16BIT &&
+            encoding != C.ENCODING_PCM_24BIT &&
+            encoding != C.ENCODING_PCM_FLOAT
+        ) {
             return AudioProcessor.AudioFormat.NOT_SET
         }
-        if (!_enabled) return AudioProcessor.AudioFormat.NOT_SET
+        if (!_enabled && !_dither) return AudioProcessor.AudioFormat.NOT_SET
 
         val targetEncoding = when (_targetDepth) {
             16 -> C.ENCODING_PCM_16BIT
@@ -79,7 +94,8 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
         }
         val doResample = _targetRate > 0 && _targetRate != inputAudioFormat.sampleRate
         val doDepth = targetEncoding != encoding
-        if (!doResample && !doDepth) return AudioProcessor.AudioFormat.NOT_SET
+        val doDither = _dither && targetEncoding == C.ENCODING_PCM_16BIT
+        if (!doResample && !doDepth && !doDither) return AudioProcessor.AudioFormat.NOT_SET
 
         _srcRate = inputAudioFormat.sampleRate
         _dstRate = if (doResample) _targetRate else inputAudioFormat.sampleRate
@@ -87,7 +103,11 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
         _channels = inputAudioFormat.channelCount.coerceAtLeast(1)
         _inputEncoding = encoding
         _outputEncoding = targetEncoding
-        _inBytesPerSample = if (encoding == C.ENCODING_PCM_FLOAT) 4 else 2
+        _inBytesPerSample = when (encoding) {
+            C.ENCODING_PCM_FLOAT -> 4
+            C.ENCODING_PCM_24BIT -> 3
+            else -> 2
+        }
         _outBytesPerSample = when (targetEncoding) {
             C.ENCODING_PCM_FLOAT -> 4
             C.ENCODING_PCM_24BIT -> 3
@@ -100,6 +120,11 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
         _srcPos = 0.0
         buildCoeffs()
         _active = true
+        if (NativeResampler.isAvailable() && _ratio != 1.0) {
+            _nativeHandle = NativeResampler.create(_channels, _srcRate, _dstRate)
+        } else {
+            _nativeHandle = 0L
+        }
         return AudioProcessor.AudioFormat(_dstRate, _channels, targetEncoding)
     }
 
@@ -120,9 +145,31 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
             return
         }
 
-        // 只改位深、不改采样率时走直通转换（避免 sinc 插值引入额外滤波）
+        // 采样率不变、只改位深时走直通转换（避免 sinc 插值引入额外滤波）
         if (_ratio == 1.0) {
             queuePassthrough(inputBuffer, inFrames)
+            return
+        }
+
+        val nativeHandle = _nativeHandle
+        if (nativeHandle != 0L) {
+            val maxOutFrames = (inFrames / _ratio).toInt() + 2
+            val inBytes = ByteArray(size)
+            inputBuffer.get(inBytes)
+            val outBytes = ByteArray(maxOutFrames * _outBytesPerSample * channels)
+            val written = NativeResampler.processBytes(
+                nativeHandle,
+                inBytes,
+                outBytes,
+                inFrames,
+                _inputEncoding,
+                _outputEncoding,
+                _dither,
+            )
+            inputBuffer.position(inputBuffer.limit())
+            val out = replaceOutputBuffer(maxOf(written, 1)).order(ByteOrder.LITTLE_ENDIAN)
+            if (written > 0) out.put(outBytes, 0, written)
+            out.flip()
             return
         }
 
@@ -141,7 +188,7 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
             }
             else -> {
                 for (i in 0 until inFrames * channels) {
-                    _ring[base + i] = inputBuffer.getShort() / 32768f
+                    _ring[base + i] = readSample(inputBuffer)
                 }
             }
         }
@@ -168,6 +215,7 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
         _totalIn = 0
         _srcPos = 0.0
         _ring.fill(0f)
+        if (_nativeHandle != 0L) NativeResampler.reset(_nativeHandle)
     }
 
     override fun onReset() {
@@ -179,6 +227,10 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
         _srcPos = 0.0
         _coeffs = emptyArray()
         _scratch = FloatArray(0)
+        if (_nativeHandle != 0L) {
+            NativeResampler.release(_nativeHandle)
+            _nativeHandle = 0L
+        }
     }
 
     // ── 内部 ──
@@ -190,14 +242,24 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
             .order(ByteOrder.LITTLE_ENDIAN)
         inputBuffer.order(ByteOrder.LITTLE_ENDIAN)
         for (i in 0 until frames * channels) {
-            val value = when (_inputEncoding) {
-                C.ENCODING_PCM_FLOAT -> inputBuffer.float
-                else -> inputBuffer.getShort() / 32768f
-            }
+            val value = readSample(inputBuffer)
             writeSample(out, value)
         }
         out.flip()
         inputBuffer.position(inputBuffer.limit())
+    }
+
+    private fun readSample(inputBuffer: ByteBuffer): Float = when (_inputEncoding) {
+        C.ENCODING_PCM_FLOAT -> inputBuffer.float
+        C.ENCODING_PCM_24BIT -> {
+            val b0 = inputBuffer.get().toInt() and 0xFF
+            val b1 = inputBuffer.get().toInt() and 0xFF
+            val b2 = inputBuffer.get().toInt() and 0xFF
+            var v = b0 or (b1 shl 8) or (b2 shl 16)
+            if (v and 0x800000 != 0) v = v or -0x1000000
+            v / 8_388_608f
+        }
+        else -> inputBuffer.getShort() / 32768f
     }
 
     private fun writeSample(out: ByteBuffer, value: Float) {
@@ -209,7 +271,14 @@ class SincResamplerAudioProcessor : BaseAudioProcessor() {
                 out.put((v shr 8 and 0xFF).toByte())
                 out.put((v shr 16 and 0xFF).toByte())
             }
-            else -> out.putShort((value * 32767f).toInt().coerceIn(-32768, 32767).toShort())
+            else -> {
+                val v = if (_dither) {
+                    value + (_rng.nextFloat() - _rng.nextFloat()) / 32768f
+                } else {
+                    value
+                }
+                out.putShort((v * 32767f).toInt().coerceIn(-32768, 32767).toShort())
+            }
         }
     }
 

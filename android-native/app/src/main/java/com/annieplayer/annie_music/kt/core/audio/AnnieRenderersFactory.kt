@@ -10,15 +10,10 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import com.annieplayer.annie_music.kt.core.audio.dsp.SincResamplerAudioProcessor
 import com.annieplayer.annie_music.kt.core.audio.dsp.TuningAudioProcessor
-import com.annieplayer.annie_music.kt.core.audio.flac.FlacAudioRenderer
+import com.annieplayer.annie_music.kt.core.audio.ffmpeg.FfmpegAudioRenderer
 
 /**
- * 自定义 RenderersFactory：把音频输出落到我们的 processor 链上。
- *
- * 两个关键选择：
- * 1. **float 输出**：让 MediaCodec 有 float 能力时直接给 float PCM，绕开「默认期望 16bit」的截断；
- * 2. **关掉静音跳过**：透明模式要求「一个 DSP 都别碰」，静音跳过会删样本，
- *    对声明 bit-perfect 是自相矛盾的，所以显式禁用。
+ * 自定义 RenderersFactory：DSP 放在 AudioSink 外层，时钟/位置仍交给 DefaultAudioSink。
  */
 @OptIn(UnstableApi::class)
 class AnnieRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
@@ -38,11 +33,10 @@ class AnnieRenderersFactory(context: Context) : DefaultRenderersFactory(context)
     ): AudioSink {
         val silence = SilenceSkippingAudioProcessor().apply { setEnabled(false) }
         val chain = DefaultAudioSink.DefaultAudioProcessorChain(
-            arrayOf<androidx.media3.common.audio.AudioProcessor>(tuning, resampler),
+            arrayOf<androidx.media3.common.audio.AudioProcessor>(),
             silence,
             SonicAudioProcessor(),
         )
-        // 声明 24bit 输出能力（API 31+），配合「输出位深」选项；不支持的机型会在选 24bit 时回退/报错
         val base = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(context)
         val encodings = buildList {
             add(androidx.media3.common.C.ENCODING_PCM_16BIT)
@@ -57,12 +51,13 @@ class AnnieRenderersFactory(context: Context) : DefaultRenderersFactory(context)
             encodings,
             base.maxChannelCount.coerceAtLeast(2),
         )
-        return DefaultAudioSink.Builder(context)
+        val delegate = DefaultAudioSink.Builder(context)
             .setAudioCapabilities(capabilities)
             .setEnableFloatOutput(true)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessorChain(chain)
             .build()
+        return PcmAudioSink(delegate, tuning, resampler)
     }
 
     /**
@@ -81,7 +76,7 @@ class AnnieRenderersFactory(context: Context) : DefaultRenderersFactory(context)
         eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
         out: ArrayList<androidx.media3.exoplayer.Renderer>,
     ) {
-        out.add(FlacAudioRenderer(eventHandler, eventListener, audioSink, context))
+        out.add(FfmpegAudioRenderer(eventHandler, eventListener, audioSink))
         super.buildAudioRenderers(
             context,
             extensionRendererMode,

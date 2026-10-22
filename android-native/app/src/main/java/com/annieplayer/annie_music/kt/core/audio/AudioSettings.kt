@@ -16,44 +16,6 @@ enum class AudioOutputMode(val key: String, val label: String) {
     }
 }
 
-/** 15 段 EQ 频点（2/3 倍频程，32Hz–16kHz，对齐 AnnieEngine `Eq.cs` 的段数） */
-val EqBandFrequencies: FloatArray = floatArrayOf(
-    32f, 50f, 80f, 125f, 200f, 315f, 500f, 800f,
-    1250f, 2000f, 3150f, 5000f, 8000f, 12500f, 16000f,
-)
-
-/**
- * EQ 预设。第一版不给逐段滑块，先用可听辨的预设验证 DSP 链；
- * 逐段调节面板复用同一套 [gainsDb] 即可，不需要改引擎。
- */
-enum class EqPreset(val key: String, val label: String, val gainsDb: FloatArray) {
-    flat("flat", "平直", eqZero()),
-    pop("pop", "流行", eqPreset(2f, 1.5f, 1f, 0f, -0.5f, 0f, 0.5f, 1f, 1f, 1.5f, 1.5f, 1.5f, 2f, 2f, 2f)),
-    rock(
-        "rock", "摇滚",
-        eqPreset(4f, 3f, 2f, 0f, -1f, -1f, 0f, 1f, 2f, 2.5f, 2f, 1.5f, 2f, 2.5f, 2f),
-    ),
-    vocal(
-        "vocal", "人声",
-        eqPreset(-2f, -1f, 0f, 1f, 2f, 2.5f, 2f, 1f, 1f, 1.5f, 2f, 1f, 0f, -1f, -1.5f),
-    ),
-    bass("bass", "低音", eqPreset(5f, 4.5f, 4f, 3f, 1.5f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, -0.5f, -1f, -1f)),
-    treble(
-        "treble", "高音",
-        eqPreset(-1f, -1f, -0.5f, 0f, 0f, 0f, 0.5f, 1f, 1.5f, 2f, 2.5f, 3f, 3.5f, 4f, 4f),
-    );
-
-    companion object {
-        fun fromKey(key: String?): EqPreset = entries.firstOrNull { it.key == key } ?: flat
-    }
-}
-
-/** 全零增益（平直）；单独成函数是因为 enum 常量初始化早于 companion object */
-private fun eqZero(): FloatArray = FloatArray(EqBandFrequencies.size)
-
-private fun eqPreset(vararg values: Float): FloatArray =
-    FloatArray(EqBandFrequencies.size) { i -> values.getOrElse(i) { 0f } }
-
 /** 输出通路（决定徽章颜色与能否宣称 bit-perfect） */
 enum class AudioRoute { usb, wired, bluetooth, speaker, other }
 
