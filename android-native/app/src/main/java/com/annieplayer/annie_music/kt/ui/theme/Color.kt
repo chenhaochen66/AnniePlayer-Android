@@ -65,6 +65,12 @@ object AppColors {
     val warning = Color(0xFFFBBF24)
     val danger = Color(0xFFF87171)
 
+    /** 「独家」标识色（橙红）：插件管理里的独家徽标，样式同「使用中」但用这个色 */
+    val exclusive = Color(0xFFFF6B47)
+
+    /** 「独家」徽标底色（同色 15% 透明度） */
+    val exclusiveA15 = Color(0x26FF6B47)
+
     // ============================================================================================
     // 以下为 Flutter 端「内联」使用的设计常量（不在 app_theme.dart 里，但全 App 高频复用）。
     // 来源：grep `Colors.` / `Color(0x..FFFFFF)` / `Color(0x80000000)` 等。
@@ -184,6 +190,14 @@ object AppColors {
 
     /** 歌曲元信息高亮（indigo-300 @0.949，Flutter: song_tile _metaQuality 0xF2A5B4FC） */
     val indigo300A95 = Color(0xF2A5B4FC)
+
+    /**
+     * 单曲搜索结果「正在播放」行的中性灰（`playingRowBackground` + `PlayingIndicator` 的 tint）。
+     *
+     * 详情页用封面取色主色给正在播放的行着色；搜索页是**单栏长列表**，整屏跟着封面换色会很花，
+     * 故统一用这档中性灰（≈ white 70%）：8% 圆角底仍能看出选中，竖条 / 等化器 / 标题也够亮。
+     */
+    val playingGray = Color(0xB3FFFFFF)
 
     // ---- 详情页共享组件追加（Android-only 设计，Flutter 基线无对应实现）----
 

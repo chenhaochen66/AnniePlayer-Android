@@ -151,6 +151,17 @@ private fun _numOrNull(v: Any?): Long? = when (v) {
     else -> null
 }
 
+/**
+ * QQ 条目的 `file.media_mid`（媒体 mid）。
+ *
+ * 它和 songmid **不是一回事**（《晴天》`songmid=0039MnYb0qxYhV` / `media_mid=003Qui1q2u1Zho`）。
+ * 内置直链接口按 songmid 就能解析，但落雪插件普遍直接读 `info.musicInfo.strMediaMid`，
+ * 拿 songmid 顶替会指向不存在的文件 → 插件解析失败、放不出声。取不到时返回 null。
+ */
+private fun _qqMediaMid(s: Map<String, Any?>): String? =
+    _s(_firstTruthy(listOf(_deep(s, "file", "media_mid"), s["media_mid"])))
+        .takeIf { it.isNotEmpty() }
+
 /** 各档位字节数（QQ 的 `sizeflac`/`size320`/`size128` 值就是字节数；`file.*` 为备用字段） */
 private fun _qqQualitySizes(s: Map<*, *>): Map<Quality, Long> {
     val file = s["file"] as? Map<*, *>
@@ -179,6 +190,31 @@ private fun _qqQualitySizes(s: Map<*, *>): Map<Quality, Long> {
         fileTake(Quality.k320k, "size_320mp3")
         fileTake(Quality.k128k, "size_128mp3")
     }
+    return out
+}
+
+/**
+ * 该条目**真实可用档位**（高 → 低，末位兜底 128k）。
+ *
+ * 旧接口（歌单 / 搜索）把 `sizeflac`/`size320`/`size128` 平铺在顶层；musicu 的
+ * `songInfo`（歌手单曲）收进 `file.*`，两种都要认。
+ *
+ * 这张表是下游的唯一依据：单曲下载的音质选择器（`QualityPicker` 见空列表只会给 128k）、
+ * 播放档位夹取（`bestAvailableAtOrBelow`）、落雪插件的 `types`/`_types` 全读它 ——
+ * 漏填就表现为「这首歌不能下载无损」「插件解析失败放不出来」。
+ */
+private fun _qqQualities(s: Map<String, Any?>): List<Quality> {
+    val out = mutableListOf<Quality>()
+    if (_truthy(_firstTruthy(listOf(s["sizeflac"], _deep(s, "file", "size_flac"))))) {
+        out.add(Quality.flac)
+    }
+    if (_truthy(_firstTruthy(listOf(s["size320"], _deep(s, "file", "size_320mp3"))))) {
+        out.add(Quality.k320k)
+    }
+    if (_truthy(_firstTruthy(listOf(s["size128"], _deep(s, "file", "size_128mp3"))))) {
+        out.add(Quality.k128k)
+    }
+    if (out.isEmpty()) out.add(Quality.k128k)
     return out
 }
 
@@ -244,18 +280,7 @@ fun mapQQSong(s: Map<String, Any?>): Song {
         .takeIf { it.size == artistNames.size } ?: emptyList()
     val singer = artistNames.joinToString(" / ")
 
-    // 新旧字段并存：旧接口平铺，musicu 收进 file.*
-    val qual = mutableListOf<Quality>()
-    if (_truthy(_firstTruthy(listOf(s["sizeflac"], _deep(s, "file", "size_flac"))))) {
-        qual.add(Quality.flac)
-    }
-    if (_truthy(_firstTruthy(listOf(s["size320"], _deep(s, "file", "size_320mp3"))))) {
-        qual.add(Quality.k320k)
-    }
-    if (_truthy(_firstTruthy(listOf(s["size128"], _deep(s, "file", "size_128mp3"))))) {
-        qual.add(Quality.k128k)
-    }
-    if (qual.isEmpty()) qual.add(Quality.k128k)
+    val qual = _qqQualities(s)
 
     val albumMid = _s(_firstTruthy(listOf(s["albummid"], _deep(s, "album", "mid"))))
     val coverUrl = if (albumMid.isNotEmpty()) {
@@ -288,6 +313,7 @@ fun mapQQSong(s: Map<String, Any?>): Song {
         albumArtist = artist,
         artistNames = artistNames,
         artistIds = artistIds,
+        mediaMid = _qqMediaMid(s),
     )
 }
 
@@ -727,20 +753,10 @@ suspend fun getQQAlbumSongs(albumMid: String): AlbumSongsPage {
                     track = if (belongCd is Number) belongCd.toInt() else null,
                     discNumber = if (cdIdx is Number) cdIdx.toInt() + 1 else null,
                     albumArtist = albumArtist.ifEmpty { null },
-                    // 带上真实音质（与搜索映射同款判定：新旧字段并存，平铺 / file.* 都认）
-                    qualities = buildList {
-                        if (_truthy(_firstTruthy(listOf(m["sizeflac"], _deep(m, "file", "size_flac"))))) {
-                            add(Quality.flac)
-                        }
-                        if (_truthy(_firstTruthy(listOf(m["size320"], _deep(m, "file", "size_320mp3"))))) {
-                            add(Quality.k320k)
-                        }
-                        if (_truthy(_firstTruthy(listOf(m["size128"], _deep(m, "file", "size_128mp3"))))) {
-                            add(Quality.k128k)
-                        }
-                        if (isEmpty()) add(Quality.k128k)
-                    },
+                    // 带上真实音质（与搜索/歌手单曲同一套判定，见 [_qqQualities]）
+                    qualities = _qqQualities(m),
                     qualitySizes = _qqQualitySizes(m),
+                    mediaMid = _qqMediaMid(m),
                     artistNames = artistNames,
                     // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
                     artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),
@@ -898,10 +914,14 @@ private fun _mapQQArtistSong(m: Map<String, Any?>): Song {
         albumId = albumMid,
         duration = if (interval is Number) interval.toInt() else 0,
         platform = MusicPlatform.qq,
+        // 之前漏了这两项：歌手详情的歌 qualities 为空 → 音质选择器只剩 128k、
+        // 插件 types 为空 → 播放/下载无损双双失败（搜索/歌单有填，所以只有这一页坏）
+        qualities = _qqQualities(m),
         qualitySizes = _qqQualitySizes(m),
         albumArtist = decodeHtmlEntities(artist),
         artistNames = artistNames,
         artistIds = artistIds,
+        mediaMid = _qqMediaMid(m),
     )
 }
 

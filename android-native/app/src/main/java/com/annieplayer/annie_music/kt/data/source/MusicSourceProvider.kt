@@ -107,8 +107,10 @@ object LxMusicInfo {
             when (lxCode) {
                 "kg" -> put("hash", rawId)
                 "tx" -> {
-                    // 本项目未存 media_mid；多数歌 media_mid 与 songmid 相同，故按 songmid 兜底
-                    put("strMediaMid", rawId)
+                    // strMediaMid 必须是**真的 media_mid**（`file.media_mid`）：它与 songmid 不是一回事，
+                    // 拿 songmid 顶替会让插件去取一个不存在的文件（表现为解析失败 / 放不出声）。
+                    // 老队列项 / 老缓存没有这个字段时才退回 songmid。
+                    put("strMediaMid", song.mediaMid?.takeIf { it.isNotBlank() } ?: rawId)
                     put("songId", rawId)
                     put("albumMid", albumId)
                 }

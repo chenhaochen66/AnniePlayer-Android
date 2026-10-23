@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -243,6 +244,7 @@ private fun AlbumDetailContent(
         composer = s.composer,
         genre = s.genre,
         isrc = s.isrc,
+        mediaMid = s.mediaMid,
     )
 
     fun load() {
@@ -574,8 +576,10 @@ private fun AlbumDetailBody(
                     .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp8)
                     .glassPanel(shape = RoundedCornerShape(AppRadius.panel)),
             ) {
+                val listState = rememberLazyListState()
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().shortScrollbar(listState),
                     // 底部内边距保留「迷你条 + 手势条」空间
                     contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
                 ) {

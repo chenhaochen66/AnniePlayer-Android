@@ -201,7 +201,7 @@ private fun requireLxPlugin(song: Song) {
     val message = if (active != null) {
         "「${active.name}」不支持${song.platform.label}，内置音源已停用"
     } else {
-        "未添加可用的落雪插件，内置音源已停用"
+        "未添加可用的插件，内置音源已停用"
     }
     LxPluginRegistry.postNotice(message)
     throw IllegalStateException(message)
@@ -237,6 +237,7 @@ suspend fun fetchPlayUrlForBackend(item: Map<String, String>): String {
             duration = 0,
             platform = platform,
             qualities = qualities.ifEmpty { listOf(Quality.k320k) },
+            mediaMid = item["mediaMid"]?.takeIf { it.isNotEmpty() },
         ),
     )
 }

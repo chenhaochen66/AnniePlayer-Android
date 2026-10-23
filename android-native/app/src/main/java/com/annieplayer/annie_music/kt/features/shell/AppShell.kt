@@ -311,6 +311,8 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
         }
     }
     var lxImportUrlVisible by remember { mutableStateOf(false) }
+    // 「插件管理」行右侧「+」弹出的导入方式选择（在线 / 本地）
+    var lxImportChooserVisible by remember { mutableStateOf(false) }
     var tuningVisible by remember { mutableStateOf(false) }
     var lxImporting by remember { mutableStateOf(false) }
 
@@ -669,8 +671,6 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                     lxPluginEnabled = lxPluginEnabled,
                     lxPluginCount = lxPlugins.size,
                     onToggleLxPlugin = { LxPluginRegistry.setGlobalEnabled(it) },
-                    onImportLxPluginLocal = { lxLocalPicker.launch(arrayOf("*/*")) },
-                    onImportLxPluginOnline = { lxImportUrlVisible = true },
                     onManageLxPlugins = { uiViewModel.setLxPluginManagerVisible(true) },
                 ),
                 onClose = { uiViewModel.setMoreSettingsVisible(false) },
@@ -689,6 +689,7 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 onClose = { uiViewModel.setLxPluginManagerVisible(false) },
                 onSelect = { LxPluginRegistry.setActive(it) },
                 onDelete = { id -> LxPluginRegistry.delete(id) },
+                onImportClick = { lxImportChooserVisible = true },
             )
 
             // ── 底栏槽位（旧 MiniPlayerBar 原位：MenuDrawer 之后、PlayerOverlay 之前）──
@@ -952,6 +953,41 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 onSelect = { TranslatePicker.resolve(it) },
                 onCancel = { TranslatePicker.resolve(null) },
             )
+
+            // 「插件管理」行右侧「+」：先选导入方式（在线 / 本地），再走各自流程
+            if (lxImportChooserVisible) {
+                AlertDialog(
+                    onDismissRequest = { lxImportChooserVisible = false },
+                    containerColor = AppColors.surface,
+                    title = { Text(text = "导入插件", style = AnnieTypography.dialogTitle) },
+                    text = {
+                        Text(
+                            text = "在线导入：粘贴 http/https 直链；本地导入：从文件管理器选 .js 文件。",
+                            style = AnnieTypography.caption,
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                lxImportChooserVisible = false
+                                lxImportUrlVisible = true
+                            },
+                        ) {
+                            Text(text = "在线导入", color = AppColors.primary)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                lxImportChooserVisible = false
+                                lxLocalPicker.launch(arrayOf("*/*"))
+                            },
+                        ) {
+                            Text(text = "本地导入", color = AppColors.textSecondary)
+                        }
+                    },
+                )
+            }
 
             LxImportUrlDialog(
                 visible = lxImportUrlVisible,

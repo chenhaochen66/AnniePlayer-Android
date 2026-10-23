@@ -34,6 +34,7 @@ import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleFixedKe
 import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleServiceSettings
 import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleWebViewFetch
 import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
+import com.annieplayer.annie_music.kt.features.search.SearchSettings
 import com.annieplayer.annie_music.kt.features.shell.AppShell
 import com.annieplayer.annie_music.kt.ui.theme.AnnieTheme
 import com.annieplayer.annie_music.kt.widgets.SplashScreen
@@ -83,6 +84,7 @@ class MainActivity : ComponentActivity() {
         AppleChallenge.init(applicationContext)
         AppleWebViewFetch.init(applicationContext)
         AppleServiceSettings.init(applicationContext)
+        SearchSettings.init(applicationContext)
         PlayerViewModel.init(applicationContext)
         KkboxViewModel.init(applicationContext)
         QobuzViewModel.init(applicationContext)

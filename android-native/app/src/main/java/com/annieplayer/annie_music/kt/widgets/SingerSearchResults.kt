@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -117,8 +118,10 @@ fun SingerSearchResults(
             textAlign = TextAlign.Center,
         )
 
+        val listState = rememberLazyListState()
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            state = listState,
+            modifier = Modifier.fillMaxWidth().weight(1f).shortScrollbar(listState),
             contentPadding = PaddingValues(start = 0.dp, top = 4.dp, end = 0.dp, bottom = 170.dp),
         ) {
             items(items = artists, key = { it.id }) { artist ->

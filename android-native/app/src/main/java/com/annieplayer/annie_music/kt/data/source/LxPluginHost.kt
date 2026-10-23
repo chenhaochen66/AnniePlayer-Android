@@ -16,6 +16,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
@@ -78,13 +80,15 @@ object LxPluginHost {
             sessions[cacheKey]?.let { if (!it.isClosed) return@withLock it }
             val instance = QuickJs.create(Dispatchers.Default)
             val state = LxNativeState()
+            // 安妮独家插件：剥掉文件头 `#@…` 标识块再执行（洛雪类插件原样返回）
+            val ident = LxIdentity.parse(script)
             // 插件加载时 fire-and-forget 的请求失败会产生未捕获 rejection，可能把加载求值打断；
             // 只要它已经 send('inited') 报过 sources，就按成功处理（官方宿主也不会因此判失败）
             val failure = runCatching {
                 instance.installNatives(state)
-                instance.installScriptInfo(script)
+                instance.installScriptInfo(script, ident)
                 instance.evaluate<Any?>(LX_PRELUDE, "lx-prelude.js")
-                instance.loadPlugin(cacheKey, script, fileName)
+                instance.loadPlugin(cacheKey, ident.script, fileName)
                 if (!instance.evaluate<Boolean>("globalThis.__lxHandlerReady()")) {
                     runCatching { instance.evaluate<Any?>("await new Promise(function(r){ setTimeout(r, 50); })") }
                 }
@@ -110,14 +114,20 @@ object LxPluginHost {
     suspend fun inspect(cacheKey: String, script: String, fileName: String): List<LxPluginSource> =
         withContext(Dispatchers.Default) {
             val state = LxNativeState()
+            val ident = LxIdentity.parse(script)
             val failure = runCatching {
                 quickJs(Dispatchers.Default) {
                     installNatives(state)
-                    installScriptInfo(script)
+                    installScriptInfo(script, ident)
                     evaluate<Any?>(LX_PRELUDE, "lx-prelude.js")
-                    loadPlugin(cacheKey, script, fileName)
-                    // 少数插件把 inited 放在微任务/定时器里，给它一点时间落定
-                    runCatching { evaluate<Any?>("await new Promise(function(r){ setTimeout(r, 50); })") }
+                    loadPlugin(cacheKey, ident.script, fileName)
+                    // 少数插件把 inited 放在微任务/定时器里；安妮独家插件要先过本机握手才 send('inited')，
+                    // 所以给到 2s 的窗口（每次 100ms 驱动一次 JS 定时器队列），避免被误判「未初始化」
+                    var waited = 0
+                    while (state.initedSourcesJson == null && waited < 2_000) {
+                        runCatching { evaluate<Any?>("await new Promise(function(r){ setTimeout(r, 100); })") }
+                        waited += 100
+                    }
                 }
             }.exceptionOrNull()
             // 已 send('inited') 报过 sources 就按成功处理：加载后冒出的未捕获 rejection 不算插件不可用
@@ -253,6 +263,26 @@ object LxPluginHost {
                     defaultCt = "application/x-www-form-urlencoded; charset=utf-8"
                 }
             }
+
+            // 安妮独家握手：虚拟端点直接在本机应答（不开端口、不走 OkHttp、不受系统代理影响）
+            if (AnnieHandshake.matches(url)) {
+                val payload = runCatching {
+                    json.parseToJsonElement(bodyText.orEmpty()).jsonObject
+                }.getOrNull()
+                val ver = payload?.get("ver")?.jsonPrimitive?.content.orEmpty()
+                val ok = AnnieHandshake.isValid(bodyText.orEmpty())
+                return@withContext buildJsonObject {
+                    put("statusCode", if (ok) 200 else 403)
+                    put("statusMessage", if (ok) "OK" else "Forbidden")
+                    put("headers", buildJsonObject { put("Content-Type", "application/json") })
+                    put(
+                        "body",
+                        if (ok) json.parseToJsonElement(AnnieHandshake.successBody(ver))
+                        else buildJsonObject { put("ok", false) },
+                    )
+                }.toString()
+            }
+
             val declaredCt = headers?.entries
                 ?.firstOrNull { (it.key as? String)?.equals("Content-Type", ignoreCase = true) == true }
                 ?.value?.toString()
@@ -410,8 +440,8 @@ object LxPluginHost {
         return out
     }
 
-    private suspend fun QuickJs.installScriptInfo(script: String) {
-        val header = LxPluginMeta.parseHeader(script)
+    private suspend fun QuickJs.installScriptInfo(script: String, identity: LxIdentity.Parsed) {
+        val header = LxPluginMeta.parseHeader(script, identity.fields)
         val infoJson = buildJsonObject {
             put("name", header.name)
             put("description", header.description)
@@ -421,6 +451,18 @@ object LxPluginHost {
             put("rawScript", script)
         }.toString()
         evaluate<Any?>("globalThis.__lxScriptInfoJson = " + jsLit(infoJson) + ";")
+        // 安妮独家：把握手参数下发给插件（洛雪类插件不给 —— 与改造前行为一致）
+        val hsJson = if (identity.exclusive) {
+            buildJsonObject {
+                put("port", AnnieHandshake.port)
+                put("key", AnnieHandshake.secret)
+                put("tag", identity.tag)
+                put("ver", identity.version)
+            }.toString()
+        } else {
+            ""
+        }
+        evaluate<Any?>("globalThis.__lxAnnieHsJson = " + jsLit(hsJson) + ";")
     }
 
     private fun jsLit(text: String): String {
@@ -598,6 +640,15 @@ object LxPluginHost {
     version: '2.0.0',
     env: 'mobile',
     currentScriptInfo: JSON.parse(globalThis.__lxScriptInfoJson || '{}'),
+    // 安妮独家：宿主指纹 + 握手参数（端口/密钥/身份）。洛雪类插件这两个字段为 true / undefined，
+    // 与改造前一致（它们不读）；独家插件据此判断「是否跑在安妮里」。
+    __annieHost: true,
+    __annieHs: (function () {
+      try {
+        var raw = globalThis.__lxAnnieHsJson || '';
+        return raw ? JSON.parse(raw) : undefined;
+      } catch (e) { return undefined; }
+    })(),
     utils: utils,
     request: function (url, options, callback) {
       options = options || {};
@@ -685,12 +736,21 @@ object LxPluginMeta {
         "version" to 36,
     )
 
-    fun parseHeader(script: String): LxPluginHeader {
+    /**
+     * 解析插件头部元数据。
+     *
+     * [identityFields] 来自文件头 `#@name` / `#@description` … 标识块（安妮独家插件）：
+     * 那几行是明文、不参与混淆，优先级高于头部 JSDoc 注释块（混淆后注释会被抹掉）。
+     */
+    fun parseHeader(script: String, identityFields: Map<String, String> = emptyMap()): LxPluginHeader {
         val block = blockRegex.find(script)?.value.orEmpty()
         val fields = mutableMapOf<String, String>()
         for (m in fieldRegex.findAll(block)) {
             val key = m.groupValues[1]
             fields[key] = m.groupValues[2].trim().take(limits[key] ?: 1024)
+        }
+        for ((key, value) in identityFields) {
+            if (value.isNotBlank()) fields[key] = value.trim().take(limits[key] ?: 1024)
         }
         return LxPluginHeader(
             name = fields["name"].orEmpty(),

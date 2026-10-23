@@ -144,6 +144,8 @@ private fun _toBackendItem(song: Song): Map<String, String> {
     // 带上该歌**真实可用档位**：引擎据此把「选了无损但歌只有 320k」直接选成 320k，
     // 不再去发注定失败的请求（否则会拿到坏链 → 播放器报错 → 自动跳下一首）
     m["qualities"] = song.qualities.joinToString(",") { it.value }
+    // QQ 的媒体 mid：引擎侧解析（尤其落雪插件）要用它，songmid 顶替不了
+    song.mediaMid?.takeIf { it.isNotEmpty() }?.let { m["mediaMid"] = it }
     // 只有 qobuz 需要把直链带进队列（详情页/搜索拿到的直链是唯一来源）。
     // 其余平台一律留空 → 交给引擎按平台解析，否则 Song 上任何残留的旧直链都会
     // 让引擎「直接用、不请求播放接口」（真机抓包：网易/QQ 完全没发请求）。

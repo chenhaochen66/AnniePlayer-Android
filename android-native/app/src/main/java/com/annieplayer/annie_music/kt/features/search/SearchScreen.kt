@@ -37,6 +37,7 @@ import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
+import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.AlbumSearchResults
 import com.annieplayer.annie_music.kt.widgets.AppleCountryButton
@@ -120,7 +121,8 @@ fun SearchScreen(
                             )
                         },
                     )
-                    // 模式切换（Apple Music 时同一行最右侧显示国家/地区选择）
+                    // 搜索模式按钮 + 搜索框**同一行**（顺序：模式在前、搜索框在后，吃掉剩余宽度）：
+                    // 两者等高（44dp），行宽与原来那条模式行一致；国外解析模式没有搜索框，只剩按钮
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -136,8 +138,21 @@ fun SearchScreen(
                             open = modePickerVisible,
                             onToggle = { modePickerVisible = !modePickerVisible },
                             onSelect = { handleModeSelect(it) },
-                            modifier = Modifier.weight(1f),
                         )
+                        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+                        if (mode != ModeDropdownMode.qobuz) {
+                            SearchBarField(
+                                value = queryText,
+                                onValueChange = { queryText = it },
+                                onSubmit = { handleSearch() },
+                                modifier = Modifier.weight(1f),
+                                horizontalPadding = 0.dp,
+                                verticalPadding = 0.dp,
+                                height = AppSize.detailDownloadBarHeight,
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
                         if (showAppleCountry) {
                             Spacer(modifier = Modifier.width(AppSpacing.sp8))
                             AppleCountryButton(
@@ -158,35 +173,28 @@ fun SearchScreen(
                             onBatch = { dl.openBatchPicker() },
                         )
                     }
-                    // 搜索栏（国外解析模式隐藏）
-                    if (mode != ModeDropdownMode.qobuz) {
-                        SearchBarField(
-                            value = queryText,
-                            onValueChange = { queryText = it },
-                            onSubmit = { handleSearch() },
-                        )
-                    }
                     // 内容区
                     Box(modifier = Modifier.weight(1f)) {
                         when (mode) {
                             ModeDropdownMode.song -> SongSearchResults(
-                                columns = songColumns,
+                                column = songColumn,
                                 query = songSubmitted,
-                                // 每次提交搜索 / 换源分组自增：同词同源重搜也能重置分页状态（修复旧分页串页）
+                                // 每次提交搜索 / 换源自增：同词同源重搜也能重置分页状态（修复旧分页串页）
                                 searchToken = songGeneration,
                                 onPlay = { song, songs -> handlePlaySong(song, songs) },
                                 onDownload = { dl.openActions(it) },
                                 onToggleSelect = { handleToggleSelect(it) },
-                                onLoadMore = { source, page -> searchBySource(source, songSubmitted, page) },
+                                onLoadMore = { page ->
+                                    searchSongs(searchPlatform, songSubmitted, page)
+                                },
                                 activeSongId = currentSong?.id,
                                 selectedSongs = selection.selectedSongs,
-                                pageSize = if (showAppleCountry) kAppleSearchPageSize else kSearchPageSize,
                                 downloadStatusOf = { song -> downloadTasks[song.id]?.status },
                             )
                             ModeDropdownMode.album -> AlbumSearchResults(
                                 albums = albums,
                                 query = albumSubmitted,
-                                source = albumPlatform,
+                                source = searchPlatform,
                                 onAlbumPress = { album ->
                                     uiViewModel.pushDetail(
                                         AlbumDetailEntry(
@@ -205,7 +213,7 @@ fun SearchScreen(
                             ModeDropdownMode.singer -> SingerSearchResults(
                                 artists = artists,
                                 query = artistSubmitted,
-                                source = artistPlatform,
+                                source = searchPlatform,
                                 onArtistPress = { artist ->
                                     uiViewModel.pushDetail(
                                         SingerDetailEntry(
@@ -213,7 +221,7 @@ fun SearchScreen(
                                                 id = artist.id,
                                                 name = artist.name,
                                                 picture = artist.picture,
-                                                platform = artistPlatform,
+                                                platform = searchPlatform,
                                             ),
                                         ),
                                     )

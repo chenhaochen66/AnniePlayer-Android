@@ -143,7 +143,9 @@ object LxPluginRegistry {
         val id = sha1(script).take(16)
         require(_plugins.value.none { it.id == id }) { "该插件已导入" }
 
-        val header = LxPluginMeta.parseHeader(script)
+        // 安妮独家插件的元数据在文件头 `#@name` … 标识块里（不是 JSDoc 注释），要一并喂给解析
+        val identity = LxIdentity.parse(script)
+        val header = LxPluginMeta.parseHeader(script, identity.fields)
         val fileName = "$id.js"
         val (sources, error) = try {
             LxPluginHost.inspect(id, script, fileName) to null
@@ -162,6 +164,7 @@ object LxPluginRegistry {
             enabled = true,
             sources = sources,
             error = error,
+            exclusive = identity.exclusive,
         )
         withContext(Dispatchers.IO) { File(pluginDir(), fileName).writeText(script) }
         // 新导入的插件直接设为唯一启用（与单选语义一致）
@@ -200,6 +203,7 @@ object LxPluginRegistry {
                             put("fileName", plugin.fileName)
                             put("enabled", plugin.enabled)
                             put("error", plugin.error)
+                            put("exclusive", plugin.exclusive)
                             put(
                                 "sources",
                                 buildJsonArray {
@@ -247,6 +251,11 @@ object LxPluginRegistry {
                     enabled = map["enabled"] as? Boolean ?: true,
                     sources = sources,
                     error = map["error"] as? String,
+                    // 老记录没有该字段：按落盘脚本现读一次（文件很小），保证历史导入也能显示「独家」
+                    exclusive = map["exclusive"] as? Boolean ?: runCatching {
+                        val file = File(pluginDir(), map["fileName"] as? String ?: "$id.js")
+                        LxIdentity.parse(file.readText()).exclusive
+                    }.getOrDefault(false),
                 )
             }
         }.getOrDefault(emptyList())

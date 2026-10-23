@@ -119,6 +119,13 @@ data class Song(
     val genre: String? = null,
     /** ISRC（有则写 tag） */
     val isrc: String? = null,
+    /**
+     * QQ 的 `file.media_mid`（**媒体 mid，与 songmid 不是一回事**，例如《晴天》是
+     * `songmid=0039MnYb0qxYhV` / `media_mid=003Qui1q2u1Zho`）。
+     *
+     * 只有落雪插件直接读它（`info.musicInfo.strMediaMid`），内置直链走 songmid；其它平台为 null。
+     */
+    val mediaMid: String? = null,
 ) {
     /**
      * 局部更新（对齐 Dart `Song.copyWith`：仅这几个字段可改，其余原样拷贝）。
@@ -161,6 +168,7 @@ data class Song(
         composer = composer,
         genre = genre,
         isrc = isrc,
+        mediaMid = mediaMid,
     )
 }
 
@@ -298,6 +306,8 @@ data class AlbumSong(
     val genre: String? = null,
     /** ISRC */
     val isrc: String? = null,
+    /** QQ 的 `file.media_mid`（见 [Song.mediaMid]）；其它平台为 null */
+    val mediaMid: String? = null,
 )
 
 /** 歌手 */

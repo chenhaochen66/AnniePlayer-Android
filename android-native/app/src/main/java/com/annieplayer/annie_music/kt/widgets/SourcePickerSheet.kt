@@ -39,8 +39,9 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 /**
  * 搜索源选择面板（1:1 移植 Flutter `lib/widgets/source_picker_sheet.dart`）。
  *
- * 通用：单曲 = 源分组（如 `酷我 & 网易`），专辑 = 单平台。标题「搜索选择」+
- * 选项网格（当前项主色高亮），点选即回调 [onSelect]（宿主负责切换并保留关键词重搜）。
+ * 通用：**单曲 / 专辑 / 歌手三种模式共用一份平台列表**（平台是共用的，换一次三种模式都换），
+ * 标题「搜索选择」+ 选项网格（当前项主色实底高亮），点选即回调 [onSelect]
+ * （宿主负责切换并保留关键词重搜）。
  *
  * - 动画：**150ms + 线性**（[AppDuration.sheet] + [AppEasing.linear]），遮罩与面板同速。
  * - 常驻组件树（否则滑出动画无法播放）；隐藏时面板被移出屏幕、遮罩停止吃触摸
@@ -48,7 +49,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
  *   已验证的「clickable enabled 门控 + 面板位移出屏」做法）。
  * - 返回手势：`BackHandler(enabled = visible)`（对齐 Dart `PopScope(canPop: !visible)`）。
  *
- * @param options 可选项文案（单曲：`酷我 & 网易`；专辑：`酷我`），每行 2 个。
+ * @param options 可选项文案（平台名，如 `酷我` / `Apple Music`），每行 2 个。
  * @param currentIndex 当前生效的下标（主色高亮）。
  */
 @Composable

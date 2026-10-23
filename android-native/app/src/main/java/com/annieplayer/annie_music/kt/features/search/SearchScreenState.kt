@@ -55,28 +55,43 @@ class SearchScreenState(
     var albumSubmitted by mutableStateOf("")
     var artistSubmitted by mutableStateOf("")
 
-    /** 单曲双列数据（左、右），随源分组切换整列替换 */
-    var songColumns by mutableStateOf<List<SongSearchColumn>>(emptyList())
+    /** 单曲搜索结果（**单栏**：一次只展示一个平台），随平台切换整列替换 */
+    var songColumn by mutableStateOf<SongSearchColumn?>(null)
 
     /**
-     * 单曲搜索代次：每次 [startSongSearch]（提交搜索 / 切换源分组）单调自增。
-     * 对外暴露给 UI 作为 SongSearchResults 的 searchToken —— 同词同源重搜时
-     * query 与源分组均不变，靠它触发结果列的分页状态重置。
+     * 单曲搜索代次：每次 [startSongSearch]（提交搜索 / 切换平台）单调自增。
+     * 对外暴露给 UI 作为 SongSearchResults 的 searchToken —— 同词同平台重搜时
+     * query 与平台均不变，靠它触发结果列的分页状态重置。
      */
     var songGeneration by mutableIntStateOf(0)
-    var sourceGroupIndex by mutableIntStateOf(0)
 
-    var albumPlatform by mutableStateOf(MusicPlatform.kuwo)
+    /**
+     * 搜索平台：**单曲 / 专辑 / 歌手三种模式共用这一个**。
+     *
+     * - 切换模式不动它；在「搜索选择」面板换平台，三种模式一起换；
+     * - **落盘**（[SearchSettings]）：退出再打开还是上次选的平台，不再回到默认酷我。
+     */
+    var searchPlatform by mutableStateOf(SearchSettings.platform)
+        private set
+
+    /**
+     * 专辑 / 歌手结果是用哪个平台拉的。
+     *
+     * 平台共用后，切模式时可能出现「平台换了、这个模式的结果还是旧平台拉的」，
+     * 靠它判断要不要重拉（null = 这个模式还没有结果）。单曲侧看 `songColumn.platform` 即可。
+     */
+    private var albumQueryPlatform by mutableStateOf<MusicPlatform?>(null)
+    private var artistQueryPlatform by mutableStateOf<MusicPlatform?>(null)
+
     var albums by mutableStateOf<List<Album>>(emptyList())
     var albumsLoading by mutableStateOf(false)
     var albumGeneration by mutableIntStateOf(0)
 
-    var artistPlatform by mutableStateOf(MusicPlatform.kuwo)
     var artists by mutableStateOf<List<Artist>>(emptyList())
     var artistsLoading by mutableStateOf(false)
     var artistGeneration by mutableIntStateOf(0)
 
-    // ── Apple Music 单曲搜索（单列 + 国家选择） ──
+    // ── Apple Music 单曲搜索（单栏 + 国家选择） ──
     var appleCountry by mutableStateOf(appleMusicStorefront)
     var appleStorefronts by mutableStateOf<List<AppleStorefront>>(emptyList())
     var appleStorefrontsLoading by mutableStateOf(false)
@@ -89,45 +104,38 @@ class SearchScreenState(
     var qobuzDetailRoute by mutableStateOf<Pair<String, String>?>(null)
     var kkboxDetailRoute by mutableStateOf<Pair<String, String>?>(null)
 
-    // ── 搜索：单源分发 ──
-    suspend fun searchBySource(source: SearchSource, query: String, page: Int): List<Song> =
-        when (source) {
-            SearchSource.kuwo -> searchMusic(query, page = page)
-            SearchSource.netease -> searchNeteaseMusic(query, page = page, pageSize = kSearchPageSize)
-            SearchSource.qq -> searchQQMusic(query, page = page, pageSize = kSearchPageSize)
-            SearchSource.kugou -> searchKugouMusic(query, page = page, pageSize = kSearchPageSize)
-            SearchSource.qobuz -> searchQobuzTracks(
+    // ── 搜索：单平台分发 ──
+    suspend fun searchSongs(platform: MusicPlatform, query: String, page: Int): List<Song> =
+        when (platform) {
+            MusicPlatform.kuwo -> searchMusic(query, page = page)
+            MusicPlatform.netease -> searchNeteaseMusic(query, page = page, pageSize = kSearchPageSize)
+            MusicPlatform.qq -> searchQQMusic(query, page = page, pageSize = kSearchPageSize)
+            MusicPlatform.kugou -> searchKugouMusic(query, page = page, pageSize = kSearchPageSize)
+            MusicPlatform.qobuz -> searchQobuzTracks(
                 query,
                 limit = kSearchPageSize,
                 offset = (page - 1) * kSearchPageSize,
             )
-            SearchSource.kkbox -> emptyList()
-            SearchSource.apple -> searchAppleMusic(query, page = page, limit = kAppleSearchPageSize)
+            MusicPlatform.apple -> searchAppleMusic(query, page = page, limit = kAppleSearchPageSize)
+            MusicPlatform.kkbox -> emptyList()
         }
 
-    /** 按当前源分组发起双列搜索（两列各自独立返回；单列源只有一列） */
+    /** 按当前平台发起单曲搜索（单栏：只有一列） */
     fun startSongSearch(query: String) {
-        val group = sourceGroups[sourceGroupIndex]
-        val sources = listOfNotNull(group.left, group.right)
+        val platform = searchPlatform
         songGeneration += 1
         val generation = songGeneration
-        songColumns = sources.map {
-            SongSearchColumn(source = it, songs = emptyList(), isLoading = true)
-        }
-        sources.forEach { source ->
-            scope.launch {
-                val result = try {
-                    searchBySource(source, query, 1)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Throwable) {
-                    emptyList()
-                }
-                if (generation != songGeneration) return@launch
-                songColumns = songColumns.map {
-                    if (it.source == source) SongSearchColumn(source, result, false) else it
-                }
+        songColumn = SongSearchColumn(platform = platform, songs = emptyList(), isLoading = true)
+        scope.launch {
+            val result = try {
+                searchSongs(platform, query, 1)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                emptyList()
             }
+            if (generation != songGeneration) return@launch
+            songColumn = SongSearchColumn(platform, result, false)
         }
     }
 
@@ -151,15 +159,9 @@ class SearchScreenState(
         }
     }
 
-    /** 当前搜索是否使用 Apple Music（单曲 Apple 源 / 专辑或歌手选 Apple）。 */
+    /** 当前搜索是否使用 Apple Music（三种模式同一个平台，直接看平台即可）。 */
     val showAppleCountry: Boolean
-        get() = when (mode) {
-            ModeDropdownMode.song ->
-                sourceGroups.getOrNull(sourceGroupIndex)?.contains(SearchSource.apple) == true
-            ModeDropdownMode.album -> albumPlatform == MusicPlatform.apple
-            ModeDropdownMode.singer -> artistPlatform == MusicPlatform.apple
-            else -> false
-        }
+        get() = mode != ModeDropdownMode.qobuz && searchPlatform == MusicPlatform.apple
 
     /** 切换 Apple Music 国家/地区；当前搜索重新按新地区请求。 */
     fun selectAppleCountry(code: String) {
@@ -174,17 +176,19 @@ class SearchScreenState(
         }
     }
 
-    /** 专辑搜索（单源；空关键词不发请求，视图侧等同「无结果」） */
+    /** 专辑搜索（单平台；空关键词不发请求，视图侧等同「无结果」） */
     fun startAlbumSearch(query: String) {
         albumGeneration += 1
         val generation = albumGeneration
-        val platform = albumPlatform
+        val platform = searchPlatform
         if (query.isEmpty()) {
             albums = emptyList()
             albumsLoading = false
+            albumQueryPlatform = null
             return
         }
         albumsLoading = true
+        albumQueryPlatform = platform
         scope.launch {
             val result = try {
                 searchAlbumByPlatform(platform, query, page = 1, pageSize = 30)
@@ -199,17 +203,19 @@ class SearchScreenState(
         }
     }
 
-    /** 歌手搜索（单源） */
+    /** 歌手搜索（单平台） */
     fun startArtistSearch(query: String) {
         artistGeneration += 1
         val generation = artistGeneration
-        val platform = artistPlatform
+        val platform = searchPlatform
         if (query.isEmpty()) {
             artists = emptyList()
             artistsLoading = false
+            artistQueryPlatform = null
             return
         }
         artistsLoading = true
+        artistQueryPlatform = platform
         scope.launch {
             val result = try {
                 searchArtistByPlatform(platform, query)
@@ -246,47 +252,54 @@ class SearchScreenState(
     fun handleModeSelect(target: ModeDropdownMode) {
         mode = target
         modePickerVisible = false
+        // 平台是三种模式共用的：切到某个模式时，若它手里的结果还是别的平台拉的，按当前平台重拉
+        refreshIfPlatformChanged(target)
     }
 
-    /** 单平台模式（专辑 / 歌手都是单源） */
-    val singleSourceMode: Boolean
-        get() = mode == ModeDropdownMode.album || mode == ModeDropdownMode.singer
+    /** 结果所属平台与当前平台不一致时重搜（各模式只重拉自己那一份） */
+    private fun refreshIfPlatformChanged(target: ModeDropdownMode) {
+        when (target) {
+            ModeDropdownMode.song ->
+                if (songColumn != null && songColumn?.platform != searchPlatform) {
+                    startSongSearch(songSubmitted)
+                }
 
-    /** 「搜索选择」面板选项（单曲=源分组；专辑/歌手=单平台） */
+            ModeDropdownMode.album ->
+                if (albumQueryPlatform != null && albumQueryPlatform != searchPlatform) {
+                    startAlbumSearch(albumSubmitted)
+                }
+
+            ModeDropdownMode.singer ->
+                if (artistQueryPlatform != null && artistQueryPlatform != searchPlatform) {
+                    startArtistSearch(artistSubmitted)
+                }
+
+            ModeDropdownMode.qobuz -> Unit
+        }
+    }
+
+    /**
+     * 「搜索选择」面板选项：三种模式**同一份平台列表**（平台是共用的，换一次三种模式都换）。
+     */
     val pickerOptions: List<String>
-        get() = if (singleSourceMode) {
-            albumSearchPlatforms.map { it.label }
-        } else {
-            sourceGroups.map { it.label }
-        }
+        get() = searchPlatforms.map { it.label }
 
-    /** 当前生效的面板下标 */
+    /** 当前平台在面板里的下标 */
     val pickerIndex: Int
-        get() = when (mode) {
-            ModeDropdownMode.singer -> albumSearchPlatforms.indexOf(artistPlatform)
-            ModeDropdownMode.album -> albumSearchPlatforms.indexOf(albumPlatform)
-            else -> sourceGroupIndex
-        }
+        get() = searchPlatforms.indexOf(searchPlatform)
 
-    /** 面板选中某项：单曲=切源分组，专辑/歌手=切平台；均保留关键词自动重搜 */
+    /** 面板选中某项：换共用的平台（并落盘），按当前模式保留关键词自动重搜 */
     fun handleSourceSelect(index: Int) {
         sourcePickerVisible = false
-        if (singleSourceMode) {
-            if (index < 0 || index >= albumSearchPlatforms.size) return
-            if (mode == ModeDropdownMode.singer) {
-                artistPlatform = albumSearchPlatforms[index]
-                if (artistPlatform == MusicPlatform.apple) loadAppleStorefronts()
-                startArtistSearch(artistSubmitted)
-            } else {
-                albumPlatform = albumSearchPlatforms[index]
-                if (albumPlatform == MusicPlatform.apple) loadAppleStorefronts()
-                startAlbumSearch(albumSubmitted)
-            }
-        } else {
-            if (index < 0 || index >= sourceGroups.size) return
-            sourceGroupIndex = index
-            if (sourceGroups[index].contains(SearchSource.apple)) loadAppleStorefronts()
-            startSongSearch(songSubmitted)
+        if (index < 0 || index >= searchPlatforms.size) return
+        searchPlatform = searchPlatforms[index]
+        SearchSettings.setPlatform(searchPlatform)
+        if (searchPlatform == MusicPlatform.apple) loadAppleStorefronts()
+        when (mode) {
+            ModeDropdownMode.song -> startSongSearch(songSubmitted)
+            ModeDropdownMode.album -> startAlbumSearch(albumSubmitted)
+            ModeDropdownMode.singer -> startArtistSearch(artistSubmitted)
+            ModeDropdownMode.qobuz -> Unit
         }
     }
 

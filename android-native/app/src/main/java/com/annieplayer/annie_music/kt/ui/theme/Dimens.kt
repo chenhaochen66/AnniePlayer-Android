@@ -111,6 +111,14 @@ object AppSize {
     /** 通用列表行缩略图 / 操作行高度（Flutter: height: 44） */
     val rowThumb = 44.dp
 
+    /**
+     * 单曲搜索结果（**单栏**大行）封面边长。
+     *
+     * 单栏后一个源独占整行宽度。用户反馈「卡片偏大、一屏塞不下 8 条」，因此封面收到 44dp
+     * （与 [rowThumb] 同值），行高靠压行高 + 留白控制到 ≈66dp（不是缩小字号）。
+     */
+    val searchTileCover = 44.dp
+
     /** 音源选择项高度（Flutter: source_picker_sheet height: 46） */
     val sourceItemHeight = 46.dp
 

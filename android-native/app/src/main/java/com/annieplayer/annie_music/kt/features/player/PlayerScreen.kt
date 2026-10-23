@@ -191,7 +191,8 @@ fun PlayerScreen(
         val screenW = maxWidth
         val screenH = maxHeight
         val coverSize = minOf(screenW * 0.78f, screenH * 0.5f)
-        val pagerHeight = screenH * 0.51f
+        // 0.51 → 0.48：给控制栏（图标放大）和音量条下移腾出高度
+        val pagerHeight = screenH * 0.48f
 
         // ── 封面取色块背景：N×N 平铺，色块位置与封面各区域一一对应；切歌淡入变色 ──
         if (palette.coverGridDim > 0 &&
@@ -330,7 +331,10 @@ fun PlayerScreen(
                 Box(modifier = Modifier.weight(1f)) {
                     MovingText(
                         text = song.title,
-                        threshold = 20,
+                        // 与封面页「采样率 / 位深」胶囊同一套滚动：单份文本往返（pingPong）、90px/s，
+                        // 放得下就静止，太长才滚，不会出现「尾部+头部同框」的接缝
+                        speed = 90f,
+                        pingPong = true,
                         style = TextStyle(
                             color = AppColors.white,
                             fontSize = AppFontSize.size20,
@@ -370,13 +374,17 @@ fun PlayerScreen(
             PlayerProgressBar(
                 position = player.currentTime,
                 duration = player.duration,
+                isPlaying = player.isPlaying,
                 isDragging = ui.isDragging,
                 seekRatio = ui.seekRatio,
                 onDragging = onDragging,
                 onSeekEnd = onSeekEnd,
             )
 
+            // 进度条 → 控制栏 → 音量条：三段之间和底部各留一份「最小间距 + 弹性余量」，
+            // 余量三等分，所以底部留白和上面两道空隙一样宽，既填掉了空、也不会把音量条贴到底。
             Spacer(modifier = Modifier.height(AppSpacing.sp12))
+            Spacer(modifier = Modifier.weight(1f))
 
             // ── 控制按钮 ──
             PlayerControlsBar(
@@ -389,12 +397,14 @@ fun PlayerScreen(
                 onQueue = onOpenQueue,
             )
 
-            Spacer(modifier = Modifier.height(AppSpacing.sp12))
+            Spacer(modifier = Modifier.height(AppSpacing.sp16))
+            Spacer(modifier = Modifier.weight(1f))
 
             // ── 音量条 ──
             PlayerVolumeSlider(volume = player.volume, onVolume = onSetVolume)
 
             Spacer(modifier = Modifier.height(AppSpacing.sp18))
+            Spacer(modifier = Modifier.weight(1f))
         }
 
         // ── 歌词字号面板（底部浮层） ──

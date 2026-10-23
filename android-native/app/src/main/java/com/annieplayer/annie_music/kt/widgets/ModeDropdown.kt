@@ -2,7 +2,10 @@ package com.annieplayer.annie_music.kt.widgets
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -33,7 +37,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -299,36 +306,92 @@ private fun ModeDropdownPanel(mode: ModeDropdownMode, onSelect: (ModeDropdownMod
     }
 }
 
-/** 面板选项（对齐 Flutter `_ModePanelItem`）：激活态高亮底色 + 白字 + 主色勾选。 */
+/**
+ * 面板选项（对齐 Flutter `_ModePanelItem`）：激活态高亮底色 + 白字 + 主色勾选。
+ *
+ * **选中特效**（Android-only 追加，Flutter 基线无）：
+ * - 高亮底 `primary @0.12` 淡入淡出（而不是硬切）；
+ * - 左侧 3dp 主色圆角竖条随选中「长出来」（宽度 0 → 3dp，圆头）；
+ * - 勾选标记用弹性曲线缩放入场（0.6 → 1.0 + 淡入），未选中时它缩回去淡出；
+ * - 勾选**始终占位**（16dp 空盒），文案宽度不会随选中态变化而抖动。
+ *
+ * 除勾选的弹性曲线外，其余时长/曲线沿用本文件契约：150ms + easeInOutQuad。
+ */
 @Composable
 private fun ModeDropdownPanelItem(
     option: ModeDropdownMode,
     active: Boolean,
     onTap: () -> Unit,
 ) {
+    val colorSpec = tween<Color>(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad)
+    val highlight by animateColorAsState(
+        targetValue = if (active) AppColors.primaryA12 else Color.Transparent,
+        animationSpec = colorSpec,
+        label = "modeItemHighlight",
+    )
+    val labelColor by animateColorAsState(
+        targetValue = if (active) AppColors.white else AppColors.white60,
+        animationSpec = colorSpec,
+        label = "modeItemLabelColor",
+    )
+    // 左侧竖条宽度比例（0 = 收回去，1 = 3dp）
+    val accent by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
+        label = "modeItemAccent",
+    )
+    // 勾选入场进度：0 = 透明且缩小，1 = 不透明且原尺寸（弹性，略微过冲）
+    val checkProgress by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "modeItemCheck",
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(AppRadius.r8))
-            .background(if (active) AppColors.primaryA12 else Color.Transparent)
+            .background(highlight)
+            .drawBehind {
+                if (accent <= 0f) return@drawBehind
+                val barWidth = AppSize.playingRowBarWidth.toPx() * accent
+                drawRoundRect(
+                    color = AppColors.primary,
+                    size = Size(barWidth, size.height),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+                )
+            }
             .clickableRipple(onTap)
             .padding(vertical = AppSpacing.sp10, horizontal = AppSpacing.sp12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = option.label,
-            color = if (active) AppColors.white else AppColors.white60,
+            color = labelColor,
             fontSize = AppFontSize.base,
             fontWeight = AppFontWeight.medium,
             modifier = Modifier.weight(1f),
         )
-        if (active) {
-            Spacer(modifier = Modifier.width(AppSpacing.sp8))
-            // 勾选改为自绘线条家族（与 DetailCheckMark / CheckSquareIcon 同一勾形与笔重）
-            ModeDropdownCheckMark(
-                modifier = Modifier.size(AppIconSize.icon16),
-                tint = AppColors.primary,
-            )
+        Spacer(modifier = Modifier.width(AppSpacing.sp8))
+        // 勾选槽位常驻：选中与否都占 16dp，避免文案宽度跳动
+        Box(modifier = Modifier.size(AppIconSize.icon16)) {
+            if (checkProgress > 0.01f) {
+                // 勾选改为自绘线条家族（与 DetailCheckMark / CheckSquareIcon 同一勾形与笔重）
+                ModeDropdownCheckMark(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = checkProgress.coerceIn(0f, 1f)
+                            val scale = 0.6f + 0.4f * checkProgress
+                            scaleX = scale
+                            scaleY = scale
+                        },
+                    tint = AppColors.primary,
+                )
+            }
         }
     }
 }

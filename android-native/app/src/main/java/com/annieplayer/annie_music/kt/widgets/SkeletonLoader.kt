@@ -37,16 +37,28 @@ private val BlockColor = Color(0x1AFFFFFF)
 private val DividerColor = Color(0x0AFFFFFF)
 
 /**
- * 双列骨架屏（1:1 移植 Flutter `lib/widgets/skeleton_loader.dart`）。
+ * 搜索结果的骨架屏（源自 Flutter `lib/widgets/skeleton_loader.dart`）。
  *
  * 脉冲节奏对齐 Flutter：**1000ms 往返、easeInOut**，透明度在 **0.3 ↔ 0.7** 之间。
- * 左右两列之间有一条 1dp 分隔线（上下各留 8dp），左右内容各占一半。
+ * 列与列之间有一条 1dp 分隔线（上下各留 8dp）。
+ *
+ * 两种形态：
+ * - 默认（[columns] = 2、[largeRows] = false）：专辑 / 歌手搜索沿用 Flutter 的双列紧凑骨架。
+ * - 单曲搜索：[columns] = 1、[largeRows] = true —— 单栏大行（封面 50dp + 三行文本、上下各 20dp），
+ *   与 `SongTile` 的真实几何一致，避免结果出来后行高突然跳变。
  *
  * Compose 侧说明：Flutter 用 `CrossAxisAlignment.stretch` 让分隔线自动撑满行高，
  * 这里用 `Modifier.height(IntrinsicSize.Min)` 达到同等效果（真正的自适应，不写死高度）。
+ *
+ * @param columns 列数（单曲搜索 = 1）
+ * @param largeRows 是否画「单栏大行」尺寸的骨架
  */
 @Composable
-fun SkeletonLoader(modifier: Modifier = Modifier) {
+fun SkeletonLoader(
+    modifier: Modifier = Modifier,
+    columns: Int = 2,
+    largeRows: Boolean = false,
+) {
     val transition = rememberInfiniteTransition(label = "skeleton")
     val opacity by transition.animateFloat(
         initialValue = 0.3f,
@@ -64,22 +76,27 @@ fun SkeletonLoader(modifier: Modifier = Modifier) {
             .height(IntrinsicSize.Min)
             .padding(start = 8.dp, end = 8.dp, top = 8.dp),
     ) {
-        Box(modifier = Modifier.weight(1f)) { SkeletonColumn(opacity = opacity) }
-        // 分隔线：撑满行高（对应 Flutter 的 CrossAxisAlignment.stretch）
-        Box(
-            modifier = Modifier
-                .padding(vertical = 8.dp)
-                .width(1.dp)
-                .fillMaxHeight()
-                .background(DividerColor),
-        )
-        Box(modifier = Modifier.weight(1f)) { SkeletonColumn(opacity = opacity) }
+        repeat(columns.coerceAtLeast(1)) { index ->
+            if (index > 0) {
+                // 分隔线：撑满行高（对应 Flutter 的 CrossAxisAlignment.stretch）
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 8.dp)
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(DividerColor),
+                )
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                SkeletonColumn(opacity = opacity, largeRows = largeRows)
+            }
+        }
     }
 }
 
-/** 单列骨架：标题条 + 4 行（封面块 + 两行文字 + 尾部圆点） */
+/** 单列骨架：标题条 + 若干行（封面块 + 文本条 + 尾部圆点） */
 @Composable
-private fun SkeletonColumn(opacity: Float) {
+private fun SkeletonColumn(opacity: Float, largeRows: Boolean) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -89,23 +106,50 @@ private fun SkeletonColumn(opacity: Float) {
         Box(modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)) {
             SkeletonBlock(fixedWidth = 60.dp, height = 14.dp, opacity = opacity)
         }
-        repeat(4) {
+        repeat(if (largeRows) 5 else 4) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = 8.dp,
+                        end = 8.dp,
+                        top = if (largeRows) 6.dp else 8.dp,
+                        bottom = if (largeRows) 6.dp else 8.dp,
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SkeletonBlock(fixedWidth = 36.dp, height = 36.dp, radius = 6.dp, opacity = opacity)
-                Spacer(modifier = Modifier.width(8.dp))
+                SkeletonBlock(
+                    fixedWidth = if (largeRows) 44.dp else 36.dp,
+                    height = if (largeRows) 44.dp else 36.dp,
+                    radius = if (largeRows) 8.dp else 6.dp,
+                    opacity = opacity,
+                )
+                Spacer(modifier = Modifier.width(if (largeRows) 14.dp else 8.dp))
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     horizontalAlignment = Alignment.Start,
                 ) {
-                    SkeletonBlock(widthFactor = 0.8f, height = 12.dp, opacity = opacity)
-                    SkeletonBlock(widthFactor = 0.5f, height = 10.dp, opacity = opacity)
+                    SkeletonBlock(
+                        widthFactor = 0.8f,
+                        height = if (largeRows) 17.dp else 12.dp,
+                        opacity = opacity,
+                    )
+                    SkeletonBlock(
+                        widthFactor = 0.5f,
+                        height = if (largeRows) 13.dp else 10.dp,
+                        opacity = opacity,
+                    )
+                    if (largeRows) {
+                        SkeletonBlock(widthFactor = 0.35f, height = 11.dp, opacity = opacity)
+                    }
                 }
                 Spacer(modifier = Modifier.width(8.dp))
-                SkeletonBlock(fixedWidth = 16.dp, height = 16.dp, opacity = opacity)
+                SkeletonBlock(
+                    fixedWidth = if (largeRows) 20.dp else 16.dp,
+                    height = if (largeRows) 20.dp else 16.dp,
+                    opacity = opacity,
+                )
             }
         }
     }

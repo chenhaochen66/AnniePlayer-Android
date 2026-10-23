@@ -36,6 +36,8 @@ data class LxPlugin(
     val sources: List<LxPluginSource>,
     /** 导入 / 加载失败原因（非空表示该插件不可用） */
     val error: String? = null,
+    /** 安妮独家插件（文件头带 `#@安妮音源` 标识块）—— 列表里挂「独家」徽标 */
+    val exclusive: Boolean = false,
 )
 
 /** 插件头部注释（对齐官方解析：块 `/^\/\*[\S|\s]+?\*\//`） */

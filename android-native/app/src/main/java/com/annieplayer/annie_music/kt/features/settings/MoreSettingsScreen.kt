@@ -209,8 +209,6 @@ fun moreSettingsGroups(
     lxPluginEnabled: Boolean = false,
     lxPluginCount: Int = 0,
     onToggleLxPlugin: (Boolean) -> Unit = {},
-    onImportLxPluginLocal: () -> Unit = {},
-    onImportLxPluginOnline: () -> Unit = {},
     onManageLxPlugins: () -> Unit = {},
 ): List<MoreSettingGroup> = listOf(
     MoreSettingGroup(
@@ -353,26 +351,14 @@ fun moreSettingsGroups(
         },
     ),
     MoreSettingGroup(
-        title = "落雪音源",
+        title = "插件设置",
         items = listOf(
             MoreSettingSwitch(
                 key = "lx-plugin-enabled",
-                label = "启用落雪插件",
-                subtitle = "国内四平台由落雪插件解析；无可用插件时仍走内置并提示",
+                label = "应用插件",
+                subtitle = "国内四平台由插件解析；无可用插件时仍走内置并提示",
                 checked = lxPluginEnabled,
                 onCheckedChange = onToggleLxPlugin,
-            ),
-            MoreSettingAction(
-                key = "lx-plugin-import-local",
-                label = "本地导入插件",
-                subtitle = "选择一个 .js 插件文件",
-                onClick = onImportLxPluginLocal,
-            ),
-            MoreSettingAction(
-                key = "lx-plugin-import-online",
-                label = "在线导入插件",
-                subtitle = "粘贴 http/https 直链",
-                onClick = onImportLxPluginOnline,
             ),
             MoreSettingAction(
                 key = "lx-plugin-manage",

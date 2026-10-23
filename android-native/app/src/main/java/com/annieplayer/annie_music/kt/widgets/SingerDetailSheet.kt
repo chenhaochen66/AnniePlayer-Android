@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -881,8 +882,10 @@ private fun SingerDetailOverview(
     val appleAlbums = remember(st.appleAlbums) {
         st.appleAlbums.sortedByDescending { it.pub }.take(SingerDetailOverviewAlbumCount)
     }
+    val overviewListState = rememberLazyListState()
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        state = overviewListState,
+        modifier = Modifier.fillMaxSize().shortScrollbar(overviewListState),
         contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
     ) {
         item {
@@ -1240,8 +1243,10 @@ private fun SingerDetailSongs(
         }
 
         else -> {
+            val songsListState = rememberLazyListState()
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                state = songsListState,
+                modifier = Modifier.fillMaxSize().shortScrollbar(songsListState),
                 contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
             ) {
                 items(count = st.songs.size) { index ->
@@ -1597,7 +1602,7 @@ private fun SingerDetailAlbums(
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 state = gridState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().shortScrollbar(gridState),
                 contentPadding = PaddingValues(
                     start = AppSpacing.sp8,
                     top = AppSpacing.sp4,

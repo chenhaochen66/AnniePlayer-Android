@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
@@ -44,30 +44,36 @@ import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
+import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
-
-// ---- RN 原值色（AppColors 未覆盖的低透明白叠加，按 RN rgba 原值换算）----
-
-
-
-
-
-
-
-
+import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 
 /**
- * 歌曲行（1:1 移植 Flutter `lib/widgets/song_tile.dart`）。
+ * 三行文本的**紧凑行高**：一屏要塞下 8 条，行盒不能按 1.2× 字号撑（会多出 ~8dp）。
+ *
+ * 与 [SongTile] 里的字号成对出现：标题 17sp / 第二行 13sp / 元信息 11sp。
+ */
+private val TitleLineHeight = 19.sp
+private val ArtistLineHeight = 15.sp
+private val MetaLineHeight = 13.sp
+
+/**
+ * 歌曲行（单曲搜索的单栏行）。
  *
  * 交互：
  * - 点击 → 多选模式下切换选中，否则播放。
  * - 长按 → 进入多选并选中该行（未选中时）。
- * - 右侧下载按钮：下载中显示 900ms 旋转环，否则显示下载图标。
+ * - 右侧 ⋮：点开全局单曲操作菜单（下载 / 跳转歌手…）；下载中显示旋转环。
  *
- * 视觉：
- * - 选中底色 `primary @ 0.08`；播放中底色 `primary @ 0.06`，标题变主色。
- * - 播放中封面压暗到 0.6 并叠加白色播放三角。
- * - 第三行 meta：`时长 · 最高音质 · 源名`（音质标签提亮）。
+ * 视觉（**单栏**）：
+ * - 封面 [AppSize.searchTileCover] = 44dp / 圆角 8；三行文本 **17sp / 13sp / 11sp**
+ *   （标题 w600、第二行 `歌手 · 专辑`、第三行元信息）。
+ * - 行高 ≈ 62dp =「文本块 ≈50 + 上下各 6dp」；363dp×800dp 的机器上列表可视区 ≈532dp，
+ *   一屏能落 8 条（行距是按这个约束倒推的，改字号/留白请一起算）。
+ * - 正在播放 → 与专辑详情列表同一套行样式（[playingRowBackground]：8% 圆角底 + 左侧 3dp 竖条
+ *   + 标题着色 + 封面上的 [PlayingIndicator] 等化器），但**颜色是中性灰**而不是封面取色主色，
+ *   避免单栏长列表整屏被彩色化。
+ * - 多选选中 → `primary @ 8%` 底色（与专辑详情一致）。
  *
  * 说明：Compose 无 Material 的 `Icons.Default.CheckBox` 轻量等价物（在 extended 里），
  * 这里用 `CheckSquareIcon` 自绘，形状对齐 Flutter `Icons.check_box`（圆角方块 + 勾）。
@@ -94,14 +100,18 @@ fun SongTile(
     val isDownloading = downloadStatus == DownloadStatus.downloading ||
         downloadStatus == DownloadStatus.pending
 
-    val cardColor = when {
-        selected -> AppColors.primaryA08
-        isActive -> AppColors.primaryA06
-        else -> Color.Transparent
-    }
-
     Row(
-        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            // 高亮底画在**整行**上（含行尾 ⋮ 区），与专辑详情「整行高亮」一致
+            .clip(RoundedCornerShape(AppRadius.r8))
+            .then(
+                when {
+                    isActive -> Modifier.playingRowBackground(AppColors.playingGray)
+                    selected -> Modifier.background(AppColors.primaryA08)
+                    else -> Modifier
+                },
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // ── 卡片主体（点击播放 / 长按多选） ──
@@ -110,7 +120,6 @@ fun SongTile(
             song = song,
             selected = selected,
             isActive = isActive,
-            cardColor = cardColor,
             coverFailed = failedCoverId == song.id,
             onCoverError = { failedCoverId = song.id },
             sourceLabel = sourceLabel,
@@ -126,17 +135,17 @@ fun SongTile(
             },
         )
 
-        // ── 下载按钮 ──
+        // ── 行尾 ⋮（单曲操作菜单；下载中显示旋转环） ──
         Box(
             modifier = Modifier
                 .clickableRipple { onDownload(song) }
-                .padding(6.dp),
+                .padding(AppSpacing.sp10),
             contentAlignment = Alignment.Center,
         ) {
             if (isDownloading) {
                 DownloadRing()
             } else {
-                SongMoreGlyph(modifier = Modifier.size(18.dp))
+                SongMoreGlyph()
             }
         }
     }
@@ -148,7 +157,6 @@ private fun SongTileCard(
     song: Song,
     selected: Boolean,
     isActive: Boolean,
-    cardColor: Color,
     coverFailed: Boolean,
     onCoverError: () -> Unit,
     sourceLabel: String?,
@@ -158,28 +166,31 @@ private fun SongTileCard(
 ) {
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(cardColor)
             .searchTileCombinedClickableRipple(onTap = onTap, onLongClick = onLongPress)
-            .padding(vertical = 4.dp, horizontal = 4.dp),
+            .padding(
+                start = AppSpacing.sp12,
+                end = AppSpacing.sp10,
+                top = AppSpacing.sp6,
+                bottom = AppSpacing.sp6,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selected) {
             CheckSquareIcon(modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(AppSpacing.sp8))
         }
 
-        // ── 封面 44dp / 圆角 8 ──
+        // ── 封面 50dp / 圆角 8 ──
         Box(
             modifier = Modifier
-                .size(AppSize.rowThumb)
-                .clip(RoundedCornerShape(8.dp))
+                .size(AppSize.searchTileCover)
+                .clip(RoundedCornerShape(AppRadius.r8))
                 .background(AppColors.whiteA03),
             contentAlignment = Alignment.Center,
         ) {
             if (coverFailed || song.cover.isEmpty()) {
                 MusicNoteGlyph(
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(20.dp),
                     tint = AppColors.whiteA15,
                 )
             } else {
@@ -187,45 +198,50 @@ private fun SongTileCard(
                     model = song.cover,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    alpha = if (isActive) 0.6f else 1f,
+                    alpha = if (isActive) 0.5f else 1f,
                     modifier = Modifier.fillMaxSize(),
                     onState = { state ->
-                        // 加载失败 → 切占位音符（等价 Dart `errorBuilder`；原先漏接，坏图会显示空白）
+                        // 加载失败 → 切占位音符（等价 Dart `errorBuilder`）
                         if (state is AsyncImagePainter.State.Error) onCoverError()
                     },
                 )
             }
             if (isActive) {
-                PlayTriangle(modifier = Modifier.size(16.dp))
+                // 与专辑详情列表一致：正在播放的等化器指示器（这里叠在封面上，行内没有序号位）
+                PlayingIndicator(tint = AppColors.playingGray)
             }
         }
 
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(AppSpacing.sp14))
 
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.sp2),
             horizontalAlignment = Alignment.Start,
         ) {
             Text(
                 text = song.title,
-                color = if (isActive) AppColors.primary else Color.White,
-                fontSize = AppFontSize.base,
+                color = if (isActive) AppColors.playingGray else Color.White,
+                fontSize = AppFontSize.size17,
+                lineHeight = TitleLineHeight,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = song.artist,
+                // 歌手 + 专辑：专辑跟在歌手右边（如「周杰伦 · 太阳之子」）；没有专辑名就只显示歌手
+                text = listOfNotNull(
+                    song.artist.takeIf { it.isNotBlank() },
+                    song.album?.takeIf { it.isNotBlank() },
+                ).joinToString(" · "),
                 color = AppColors.textTertiary,
-                fontSize = AppFontSize.sm,
+                fontSize = AppFontSize.size13,
+                lineHeight = ArtistLineHeight,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             SongTileMetaLine(song = song, sourceLabel = sourceLabel)
         }
-
-        Spacer(modifier = Modifier.width(4.dp))
     }
 }
 
@@ -242,12 +258,13 @@ private fun SongTileMetaLine(song: Song, sourceLabel: String?) {
     if (parts.isEmpty()) return
 
     Text(
-        // 必须显式给 fontSize：否则行高会从默认样式继承（16sp），比 Flutter 的 10sp 高
-        fontSize = AppFontSize.size10,
+        // 必须显式给 fontSize / lineHeight：否则行盒会按默认样式（16sp / 1.2 倍）撑高
+        fontSize = AppFontSize.xs,
+        lineHeight = MetaLineHeight,
         text = buildAnnotatedString {
             parts.forEachIndexed { i, (label, isQuality) ->
                 if (i > 0) {
-                    withStyle(SpanStyle(color = AppColors.primaryA60, fontSize = AppFontSize.size10)) {
+                    withStyle(SpanStyle(color = AppColors.primaryA60, fontSize = AppFontSize.xs)) {
                         append(" · ")
                     }
                 }
@@ -255,12 +272,12 @@ private fun SongTileMetaLine(song: Song, sourceLabel: String?) {
                     withStyle(
                         SpanStyle(
                             color = AppColors.indigo300A95,
-                            fontSize = AppFontSize.size10,
+                            fontSize = AppFontSize.xs,
                             fontWeight = FontWeight.SemiBold,
                         ),
                     ) { append(label) }
                 } else {
-                    withStyle(SpanStyle(color = AppColors.primaryA60, fontSize = AppFontSize.size10)) {
+                    withStyle(SpanStyle(color = AppColors.primaryA60, fontSize = AppFontSize.xs)) {
                         append(label)
                     }
                 }
@@ -326,7 +343,6 @@ private fun topQualityLabel(qualities: List<Quality>): String? {
 /**
  * 卡片主体点击：与 `clickableRipple` 同一套反馈（白 24% 涟漪，经外层 `clip` 贴合圆角），
  * 但保留「点击 + 长按」双语义（长按进入多选是搜索页不能退化的交互，故不能直接用单击版）。
- * 替换原 `combinedClickableNoRipple`：原先点击无任何反馈，与页面其它点击不一致。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

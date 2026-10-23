@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -517,10 +518,13 @@ private fun PlaylistDetailBody(
                     .fillMaxSize()
                     .padding(horizontal = AppSpacing.sp12),
             ) {
+                val listState = rememberLazyListState()
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .glassPanel(shape = RoundedCornerShape(AppRadius.panel)),
+                        .glassPanel(shape = RoundedCornerShape(AppRadius.panel))
+                        .shortScrollbar(listState),
                     contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
                 ) {
                     item {

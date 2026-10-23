@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -90,6 +91,7 @@ import com.annieplayer.annie_music.kt.widgets.clickableRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
 import com.annieplayer.annie_music.kt.widgets.glassPanel
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
+import com.annieplayer.annie_music.kt.widgets.shortScrollbar
 import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -527,11 +529,14 @@ private fun KkboxDetailBody(
 
         else -> {
             Box(modifier = Modifier.fillMaxSize().padding(horizontal = AppSpacing.sp12)) {
+                val listState = rememberLazyListState()
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxSize()
                         // 液态玻璃承载列表：半透明底 + 顶部高光 + 高光描边（层叠伪造毛玻璃）
-                        .glassPanel(shape = RoundedCornerShape(AppRadius.panel)),
+                        .glassPanel(shape = RoundedCornerShape(AppRadius.panel))
+                        .shortScrollbar(listState),
                     // 底部为常驻底栏 / 迷你条 + 手势条预留空间（沿用既有 120dp 值）
                     contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
                 ) {

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -90,6 +91,7 @@ import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
 import com.annieplayer.annie_music.kt.widgets.SongMoreGlyph
 import com.annieplayer.annie_music.kt.widgets.glassPanel
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
+import com.annieplayer.annie_music.kt.widgets.shortScrollbar
 import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -527,11 +529,14 @@ private fun QobuzDetailBody(
         else -> {
             // 玻璃承载列表：圆角 panel + 侧边留白，让取色氛围背景从玻璃边缘透出；
             // 底部内容预留不变（迷你条 + 手势条）
+            val listState = rememberLazyListState()
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = AppSpacing.sp12)
-                    .glassPanel(shape = RoundedCornerShape(AppRadius.panel)),
+                    .glassPanel(shape = RoundedCornerShape(AppRadius.panel))
+                    .shortScrollbar(listState),
                 contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
             ) {
                 item {

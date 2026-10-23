@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -60,9 +61,10 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 
 /**
- * 「落雪音源」插件管理页（全屏面板，交互与「更多设置」一致）。
+ * 「插件管理」页（全屏面板，交互与「更多设置」一致）。
  *
- * 只做「已导入插件的查看 / 启停 / 删除」；导入入口在「更多设置」的落雪音源分组里。
+ * 做「已导入插件的查看 / 启停 / 删除」；导入入口是标题右侧的「+」（[onImportClick]），
+ * 点它由宿主弹出「在线导入 / 本地导入」选择。
  */
 @Composable
 fun LxPluginManagerSheet(
@@ -72,6 +74,7 @@ fun LxPluginManagerSheet(
     onClose: () -> Unit,
     onSelect: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onImportClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var pendingDelete by remember { mutableStateOf<LxPlugin?>(null) }
@@ -134,16 +137,30 @@ fun LxPluginManagerSheet(
                 }
                 Spacer(modifier = Modifier.width(AppSpacing.sp8))
                 Text(
-                    text = "落雪音源",
+                    text = "插件管理",
+                    modifier = Modifier.weight(1f),
                     color = AppColors.textPrimary,
                     fontSize = AppFontSize.size20,
                     fontWeight = FontWeight.Bold,
                 )
+                // 「+」：导入插件（在线 / 本地二选一，弹框由宿主出）——样式对齐 Qobuz Token 管理页
+                Box(
+                    modifier = Modifier
+                        .clickableNoRipple(onImportClick)
+                        .padding(AppSpacing.sp4),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = AppColors.primary,
+                        modifier = Modifier.size(AppIconSize.icon24),
+                    )
+                }
             }
 
             if (emptyWarning) {
                 Text(
-                    text = "已启用落雪插件，但没有可用插件：国内四平台将无法播放/下载",
+                    text = "已启用插件，但没有可用插件：国内四平台将无法播放/下载",
                     color = AppColors.danger,
                     fontSize = AppFontSize.sm,
                     modifier = Modifier.padding(
@@ -256,6 +273,19 @@ private fun LxPluginRow(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    // 安妮独家插件：名字前挂「独家」徽标（样式同「使用中」，配色橙红）
+                    if (plugin.exclusive) {
+                        Text(
+                            text = "独家",
+                            modifier = Modifier
+                                .padding(end = AppSpacing.sp8)
+                                .background(AppColors.exclusiveA15, RoundedCornerShape(AppRadius.r4))
+                                .padding(horizontal = AppSpacing.sp8, vertical = AppSpacing.sp3),
+                            color = AppColors.exclusive,
+                            fontSize = AppFontSize.sm,
+                            fontWeight = AppFontWeight.semiBold,
+                        )
+                    }
                     Text(
                         text = plugin.name,
                         modifier = Modifier.weight(1f, fill = false),

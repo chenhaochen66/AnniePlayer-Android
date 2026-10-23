@@ -328,7 +328,8 @@ class MediaPlayerBackend(
         AnnieAudioHolder.onServiceStopped = { _serviceStarted = false }
         AnnieAudioHolder.onDeactivate = { deactivate() }
         _startProgressLoop()
-        _emit(mapOf("isPlaying" to player.isPlaying))
+        // 初始状态同样按播放意图推，避免刚起播时按钮先闪一下「播放」
+        _emit(mapOf("isPlaying" to player.playWhenReady))
     }
 
     /** 把本实例下线：停掉进度协程并短路所有回调（player/session 归新实例所有，不在此释放）。 */
@@ -1348,8 +1349,20 @@ class MediaPlayerBackend(
 
     /** ExoPlayer 监听：isPlaying / ended / error（对齐 Dart 的 playerStateStream 与 processingStateStream） */
     private inner class AnniePlayerListener : Player.Listener {
+        /**
+         * UI 的「播放 / 暂停」状态取 **`playWhenReady`（用户意图）**，不取 `isPlaying`。
+         *
+         * Media3 的 `isPlaying` 在 seek / 缓冲 / 换源那一瞬间会变 `false`，把它直接推给 UI，
+         * 播放按钮就会在「拉进度条」时自己闪成播放三角（现象：播放中拖进度条，按钮变了）；
+         * 真正暂停时 `playWhenReady` 才是 false，播放 / 暂停两条路径都照常收到回调。
+         */
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            _emit(mapOf("isPlaying" to isPlaying))
+            _emit(mapOf("isPlaying" to (_player?.playWhenReady == true)))
+        }
+
+        /** 播放意图变化（暂停 / 续播）单独推一次，避免只靠 isPlaying 回调漏事件。 */
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            _emit(mapOf("isPlaying" to playWhenReady))
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {

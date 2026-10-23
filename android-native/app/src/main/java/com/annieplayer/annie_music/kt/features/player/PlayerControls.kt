@@ -21,10 +21,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -32,6 +33,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -41,33 +44,33 @@ import com.annieplayer.annie_music.kt.data.model.LoopMode
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
-import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
-import com.annieplayer.annie_music.kt.ui.theme.AppShadow
-import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.PauseIcon
 import com.annieplayer.annie_music.kt.widgets.PlayIcon
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import kotlin.math.roundToInt
 
-/** 进度条拇指直径（Flutter：15） */
-private val PlayerProgressThumbSize = 15.dp
-
-/** 进度条触控高度（Flutter：26） */
-private val PlayerProgressTouchHeight = 26.dp
-
-/** 进度轨高度（Flutter：4） */
-private val PlayerProgressTrackHeight = AppSpacing.sp4
-
 /** 音量轨高度（Flutter：5，播放页 `PlayerVolumeSlider`） */
 private val PlayerVolumeTrackHeight = 5.dp
+
+/** 进度条触控高度（Flutter：26）；端点小圆点直径直接取轨道高度，不另立常量 */
+private val PlayerProgressTouchHeight = 26.dp
+
+/** 进度轨高度：**与音量条同高**（`PlayerVolumeTrackHeight`），用音量条那套样式 */
+private val PlayerProgressTrackHeight = PlayerVolumeTrackHeight
 
 /** 音量条触控高度（Flutter：28） */
 private val PlayerVolumeTouchHeight = 28.dp
 
 /** 音量图标尺寸（Flutter `Icon(size: 14)`） */
 private val PlayerVolumeIconSize = 14.dp
+
+/** 控制栏左右图标（循环 / 切歌 / 队列） */
+private val PlayerControlIconSize = 30.dp
+
+/** 播放 / 暂停图标：去掉白色圆盘后靠尺寸撑视觉重量，比左右图标再大一号 */
+private val PlayerPlayIconSize = 46.dp
 
 /** 待下载条抓数徽标直径（Flutter `Container(width: 22, height: 22)`） */
 private val PlayerPendingBadgeSize = 22.dp
@@ -81,9 +84,13 @@ private fun playerFormatTime(seconds: Double): String {
 }
 
 /**
- * 进度条（1:1 移植 Flutter `PlayerProgressBar`）：
- * 触控区 26dp、轨道 4dp（white 0.08）、已播部分白色 + 白色辉光、白色 15dp 拇指；
+ * 进度条（**音量条样式**）：触控区 26dp、轨道 5dp（white 0.08）、已播部分 white 0.30、
+ * 端点一颗白 25% 的小圆点（直径 = 轨道高度，不再是 15dp 大球）；
  * 左右时间 `12sp`（白 0.7）等宽数字 + 加粗。
+ *
+ * 「播放时发光、暂停复原」：只有 [isPlaying] 为 true 时，已播段后面垫一层
+ * `BlurMaskFilter` 画的模糊白（紧+宽两道，见 [PlayerProgressGlow]）；
+ * 暂停/拖动中这一层不画，进度条就是干净的平涂。
  *
  * 交互：水平拖拽中通过 [onDragging] 上报比例；松手通过 [onSeekEnd] 上报比例
  * （宿主据此执行 `setCurrentTime + seekTo + setDragging(false)`）。
@@ -92,6 +99,7 @@ private fun playerFormatTime(seconds: Double): String {
 fun PlayerProgressBar(
     position: Double,
     duration: Double,
+    isPlaying: Boolean,
     isDragging: Boolean,
     seekRatio: Double,
     onDragging: (Double) -> Unit,
@@ -101,7 +109,8 @@ fun PlayerProgressBar(
         .coerceIn(0.0, 1.0)
     val displayTime = if (isDragging) seekRatio * duration else position
     val density = LocalDensity.current
-    val thumbRadiusPx = with(density) { PlayerProgressThumbSize.toPx() / 2f }
+    // 端点圆点半径 = 轨道半高（「和进度条一样粗」）
+    val endDotRadiusPx = with(density) { PlayerProgressTrackHeight.toPx() / 2f }
 
     Box(modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.screenPaddingH)) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -137,41 +146,37 @@ fun PlayerProgressBar(
                         },
                     contentAlignment = Alignment.CenterStart,
                 ) {
-                    // 轨道
+                    // 轨道（与音量条同一款：白 0.08 / 5dp / 圆角 2.5）
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(PlayerProgressTrackHeight)
-                            // 轨道底色对齐 Flutter `white @0.08`（此前误用 white10=0.10）
-                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(AppRadius.r2)),
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(AppRadius.r2_5)),
                     )
-                    // 已播进度（白色 + 辉光）
+                    // 播放中在已播段后面垫一层模糊白（真辉光）；暂停/拖动时这一层整个不画
+                    val glowing = isPlaying && !isDragging && progress > 0.0
+                    if (glowing) {
+                        PlayerProgressGlow(
+                            modifier = Modifier
+                                .fillMaxWidth(progress.toFloat())
+                                .height(PlayerProgressTrackHeight),
+                        )
+                    }
+                    // 已播进度：音量条同款白 0.30
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(progress.toFloat())
                             .height(PlayerProgressTrackHeight)
-                            .shadow(
-                                elevation = AppShadow.blurMd,
-                                shape = RoundedCornerShape(AppRadius.r2),
-                                clip = false,
-                                ambientColor = AppColors.white,
-                                spotColor = AppColors.white,
-                            )
-                            .background(AppColors.white, RoundedCornerShape(AppRadius.r2)),
+                            .background(AppColors.white30, RoundedCornerShape(AppRadius.r2_5)),
                     )
-                    // 拇指
+                    // 端点小圆点：白 25%，直径 = 轨道高度（不再是 15dp 大球）
                     Box(
                         modifier = Modifier
-                            .offset { IntOffset((progress.toFloat() * widthPx - thumbRadiusPx).roundToInt(), 0) }
-                            .size(PlayerProgressThumbSize)
-                            .shadow(
-                                elevation = AppShadow.blurSm,
-                                shape = CircleShape,
-                                clip = false,
-                                ambientColor = AppColors.black,
-                                spotColor = AppColors.black,
-                            )
-                            .background(AppColors.white, CircleShape),
+                            .offset {
+                                IntOffset((progress.toFloat() * widthPx - endDotRadiusPx).roundToInt(), 0)
+                            }
+                            .size(PlayerProgressTrackHeight)
+                            .background(AppColors.whiteA25, CircleShape),
                     )
                 }
             }
@@ -206,6 +211,43 @@ fun PlayerProgressBar(
 }
 
 /**
+ * 已播段的「发光」层：在轨道上画一条模糊白。
+ *
+ * 用 `BlurMaskFilter` 而不是 `Modifier.shadow`——轨道只有 5dp 高，elevation 阴影在这么薄的
+ * 盒子上几乎糊不出来，真机上等于没有；模糊笔刷是实打实的辉光，且能溢出到轨道上下两侧。
+ * 两道叠加：4dp 紧光晕负责「亮」，12dp 宽光晕负责「晕开」。
+ */
+@Composable
+private fun PlayerProgressGlow(modifier: Modifier = Modifier) {
+    val density = LocalDensity.current
+    val paints = remember(density) {
+        fun glowPaint(blurDp: Float, alpha: Int): android.graphics.Paint =
+            android.graphics.Paint().apply {
+                isAntiAlias = true
+                style = android.graphics.Paint.Style.FILL
+                color = android.graphics.Color.WHITE
+                this.alpha = alpha
+                maskFilter = android.graphics.BlurMaskFilter(
+                    with(density) { blurDp.dp.toPx() },
+                    android.graphics.BlurMaskFilter.Blur.NORMAL,
+                )
+            }
+        listOf(glowPaint(4f, 190), glowPaint(12f, 96))
+    }
+
+    Box(
+        modifier = modifier.drawBehind {
+            val r = size.height / 2f
+            drawIntoCanvas { canvas ->
+                for (p in paints) {
+                    canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, p)
+                }
+            }
+        },
+    )
+}
+
+/**
  * `BoxWithConstraints` 的轻量替身：只需要宽度（px），用于把触摸位置换算成比例。
  *
  * 说明：为避免在每帧更新比例时触发重组，这里直接把约束宽度交给内容 lambda。
@@ -220,8 +262,9 @@ private fun PlayerWidthProvider(content: @Composable (widthPx: Float) -> Unit) {
 }
 
 /**
- * 控制栏（1:1 移植 Flutter `PlayerControls`）：
- * 循环模式（单曲在右上角叠加「1」角标）/ 上一首 / 白色圆形播放暂停（52dp）/ 下一首 / 队列。
+ * 控制栏：循环模式（单曲在右上角叠加「1」角标）/ 上一首 / 播放暂停 / 下一首 / 队列。
+ *
+ * 播放暂停没有白色圆盘，与左右切歌同一款自绘字形，只把尺寸放大一档（[PlayerPlayIconSize]）。
  */
 @Composable
 fun PlayerControlsBar(
@@ -244,12 +287,12 @@ fun PlayerControlsBar(
         ) {
             if (loopMode == LoopMode.shuffle) {
                 PlayerShuffleGlyph(
-                    modifier = Modifier.size(AppIconSize.icon24),
+                    modifier = Modifier.size(PlayerControlIconSize),
                     tint = AppColors.white70,
                 )
             } else {
                 PlayerRepeatGlyph(
-                    modifier = Modifier.size(AppIconSize.icon24),
+                    modifier = Modifier.size(PlayerControlIconSize),
                     tint = AppColors.white70,
                 )
                 if (loopMode == LoopMode.single) {
@@ -268,35 +311,22 @@ fun PlayerControlsBar(
         Box(modifier = Modifier.clickableNoRipple { onPrevious() }) {
             PlayerSkipGlyph(
                 forward = false,
-                modifier = Modifier.size(AppIconSize.icon24),
+                modifier = Modifier.size(PlayerControlIconSize),
                 tint = AppColors.white70,
             )
         }
 
-        // 播放 / 暂停（白色圆形大按钮）
-        Box(
-            modifier = Modifier
-                .size(AppSize.bigActionButton)
-                .shadow(
-                    elevation = AppShadow.blurXl,
-                    shape = CircleShape,
-                    clip = false,
-                    ambientColor = AppColors.white,
-                    spotColor = AppColors.white,
-                )
-                .background(AppColors.white, CircleShape)
-                .clickableNoRipple { onTogglePlay() },
-            contentAlignment = Alignment.Center,
-        ) {
+        // 播放 / 暂停：与上一首/下一首同一款式（纯自绘字形、white70），尺寸放大一档
+        Box(modifier = Modifier.clickableNoRipple { onTogglePlay() }) {
             if (isPlaying) {
                 PauseIcon(
-                    modifier = Modifier.size(AppIconSize.icon26),
-                    tint = AppColors.surface,
+                    modifier = Modifier.size(PlayerPlayIconSize),
+                    tint = AppColors.white70,
                 )
             } else {
                 PlayIcon(
-                    modifier = Modifier.size(AppIconSize.icon26),
-                    tint = AppColors.surface,
+                    modifier = Modifier.size(PlayerPlayIconSize),
+                    tint = AppColors.white70,
                 )
             }
         }
@@ -305,7 +335,7 @@ fun PlayerControlsBar(
         Box(modifier = Modifier.clickableNoRipple { onNext() }) {
             PlayerSkipGlyph(
                 forward = true,
-                modifier = Modifier.size(AppIconSize.icon24),
+                modifier = Modifier.size(PlayerControlIconSize),
                 tint = AppColors.white70,
             )
         }
@@ -313,7 +343,7 @@ fun PlayerControlsBar(
         // 播放队列
         Box(modifier = Modifier.clickableNoRipple { onQueue() }) {
             PlayerQueueGlyph(
-                modifier = Modifier.size(AppIconSize.icon24),
+                modifier = Modifier.size(PlayerControlIconSize),
                 tint = AppColors.white70,
             )
         }

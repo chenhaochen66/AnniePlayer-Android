@@ -3,12 +3,10 @@ package com.annieplayer.annie_music.kt.widgets
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -25,9 +23,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
+import com.annieplayer.annie_music.kt.ui.theme.AppSize
 
 /** rgba(255,255,255,0.05)（输入框底色） —— 对齐 Flutter `_fieldBg` */
 private val FieldBg = Color(0x0DFFFFFF)
@@ -47,6 +47,14 @@ private val SearchIconColor = Color(0x80FFFFFF)
  * 使用 `BasicTextField` 而非 Material `TextField`，是为了完全去掉 Material 的下划线、
  * 容器色与内边距——Flutter 版用的是 `border: InputBorder.none`，视觉上是一条干净的
  * 半透明圆角条。
+ *
+ * 尺寸可配：[horizontalPadding] / [verticalPadding] 由调用方决定外边距，[height] 默认
+ * [AppSize.searchBarHeight]（36dp）；搜索页把搜索框和模式按钮并排时传 0 边距 +
+ * 44dp（= 模式按钮高度），两件东西同一行、同一高度。
+ *
+ * @param horizontalPadding 左右外边距（并排时传 0）
+ * @param verticalPadding 上下外边距（并排时传 0）
+ * @param height 输入条高度
  */
 @Composable
 fun SearchBarField(
@@ -55,13 +63,20 @@ fun SearchBarField(
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
     hint: String = "搜索歌曲、歌手...",
-    horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp,
+    horizontalPadding: Dp = 16.dp,
+    verticalPadding: Dp = 8.dp,
+    height: Dp = AppSize.searchBarHeight,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = horizontalPadding, end = horizontalPadding, top = 8.dp, bottom = 8.dp)
-            .height(36.dp)
+            .padding(
+                start = horizontalPadding,
+                end = horizontalPadding,
+                top = verticalPadding,
+                bottom = verticalPadding,
+            )
+            .height(height)
             .background(FieldBg, RoundedCornerShape(10.dp))
             .padding(start = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -96,10 +111,10 @@ fun SearchBarField(
             }
         }
 
-        // ── 搜索按钮 ──
+        // ── 搜索按钮（命中区随条高，44dp 时正好填满右端） ──
         Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(height)
                 .clickableRipple(onSubmit),
             contentAlignment = Alignment.Center,
         ) {
@@ -110,8 +125,6 @@ fun SearchBarField(
                 color = SearchIconColor,
             )
         }
-
-        Spacer(modifier = Modifier.width(0.dp))
     }
 }
 
