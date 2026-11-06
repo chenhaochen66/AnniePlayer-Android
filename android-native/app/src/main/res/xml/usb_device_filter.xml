@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- USB 音频类（UAC1/UAC2）设备插上时让系统把本应用列进「为 USB 设备选择一个应用」 -->
+<resources>
+    <usb-device class="1" />
+</resources>

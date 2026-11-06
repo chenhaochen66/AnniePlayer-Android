@@ -64,12 +64,13 @@ fun CacheClearModal(
     val selectedBytes = items.filter { it.category in selected }.sumOf { it.bytes }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 遮罩
+        // 遮罩：只吞点击，**不关闭**（退出只走返回手势 / 「取消」按钮）
+        // `clickableNoRipple` 必须保留：吃掉触摸、阻止点击穿透到下层页面。
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppColors.scrim60)
-                .clickableNoRipple { if (!clearing) onClose() },
+                .clickableNoRipple { },
         )
 
         // 居中卡片（吞掉卡片内空白点击）

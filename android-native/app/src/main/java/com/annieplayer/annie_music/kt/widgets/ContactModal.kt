@@ -93,11 +93,13 @@ fun ContactModal(
 
     Box(modifier = modifier.fillMaxSize()) {
         // 遮罩（对齐 Dart rgba(0,0,0,0.6)）
+        // 遮罩：只吞点击，**不关闭**（退出只走返回手势 / 卡片里的「关闭」按钮）
+        // `clickableNoRipple` 必须保留：吃掉触摸、阻止点击穿透到下层页面。
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppColors.scrim60)
-                .clickableNoRipple(onClose),
+                .clickableNoRipple { },
         )
 
         // 居中卡片（吞掉卡片内空白点击，避免误触遮罩关闭）

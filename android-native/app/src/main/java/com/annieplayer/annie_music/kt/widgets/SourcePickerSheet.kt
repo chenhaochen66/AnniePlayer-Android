@@ -81,7 +81,8 @@ fun SourcePickerSheet(
     // 因此完全隐藏时**整个浮层不参与组合**，等价 Flutter 的 IgnorePointer(ignoring: !visible)。
     if (!visible && scrimAlpha == 0f) return
     Box(modifier = modifier.fillMaxSize()) {
-        // ── 遮罩：点击关闭（隐藏时不启用 → 不吃触摸） ──
+        // ── 遮罩：只吞点击，**不关闭**（退出只走返回手势；本面板没有关闭按钮） ──
+        // `clickable` 必须保留：吃掉触摸、阻止点击穿透到下层页面。
         val scrimInteraction = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
@@ -91,7 +92,7 @@ fun SourcePickerSheet(
                     enabled = visible,
                     interactionSource = scrimInteraction,
                     indication = null,
-                    onClick = onClose,
+                    onClick = {},
                 )
                 .background(AppColors.black54),
         )
@@ -117,16 +118,23 @@ fun SourcePickerSheet(
                         .size(width = 36.dp, height = 4.dp)
                         .background(AppColors.whiteA15, RoundedCornerShape(AppRadius.r2)),
                 )
-                // 标题
-                Text(
-                    text = "搜索选择",
+                // 标题行：右侧统一关闭按钮。
+                // 本面板没有别的关闭入口（遮罩只吞点击、不关闭），必须在这里给一个可见出口。
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(start = AppSpacing.sp16, top = AppSpacing.sp4, end = AppSpacing.sp16, bottom = AppSpacing.sp16),
-                    color = AppColors.white,
-                    fontSize = AppFontSize.xl,
-                    fontWeight = FontWeight.Bold,
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "搜索选择",
+                        modifier = Modifier.weight(1f),
+                        color = AppColors.white,
+                        fontSize = AppFontSize.xl,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    SheetCloseButton(onClose = onClose)
+                }
                 // 类型标签
                 Text(
                     text = "搜索音乐",

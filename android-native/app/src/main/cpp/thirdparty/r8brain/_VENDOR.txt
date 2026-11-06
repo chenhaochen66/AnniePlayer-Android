@@ -1,0 +1,29 @@
+r8brain-free-src — 高精度采样率转换库（vendored，未修改上游代码）
+=================================================================
+
+来源   : https://github.com/avaneev/r8brain-free-src
+提交   : cb2abb9977efe2471979b380ed95daa56ab4fdb9（shallow clone）
+许可   : MIT —— 见同目录 LICENSE（**不要删除**：MIT 要求在所有副本中保留版权声明）
+作者   : Aleksey Vaneev
+
+用法
+----
+本应用只把它的头文件编进 `libanniedsp.so`，JNI 适配在
+`app/src/main/cpp/native-r8b-resampler.cpp`，Kotlin 侧是
+`core/audio/dsp/NativeR8bResampler.kt` + `PcmResamplerAudioProcessor.kt`。
+
+编译参数（见 `app/src/main/cpp/CMakeLists.txt`）
+- `-std=c++17`（上游要求 ≥ C++11）
+- `-DR8B_EXTFFT=1`：FFT 块零填充加长一倍，延迟换算力（播放场景无所谓延迟）
+- 该 target **不带 `-ffast-math`**：DSP 依赖 IEEE 语义
+- `-fno-exceptions -fno-rtti` 与上游兼容（上游 0 处 throw/catch、0 处 typeid）
+
+未启用的可选后端
+----------------
+`R8B_PFFFT` / `R8B_PFFFT_DOUBLE` / `R8B_IPP` 全为 0，走自带 Ooura FFT（`fft/fft4g.h`，
+头文件内自带实现，无需额外 .c）。对应的 pffft 源码已从本目录删除，需要时可从上游取回。
+
+已裁剪
+------
+`bench/`、`DLL/`、`other/`、`example.cpp`、`README.md`（上游文档）、`fft/pffft*`、`fft/simd/`。
+保留的 13 个头文件即全部编译所需。

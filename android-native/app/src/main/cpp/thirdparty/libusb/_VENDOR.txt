@@ -1,0 +1,11 @@
+libusb 1.0.27 (https://github.com/libusb/libusb/releases/tag/v1.0.27)
+LGPL-2.1（见同目录 COPYING）
+
+只取 Android 需要的子集，源文件清单写在 CMakeLists.txt：
+  libusb/{core,descriptor,io,sync,strerror,hotplug}.c
+  libusb/os/{linux_usbfs,events_posix,threads_posix}.c
+  libusb/libusb.h（公共头）、libusbi.h、version.h、version_nano.h
+  config.h ← 上游 android/config.h 原样
+
+未取 udev / netlink（Android 无 udev，热插拔靠 UsbManager 广播）。
+升级做法：重下 tarball，按上面清单覆盖，再跑一次 :app:assembleDebug。

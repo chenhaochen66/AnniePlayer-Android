@@ -38,6 +38,52 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
+ * JS `decodeURIComponent` 的等价实现 —— **只解 `%XX`，不碰 `+`**。
+ *
+ * 为什么不直接用 `java.net.URLDecoder.decode`：那个按
+ * `application/x-www-form-urlencoded` 语义把 `+` 解码成空格。JS 的
+ * `encodeURIComponent` 反过来会把字面 `+` 编码成 `%2B`，用 `URLDecoder` 虽然当前能还原，
+ * 但它对「上游换成 `encodeURI` / 手工拼串」这种情况会静默出错 ——
+ * 而 md5 一旦错，插件签名就错，报错信息只会是「获取失败」，根本查不到这里。
+ *
+ * 宽容策略：不是合法 `%XX` 的（`%` 后面不足两位、或不是 hex）**原样保留**，
+ * 与浏览器的 `decodeURIComponent` 抛错不同 —— 插件不应该因为一个残缺的 `%` 整体失败。
+ *
+ * 单独放在文件作用域（而不是 [LxPluginHost] 的成员）是为了让纯 JVM 单测直接调用，
+ * 不必初始化宿主 object（那里有 OkHttp / QuickJs 的实例）。
+ */
+internal fun decodeUriComponent(text: String): String {
+    if (!text.contains('%')) return text
+    val out = StringBuilder(text.length)
+    // 连续的 %XX 先攒成字节，再一次性按 UTF-8 还原（中文是 3 个 %XX 组成一个码点）
+    val pending = java.io.ByteArrayOutputStream(8)
+    fun flush() {
+        if (pending.size() > 0) {
+            out.append(String(pending.toByteArray(), Charsets.UTF_8))
+            pending.reset()
+        }
+    }
+    var i = 0
+    while (i < text.length) {
+        val c = text[i]
+        if (c == '%' && i + 2 < text.length) {
+            val hi = Character.digit(text[i + 1], 16)
+            val lo = Character.digit(text[i + 2], 16)
+            if (hi >= 0 && lo >= 0) {
+                pending.write((hi shl 4) or lo)
+                i += 3
+                continue
+            }
+        }
+        flush()
+        out.append(c)
+        i++
+    }
+    flush()
+    return out.toString()
+}
+
+/**
  * 落雪插件宿主：用 QuickJS 执行插件脚本，并把 `globalThis.lx` 完整注入。
  *
  * 设计对齐官方移动端宿主 `user-api-preload.js`（原生桥 + JS 前置脚本），但把原生桥
@@ -89,8 +135,12 @@ object LxPluginHost {
                 instance.installScriptInfo(script, ident)
                 instance.evaluate<Any?>(LX_PRELUDE, "lx-prelude.js")
                 instance.loadPlugin(cacheKey, ident.script, fileName)
-                if (!instance.evaluate<Boolean>("globalThis.__lxHandlerReady()")) {
-                    runCatching { instance.evaluate<Any?>("await new Promise(function(r){ setTimeout(r, 50); })") }
+                // 注册可能是异步的（插件先 await 心跳再 on(request)，如「章鱼音源特供版」）：
+                // 给最多 2s 窗口，每次 100ms 驱动一次 JS 定时器队列
+                var waited = 0
+                while (!instance.evaluate<Boolean>("globalThis.__lxHandlerReady()") && waited < 2_000) {
+                    runCatching { instance.evaluate<Any?>("await new Promise(function(r){ setTimeout(r, 100); })") }
+                    waited += 100
                 }
             }.exceptionOrNull()
             if (state.initedSourcesJson == null) {
@@ -336,7 +386,10 @@ object LxPluginHost {
             Log.d(TAG, payload)
             null
         }
-        "md5" -> md5Hex(payload)
+        // JS 侧用 `encodeURIComponent` 过桥（避免特殊字符在原生字符串边界上出问题），
+        // 所以这里必须先解回来再求摘要 —— 否则含 `|` `@` `#` `/` `&` `=` 或中文的输入
+        // 会被按 `%7C` / `%40` / `%E4%B8%AD` 求 md5，签名全错（见 [decodeUriComponent]）。
+        "md5" -> md5Hex(decodeUriComponent(payload))
         "random" -> secureRandom(payload)
         "aes" -> aesEncrypt(payload)
         "rsa" -> rsaEncrypt(payload)

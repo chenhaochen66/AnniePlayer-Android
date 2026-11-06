@@ -344,8 +344,14 @@ Java_com_annieplayer_annie_1music_kt_core_audio_ffmpeg_NativeFfmpegDecoder_decod
 ) {
     auto *state = reinterpret_cast<FfmpegState *>(handle);
     if (state == nullptr || !loadApi()) return -1;
+    if (input == nullptr || output == nullptr) return -2;
 
     std::lock_guard<std::mutex> guard(state->lock);
+    // 释放进行中的窗口：Kotlin 侧已经保证「先停解码线程再 free」，这里再兜一层，
+    // 绝不把可能已置空的 ctx / packet / frame 交给 av* 系列函数。
+    if (state->ctx == nullptr || state->packet == nullptr || state->frame == nullptr) {
+        return -3;
+    }
     const jsize inputSize = env->GetArrayLength(input);
     const jint capacity = env->GetArrayLength(output);
     if (inputSize <= 0) return 0;
@@ -401,9 +407,10 @@ Java_com_annieplayer_annie_1music_kt_core_audio_ffmpeg_NativeFfmpegDecoder_reset
     auto *state = reinterpret_cast<FfmpegState *>(handle);
     if (state == nullptr || !loadApi()) return;
     std::lock_guard<std::mutex> guard(state->lock);
+    if (state->ctx == nullptr) return;
     g_api.flush(state->ctx);
-    g_api.packet_unref(state->packet);
-    g_api.frame_unref(state->frame);
+    if (state->packet != nullptr) g_api.packet_unref(state->packet);
+    if (state->frame != nullptr) g_api.frame_unref(state->frame);
 }
 
 JNIEXPORT void JNICALL
@@ -413,6 +420,8 @@ Java_com_annieplayer_annie_1music_kt_core_audio_ffmpeg_NativeFfmpegDecoder_relea
     auto *state = reinterpret_cast<FfmpegState *>(handle);
     if (state == nullptr) return;
     if (loadApi()) {
+        // 与 decode / reset 同锁：保证没有线程正在 av* 调用中间被抽掉上下文。
+        std::lock_guard<std::mutex> guard(state->lock);
         if (state->packet != nullptr) g_api.packet_free(&state->packet);
         if (state->frame != nullptr) g_api.frame_free(&state->frame);
         if (state->ctx != nullptr) g_api.free_context(&state->ctx);

@@ -6,8 +6,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.annieplayer.annie_music.kt.core.state.AppRoute
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.KkboxRoute
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
+import com.annieplayer.annie_music.kt.core.state.QobuzRoute
 import com.annieplayer.annie_music.kt.core.state.SearchSelectionViewModel
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.Artist
@@ -15,18 +18,18 @@ import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.searchAlbumByPlatform
 import com.annieplayer.annie_music.kt.data.searchArtistByPlatform
-import com.annieplayer.annie_music.kt.data.sources.AppleStorefront
-import com.annieplayer.annie_music.kt.data.sources.AppleMusicSettings
-import com.annieplayer.annie_music.kt.data.sources.appleMusicStorefront
-import com.annieplayer.annie_music.kt.data.sources.fetchAppleStorefronts
-import com.annieplayer.annie_music.kt.data.sources.searchAppleMusic
-import com.annieplayer.annie_music.kt.data.sources.parseKkboxUrl
-import com.annieplayer.annie_music.kt.data.sources.parseQobuzUrl
-import com.annieplayer.annie_music.kt.data.sources.searchKugouMusic
-import com.annieplayer.annie_music.kt.data.sources.searchMusic
-import com.annieplayer.annie_music.kt.data.sources.searchNeteaseMusic
-import com.annieplayer.annie_music.kt.data.sources.searchQQMusic
-import com.annieplayer.annie_music.kt.data.sources.searchQobuzTracks
+import com.annieplayer.annie_music.kt.data.sources.apple.AppleStorefront
+import com.annieplayer.annie_music.kt.data.sources.apple.AppleMusicSettings
+import com.annieplayer.annie_music.kt.data.sources.apple.appleMusicStorefront
+import com.annieplayer.annie_music.kt.data.sources.apple.fetchAppleStorefronts
+import com.annieplayer.annie_music.kt.data.sources.apple.searchAppleMusic
+import com.annieplayer.annie_music.kt.data.sources.kkbox.parseKkboxUrl
+import com.annieplayer.annie_music.kt.data.sources.qobuz.parseQobuzUrl
+import com.annieplayer.annie_music.kt.data.sources.kugou.searchKugouMusic
+import com.annieplayer.annie_music.kt.data.sources.kuwo.searchMusic
+import com.annieplayer.annie_music.kt.data.sources.netease.searchNeteaseMusic
+import com.annieplayer.annie_music.kt.data.sources.qq.searchQQMusic
+import com.annieplayer.annie_music.kt.data.sources.qobuz.searchQobuzTracks
 import com.annieplayer.annie_music.kt.widgets.SongSearchColumn
 import com.annieplayer.annie_music.kt.widgets.ModeDropdownMode
 import kotlinx.coroutines.CancellationException
@@ -46,6 +49,13 @@ class SearchScreenState(
     private val downloadViewModel: DownloadViewModel,
     private val selectionViewModel: SearchSelectionViewModel,
     private val snackbarHostState: SnackbarHostState,
+    /**
+     * 打开一个子页面：把路由压到全局 `pageStack`。
+     *
+     * 之所以用回调而不是直接持有 `UiViewModel`：这个类只负责「解析出要去哪」，
+     * 往哪压栈是宿主的决定（和 `SongActionsSheet` 只发回调、由 `DetailNavigator` 压栈同一思路）。
+     */
+    private val onOpenRoute: (AppRoute) -> Unit,
 ) {
     // ── 搜索状态 ──
     var mode by mutableStateOf(ModeDropdownMode.song)
@@ -95,14 +105,12 @@ class SearchScreenState(
     var appleCountry by mutableStateOf(appleMusicStorefront)
     var appleStorefronts by mutableStateOf<List<AppleStorefront>>(emptyList())
     var appleStorefrontsLoading by mutableStateOf(false)
+    /** 地区表加载失败的原因（非空时面板显示失败 + 重试，而不是「没有匹配的地区」） */
+    var appleStorefrontsError by mutableStateOf<String?>(null)
 
-    // ── 浮层 / 下载 / 路由等本地状态 ──
+    // ── 浮层 / 下载等本地状态 ──
     var sourcePickerVisible by mutableStateOf(false)
     var saveDirPath by mutableStateOf<String?>(null)
-
-    /** Qobuz / KKBOX 详情页路由参数 `type to id`（对齐 Flutter `context.push('/xxx-detail?…')`） */
-    var qobuzDetailRoute by mutableStateOf<Pair<String, String>?>(null)
-    var kkboxDetailRoute by mutableStateOf<Pair<String, String>?>(null)
 
     // ── 搜索：单平台分发 ──
     suspend fun searchSongs(platform: MusicPlatform, query: String, page: Int): List<Song> =
@@ -117,7 +125,8 @@ class SearchScreenState(
                 offset = (page - 1) * kSearchPageSize,
             )
             MusicPlatform.apple -> searchAppleMusic(query, page = page, limit = kAppleSearchPageSize)
-            MusicPlatform.kkbox -> emptyList()
+            // 本地曲库不参与云端搜索（自己那一页自带筛选框）
+            MusicPlatform.kkbox, MusicPlatform.local -> emptyList()
         }
 
     /** 按当前平台发起单曲搜索（单栏：只有一列） */
@@ -139,20 +148,35 @@ class SearchScreenState(
         }
     }
 
-    /** 加载 Apple Music 地区表（只请求一次）。 */
-    fun loadAppleStorefronts() {
-        if (appleStorefronts.isNotEmpty() || appleStorefrontsLoading) return
+    /** 加载 Apple Music 地区表。
+     *
+     * **触发点有两个**：切到 Apple 平台时（[handleSourceSelect]）、以及地区面板被打开时
+     * （`HomeSearchPanel` 的 `LaunchedEffect` + 胶囊点击）。以前只有前者，于是
+     * 「上次退出时平台就是 Apple」→ 冷启动后从来没人拉这张表 → 国家面板空着；
+     * 而一次网络抖动的失败也没有第二次机会，症状就是「切换平台再切回来就好了」。
+     *
+     * @param force 列表已加载过也重新拉一次（用户点「重试」时）
+     */
+    fun loadAppleStorefronts(force: Boolean = false) {
+        if (appleStorefrontsLoading) return
+        if (!force && appleStorefronts.isNotEmpty()) return
         appleStorefrontsLoading = true
+        appleStorefrontsError = null
         scope.launch {
             val list = try {
                 fetchAppleStorefronts()
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Throwable) {
-                emptyList()
+            } catch (e: Throwable) {
+                // 失败要**说出来**：以前这里吞成空列表，用户只看到「没有匹配的地区」，
+                // 分不清是自己搜错了还是根本没加载到。
+                appleStorefrontsError = e.message?.takeIf { it.isNotBlank() } ?: "地区表加载失败"
+                appleStorefrontsLoading = false
+                return@launch
             }
             appleStorefronts = list
             appleStorefrontsLoading = false
+            if (list.isEmpty()) appleStorefrontsError = "地区表为空"
             if (list.isNotEmpty() && list.none { it.code == appleCountry }) {
                 selectAppleCountry(list.first().code)
             }
@@ -322,8 +346,8 @@ class SearchScreenState(
             scope.launch { snackbarHostState.showSnackbar("未识别到有效 Qobuz 链接") }
             return
         }
-        // 对齐 Dart `context.push('/qobuz-detail?type=&id=')`：进入全屏详情页
-        qobuzDetailRoute = parsed.type to parsed.id
+        // 对齐 Dart `context.push('/qobuz-detail?type=&id=')`：压入全局页面栈
+        onOpenRoute(QobuzRoute(parsed.type, parsed.id))
     }
 
     fun handleKkboxSubmit(text: String) {
@@ -332,8 +356,8 @@ class SearchScreenState(
             scope.launch { snackbarHostState.showSnackbar("未识别到有效 KKBOX 链接") }
             return
         }
-        // 对齐 Dart `context.push('/kkbox-detail?type=&id=')`：进入全屏详情页
-        kkboxDetailRoute = parsed.type to parsed.id
+        // 对齐 Dart `context.push('/kkbox-detail?type=&id=')`：压入全局页面栈
+        onOpenRoute(KkboxRoute(parsed.type, parsed.id))
     }
 
 }

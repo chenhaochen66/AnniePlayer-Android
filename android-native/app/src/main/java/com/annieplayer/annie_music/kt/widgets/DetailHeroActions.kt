@@ -69,7 +69,7 @@ internal fun DetailRoundIconButton(
     enabled: Boolean = true,
     content: @Composable (Color) -> Unit,
 ) {
-    val tint = if (enabled) AppColors.white else AppColors.whiteA25
+    val tint = if (enabled) AppColors.white else AppColors.glyphDim
     val bg = if (enabled) AppColors.whiteA06 else AppColors.whiteA03
     val clickModifier = if (enabled) Modifier.clickableRipple(onClick) else Modifier
 

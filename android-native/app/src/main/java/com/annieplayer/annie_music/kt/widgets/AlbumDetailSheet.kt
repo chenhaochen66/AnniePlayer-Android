@@ -53,14 +53,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.audio.apple.ApplePrefetch
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.routing.BackTarget
-import com.annieplayer.annie_music.kt.core.routing.OverlayVisibilityFlags
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.MoreSettings
+import com.annieplayer.annie_music.kt.core.util.downloadQualityFor
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
 import com.annieplayer.annie_music.kt.features.downloads.DownloadMeta
@@ -68,6 +69,7 @@ import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
 import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
+import com.annieplayer.annie_music.kt.core.state.toOverlayFlags
 import com.annieplayer.annie_music.kt.data.fetchAlbumSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
 import com.annieplayer.annie_music.kt.data.fetchLyric
@@ -142,7 +144,7 @@ val LocalDetailQualityPickerHost = staticCompositionLocalOf<DetailQualityPickerH
  * （[MultiSelectDownloadBar]）。
  *
  * 视觉（液态玻璃链路，与整页版 AlbumDetailScreen 一致）：面板背景 = 封面模糊 + 取色染色氛围
- * （[CoverPaletteBackdrop]）；列表 = 毛玻璃容器（[glassPanel]，圆角 [AppRadius.panel]）；
+ * （[CoverPaletteBackdrop]）；列表**直接铺在氛围背景上**（不套玻璃面板）；
  * 命中当前播放行 = 正在播放动效（[playingRowBackground] + [PlayingIndicator]）；进入时把全局
  * 色板临时切为该专辑色板、退出恢复（[SnapshotPaletteAndRestore]）。
  *
@@ -296,18 +298,24 @@ private fun AlbumDetailContent(
         st.pickerVisible = false
         st.batchDownloading = true
         val selected = st.songs.filter { st.selectedIds.contains(it.id) }
-        for (s in selected) downloadViewModel.addTask(toSong(s), quality)
+        // 面板给的是整批并集：逐首夹到它真实可用的最高档（否则「只有 320k」的歌会被按 flac 请求）
+        for (s in selected) {
+            val song = toSong(s)
+            downloadViewModel.addTask(song, downloadQualityFor(song, quality))
+        }
         var success = 0
         for (i in selected.indices) {
             val s = selected[i]
             val song = toSong(s)
             st.batchProgress = "${i + 1}/${selected.size} ${s.name}"
             downloadViewModel.updateProgress(s.id, 0.0)
+            // 前置预备：把后面两首的清单请求提前打掉（Apple session 串行，只能靠重叠）
+            ApplePrefetch.ahead(selected.drop(i + 1).map { toSong(it) }, quality)
             val ok = downloadOneAndRegister(
                 downloadViewModel = downloadViewModel,
                 playerViewModel = playerViewModel,
                 song = song,
-                quality = quality,
+                quality = downloadQualityFor(song, quality),
                 meta = DownloadMeta(
                     coverUrl = data.cover,
                     album = data.name,
@@ -322,6 +330,7 @@ private fun AlbumDetailContent(
             )
             if (ok) success++
         }
+        ApplePrefetch.drain()
         st.batchDownloading = false
         st.batchProgress = "下载完成 $success/${selected.size}"
         st.selectMode = false
@@ -371,28 +380,15 @@ private fun AlbumDetailContent(
         }
     }
 
-    // 返回手势：多选模式优先退出（子页返回不播滑出）；仅栈顶详情消费，更高层浮层（音质 / 队列 /
-    // 播放页 / ⋮ / 多歌手 / 下载队列）可见时让位（见 OverlayStack.kt）。是否栈顶由宿主传入的 isTop 决定。
-    val higherFlags = OverlayVisibilityFlags(
-        songActions = uiState.songActionsVisible,
-        artistPicker = uiState.artistPickerVisible,
-        qualityPicker = uiState.pickerVisible || st.pickerVisible,
-        queue = uiState.queueVisible,
-        playerOverlay = uiState.playerOverlayVisible,
-        detail = true,
-        downloadQueue = uiState.downloadQueueVisible,
-        menuDrawer = uiState.drawerVisible,
-    )
-    val detailIsTop = isTop &&
-        !uiState.downloadQueueVisible &&
-        handleBack(higherFlags) == BackTarget.DETAIL
-    BackHandler(enabled = st.selectMode || detailIsTop) {
-        if (st.selectMode) {
-            toggleSelectMode()
-        } else {
-            requestClose()
-        }
-    }
+    // 把「带动画出栈」注册给返回裁决（AppShell 收到返回时优先走这里，而不是直接 popRoute）
+    com.annieplayer.annie_music.kt.core.routing.RememberPageClose { requestClose() }
+    // 返回手势：本页**只管多选退出**这一层。
+    // 「出栈」由 `AppShell` 的全局 PAGE 处理器统一做 —— 页面不再需要知道有没有更高层浮层。
+    //
+    // **必须带 `isTop`**：被压在别的详情页下面时，本 handler 若仍启用，就会在
+    // OnBackPressedDispatcher 的逆序派发里抢先吃掉返回（上层页面往往没有启用的 BackHandler），
+    // 表现就是「返回键毫无反应」——它只把下层的多选退掉了。
+    BackHandler(enabled = isTop && st.selectMode) { toggleSelectMode() }
 
     Box(modifier = modifier.fillMaxSize()) {
         // ── 遮罩（Flutter: Color(0x80000000)，点击不关闭） ──
@@ -458,9 +454,14 @@ private fun AlbumDetailContent(
         if (pickerHost == null) {
             pickerPanel()
         } else {
+            // **可见性必须在组合期读一次**。`SideEffect` 块里的读取不建立组合依赖：
+            // 只在块里读的话，`pickerVisible` 从 false 变 true 不会让本页重组 →
+            // `SideEffect` 不重跑 → 槽位永远不写 → 第一次点下载什么都不弹，
+            // 要等下一次无关重组（例如退出多选）才把面板「迟到」地挂上去。
+            val pickerOpen = st.pickerVisible
             // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
             SideEffect {
-                if (st.pickerVisible) pickerHost.show(pickerOwner, pickerPanel)
+                if (pickerOpen) pickerHost.show(pickerOwner, pickerPanel)
             }
             DisposableEffect(pickerOwner) {
                 onDispose { pickerHost.clear(pickerOwner) }
@@ -569,12 +570,11 @@ private fun AlbumDetailBody(
         }
 
         else -> {
-            // 毛玻璃列表容器：整块列表（含头部）压在封面取色背景之上
+            // 列表直接铺在封面取色背景上（不套玻璃面板）
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp8)
-                    .glassPanel(shape = RoundedCornerShape(AppRadius.panel)),
+                    .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp8),
             ) {
                 val listState = rememberLazyListState()
                 LazyColumn(

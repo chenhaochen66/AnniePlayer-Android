@@ -78,6 +78,20 @@ fun TuningSheet(visible: Boolean, onClose: () -> Unit) {
             EngineTabs(engine, onPick = { MoreSettings.setTuningEngine(it) })
             Spacer(Modifier.height(AppSpacing.sp16))
             when (engine) {
+                // 「无」不是"一个面板"，是"没有面板"。这里只放一句说明 ——
+                // 不摆任何滑块，免得让人以为"零值也算调音"。
+                TuningEngine.none -> Text(
+                    text = "当前不做任何 DSP：不加滤波器、不加前级、不限幅。" +
+                        "三个引擎的数值都保留着，切回去就恢复。",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(AppColors.whiteA05, RoundedCornerShape(12.dp))
+                        .padding(AppSpacing.sp16),
+                    color = AppColors.textSecondary,
+                    fontSize = AppFontSize.size13,
+                    lineHeight = AppFontSize.size20,
+                )
+
                 TuningEngine.graphic -> GraphicPanel(
                     gains = gains,
                     amp = amp,

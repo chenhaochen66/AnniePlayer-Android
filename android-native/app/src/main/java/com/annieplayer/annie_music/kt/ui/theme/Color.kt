@@ -56,7 +56,17 @@ object AppColors {
 
     val textPrimary = Color(0xFFFFFFFF)
     val textSecondary = Color(0xB3FFFFFF) // 0.7
-    val textTertiary = Color(0x59FFFFFF)  // 0.35
+
+    /**
+     * 三级文字。**值已从 0.35 提到 0.7**（与 [textSecondary] 同档）。
+     *
+     * 全 App 的文字淡度下限 = 「本地曲库 → 全部歌曲」行里歌手那一档（0.7）。
+     * 比它更淡的字在深色底 + 小字号下读不清，所以这一档统一拉平。
+     * 需要「更弱」的表达时降字号，不要降透明度。
+     */
+    val textTertiary = Color(0xB3FFFFFF)  // 0.7（原 0.35）
+
+    /** 禁用态文字。**刻意保留 0.2**：提亮后「置灰 = 不可点」就看不出来了。 */
     val textDisabled = Color(0x33FFFFFF)  // 0.2
 
     // ---- 状态色（Flutter: AppColors.success/warning/danger）----
@@ -83,30 +93,53 @@ object AppColors {
     val black = Color(0xFF000000)
 
     // ---- 白色标尺（Flutter: Colors.whiteXX）----
+    //
+    // 【文字淡度已统一到 0.7】下面 white60 / white54 / white38 / white30 / white24 原值分别是
+    // 0.6 / 0.54 / 0.38 / 0.30 / 0.24，全部提到 0.7（与 textSecondary 同档）—— 这些 token
+    // 当初是按 Flutter 的 Colors 标尺抄的，落到本 App 就变成「同一层级出现五六种淡度」。
+    // 现在只保留一个文字下限：0.7。更淡的只留给 [textDisabled]（禁用态）和图形。
+    //
+    // 图标不吃这一档：图形借用文字色时会跟着变亮，所以新增 [glyphStrong] / [glyphMid] /
+    // [glyphDim] 三个图形专用档位，tint 一律走那三个。
 
-    /** Colors.white70（0.7） */
+    /** Colors.white70（0.7）—— 文字下限，与 [textSecondary] 同值 */
     val white70 = Color(0xB3FFFFFF)
 
-    /** Colors.white60（0.6） */
-    val white60 = Color(0x99FFFFFF)
+    /** Colors.white60 —— 文字：已提到 0.7（原 0.6） */
+    val white60 = Color(0xB3FFFFFF)
 
-    /** Colors.white54（0.54） */
-    val white54 = Color(0x8AFFFFFF)
+    /** Colors.white54 —— 文字：已提到 0.7（原 0.54）；图形用 [glyphStrong] */
+    val white54 = Color(0xB3FFFFFF)
 
-    /** Colors.white38（0.38） */
-    val white38 = Color(0x61FFFFFF)
+    /** Colors.white38 —— 文字：已提到 0.7（原 0.38）；图形用 [glyphMid] */
+    val white38 = Color(0xB3FFFFFF)
 
-    /** Colors.white30（0.30，等同 hint 文本） */
-    val white30 = Color(0x4DFFFFFF)
+    /** Colors.white30（原 0.30，等同 hint 文本）—— 文字：已提到 0.7；图形用 [glyphDim] */
+    val white30 = Color(0xB3FFFFFF)
 
-    /** Colors.white24（0.24） */
-    val white24 = Color(0x3DFFFFFF)
+    /** Colors.white24 —— 文字：已提到 0.7（原 0.24）；图形用 [glyphDim] */
+    val white24 = Color(0xB3FFFFFF)
 
-    /** Colors.white12（0.12） */
+    /** Colors.white12（0.12）—— 背景 / 骨架，不是文字，保持原值 */
     val white12 = Color(0x1FFFFFFF)
 
-    /** Colors.white10（0.10，等同骨架块 _blockColor） */
+    /** Colors.white10（0.10，等同骨架块 _blockColor）—— 背景，保持原值 */
     val white10 = Color(0x1AFFFFFF)
+
+    // ---- 图形专用白色（与文字色解耦）----
+    //
+    // 图标 / 箭头 / 关闭按钮 / 装饰线不是「字体」，文字统一到 0.7 时它们不该跟着变亮。
+    // 三档接住原来借用 white60/54/50/45/40/38（→ [glyphStrong] / [glyphMid]）与
+    // white30/25/24/20（→ [glyphDim]）的图形。
+
+    /** 图形：强（0.54，原 white54 / white60 的图形用法） */
+    val glyphStrong = Color(0x8AFFFFFF)
+
+    /** 图形：中（0.4，原 whiteA40 / whiteA45 / whiteA50 / white38 的图形用法） */
+    val glyphMid = Color(0x66FFFFFF)
+
+    /** 图形：弱（0.24，原 white24 / whiteA25 / whiteA20 / white30 的图形用法） */
+    val glyphDim = Color(0x3DFFFFFF)
 
     // ---- 白色 alpha（内联 Color(0x..FFFFFF) 归并）----
 
@@ -122,23 +155,23 @@ object AppColors {
     /** 面板边框（0.059，Flutter: _panelBorder） */
     val whiteA06 = Color(0x0FFFFFFF)
 
-    /** 0.149（Flutter: _clearIconColor） */
+    /** 0.149（Flutter: _clearIconColor）—— 占位符号专用，**保持原值**：空封面上的音符等 */
     val whiteA15 = Color(0x26FFFFFF)
 
-    /** 0.2（Flutter: _metaWeakColor，等同 textDisabled） */
-    val whiteA20 = Color(0x33FFFFFF)
+    /** 0.2（原 Flutter: _metaWeakColor）—— 文字：已提到 0.7；图形用 [glyphDim] */
+    val whiteA20 = Color(0xB3FFFFFF)
 
-    /** 0.251（分隔边框等） */
-    val whiteA25 = Color(0x40FFFFFF)
+    /** 0.251（原分隔边框等）—— 文字：已提到 0.7；图形用 [glyphDim] */
+    val whiteA25 = Color(0xB3FFFFFF)
 
-    /** 0.4（Flutter: _artistColor / 弱化文本） */
-    val whiteA40 = Color(0x66FFFFFF)
+    /** 0.4（原 Flutter: _artistColor / 弱化文本）—— 文字：已提到 0.7；图形用 [glyphMid] */
+    val whiteA40 = Color(0xB3FFFFFF)
 
-    /** 0.451（次级弱化文本） */
-    val whiteA45 = Color(0x73FFFFFF)
+    /** 0.451（原次级弱化文本）—— 文字：已提到 0.7；图形用 [glyphMid] */
+    val whiteA45 = Color(0xB3FFFFFF)
 
-    /** 0.5（Flutter: _downloadIconColor / searchIconColor） */
-    val whiteA50 = Color(0x80FFFFFF)
+    /** 0.5（原 Flutter: _downloadIconColor / searchIconColor）—— 文字：已提到 0.7；图形用 [glyphMid] */
+    val whiteA50 = Color(0xB3FFFFFF)
 
     // ---- 黑色遮罩层（barrier）----
 
@@ -324,6 +357,10 @@ data class ColorPalette(
  * 对应 Flutter `lib/core/utils/color_extractor.dart`（Flutter 工程已从本分支移除）的
  * `extractPaletteFromCover`，也对应 RN 版 `useColorExtractor.ts`。
  *
+ * > 注意：实现见 `core/util/PlayerCoverColorExtractor.kt` 的顶层函数
+ * > `extractPlayerCoverPalette` —— **全站共用**（播放页取 4×4 网格，
+ * > 其它页面取 primary / secondary / accent 三个锚点）。
+ *
  * ## 输入
  * - [coverSource]：封面地址，可以是
  *   - 本地绝对路径，
@@ -348,6 +385,6 @@ data class ColorPalette(
  *   Vibrant → Muted → DarkVibrant → DarkMuted，仍无则取 `#8B5CF6`。
  *
  * > 说明：本文件只保留上述契约文档；**取色算法的实际实现已迁移至
- * > `core/util/ColorExtractor.kt` 的顶层函数 `extractPaletteFromCover`**，
- * > 因此这里不再保留空接口，避免与真实实现重复。
+ * > `core/util/PlayerCoverColorExtractor.kt` 的顶层函数 `extractPlayerCoverPalette`**
+ * > （播放页专用），因此这里不再保留空接口，避免与真实实现重复。
  */

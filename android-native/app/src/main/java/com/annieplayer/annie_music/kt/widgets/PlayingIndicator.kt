@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,6 +29,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppEasing
@@ -63,13 +67,16 @@ private const val PlayingRowTintAlpha = 0.08f
  * - 系统动画缩放为 0 时静止在中间态（见 [rememberSystemAnimationsEnabled]）。
  * - 纯装饰元素：不产生无障碍语义节点（语义由所在行的文本 / 点击承载）。
  *
+ * 缩放值以 `State` 形式一路传到 `graphicsLayer`，**组合期不读**：
+ * 读在组合期的话，这个无限动画每一帧都会让所在行重组一次。
+ *
  * @param tint 竖条颜色（通常传 `Annie.palette.primary`）。
  */
 @Composable
 fun PlayingIndicator(tint: Color, modifier: Modifier = Modifier) {
     val animationsEnabled = rememberSystemAnimationsEnabled()
 
-    val barScales: List<Float> = if (animationsEnabled) {
+    val barScales: List<State<Float>> = if (animationsEnabled) {
         val transition = rememberInfiniteTransition(label = "playingIndicator")
         listOf(
             transition.playingBarScale(delayMillis = 0, label = "playingBar0"),
@@ -83,7 +90,8 @@ fun PlayingIndicator(tint: Color, modifier: Modifier = Modifier) {
             ),
         )
     } else {
-        List(PlayingBarCount) { PlayingBarStillScale }
+        val still = remember { mutableStateOf(PlayingBarStillScale) }
+        List(PlayingBarCount) { still }
     }
 
     Row(
@@ -97,7 +105,7 @@ fun PlayingIndicator(tint: Color, modifier: Modifier = Modifier) {
                     .width(AppSize.playingBarWidth)
                     .height(AppSize.playingBarMaxHeight)
                     .graphicsLayer {
-                        scaleY = barScale
+                        scaleY = barScale.value
                         // 以底边为基准伸缩，三条竖条像立在同一条基线上
                         transformOrigin = TransformOrigin(0.5f, 1f)
                     }
@@ -109,8 +117,8 @@ fun PlayingIndicator(tint: Color, modifier: Modifier = Modifier) {
 
 /** 单条竖条的无限往复伸缩（最短 ⇄ 最长，Reverse 乒乓）。 */
 @Composable
-private fun InfiniteTransition.playingBarScale(delayMillis: Int, label: String): Float {
-    val scale by animateFloat(
+private fun InfiniteTransition.playingBarScale(delayMillis: Int, label: String): State<Float> =
+    animateFloat(
         initialValue = PlayingBarMinScale,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -123,8 +131,6 @@ private fun InfiniteTransition.playingBarScale(delayMillis: Int, label: String):
         ),
         label = label,
     )
-    return scale
-}
 
 /**
  * 「正在播放」行背景：`primary@8%` 圆角底 + 左侧 3dp 主色圆角条。
@@ -134,20 +140,27 @@ private fun InfiniteTransition.playingBarScale(delayMillis: Int, label: String):
  * `fillMaxHeight()`，其主轴无界会塌成 0）。
  *
  * @param tint 主色（通常传 `Annie.palette.primary`）。
+ * @param startInset 左侧内缩：让左侧那条 3dp 主色竖条**不与行左边界齐平**，而是从封面
+ *   所在的位置开始。默认 0（贴边，老行为）；带行内留白的列表应传该行的左留白值 ——
+ *   否则竖条会比封面突出一截，视觉上像「条子戳到封面左边外面去了」。
  */
 @Composable
-fun Modifier.playingRowBackground(tint: Color): Modifier = this.drawBehind {
+fun Modifier.playingRowBackground(tint: Color, startInset: Dp = 0.dp): Modifier = this.drawBehind {
     val cornerPx = AppRadius.r8.toPx()
-    // primary @8% 圆角底
+    val insetPx = startInset.toPx()
+    val bodyWidth = (size.width - insetPx).coerceAtLeast(0f)
+    // primary @8% 圆角底（左侧让出 inset）
     drawRoundRect(
         color = tint.copy(alpha = PlayingRowTintAlpha),
+        topLeft = Offset(insetPx, 0f),
+        size = Size(bodyWidth, size.height),
         cornerRadius = CornerRadius(cornerPx, cornerPx),
     )
-    // 左侧 3dp 主色圆角条（全高、两端圆头）
+    // 左侧 3dp 主色圆角条（全高、两端圆头），起点跟着 inset 走
     val barWidthPx = AppSize.playingRowBarWidth.toPx()
     drawRoundRect(
         color = tint,
-        topLeft = Offset.Zero,
+        topLeft = Offset(insetPx, 0f),
         size = Size(barWidthPx, size.height),
         cornerRadius = CornerRadius(barWidthPx / 2f, barWidthPx / 2f),
     )

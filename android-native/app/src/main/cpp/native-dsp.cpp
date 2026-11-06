@@ -38,11 +38,30 @@ struct TuningState {
     std::mutex mutex;
 };
 
+/**
+ * `tanh` 的高精度有理近似（Pade [5/4]）。
+ *
+ * 原实现直接调 `std::tanh`：在 A53 上那是一条 50~100 周期的函数调用，而这个软限幅
+ * 是**逐样本**跑的（44.1k × 2ch = 8.8 万次/秒；DSD 抽到 176.4k 时是 35 万次/秒）。
+ *
+ * 精度：|x| ≤ 3 时与 std::tanh 的差 < 5e-4，代入 `0.7 + 0.3·tanh(...)` 后最大偏差
+ * 约 1.5e-4（≈ −76 dBFS）—— 低于 24bit PCM 的量化台阶，听不出差别。
+ * 超出 ±8 直接夹到 ±1（此时真值已是 0.99999999）。
+ */
+inline float fastTanh(float x) {
+    if (x > 8.0f) return 1.0f;
+    if (x < -8.0f) return -1.0f;
+    const float x2 = x * x;
+    const float x4 = x2 * x2;
+    const float t = x * (x4 + 105.0f * x2 + 945.0f) / (15.0f * x4 + 420.0f * x2 + 945.0f);
+    return t > 1.0f ? 1.0f : (t < -1.0f ? -1.0f : t);
+}
+
 inline float softLimit(float x) {
     float ax = std::fabs(x);
     if (ax <= 0.7f) return x;
     float sign = x < 0.0f ? -1.0f : 1.0f;
-    return sign * (0.7f + 0.3f * std::tanh((ax - 0.7f) / 0.3f));
+    return sign * (0.7f + 0.3f * fastTanh((ax - 0.7f) / 0.3f));
 }
 
 inline int readSample(const uint8_t* p, int encoding) {
@@ -137,6 +156,67 @@ void recalcBiquad(Biquad& q, int type, double freq, double qv, double gainDb, do
     q.enabled = true;
 }
 
+/**
+ * 核心处理：逐 band 双二阶 → 预放大 → 可选软限幅。**原地**改 `buffer`。
+ *
+ * 四个 JNI 入口（direct buffer / byte array / float array）共用这一份，
+ * 所以性能改动只需要写一次。
+ *
+ * 相比原先内联在四个入口里的那四份拷贝，这里做了三件事：
+ *
+ * 1. **不再每样本算 `i % channels` 与 `band * channels + channel`。**
+ *    除数 `channels` 是运行期值（不是编译期常量），ARM 上每次都是硬件 `sdiv`
+ *    （约 10~20 周期），而它原本在**每个 band × 每个样本**都要算一次。现在改成
+ *    「按声道外循环、样本步长 = channels」，状态放在局部变量里，滤波完只写回两次。
+ * 2. `std::tanh` → [fastTanh] 有理近似（见那里的精度说明）。
+ * 3. limiter 的 `if` 提到循环外，不再每样本判一次分支。
+ *
+ * 调用方必须先拿到 `state->mutex`。
+ */
+void applyBandsAndGain(TuningState& st, float* buffer, int total) {
+    const int channels = st.channels;
+    const int bandCount = static_cast<int>(st.bands.size());
+
+    for (int band = 0; band < bandCount; ++band) {
+        const Biquad& bq = st.bands[band];
+        if (!bq.enabled) continue;
+
+        // 系数与状态都进局部：内层循环不再解引用 vector
+        const float b0 = bq.b0;
+        const float b1 = bq.b1;
+        const float b2 = bq.b2;
+        const float a1 = bq.a1;
+        const float a2 = bq.a2;
+        float* z1 = st.z1.data() + band * channels;
+        float* z2 = st.z2.data() + band * channels;
+
+        for (int ch = 0; ch < channels; ++ch) {
+            float s1 = z1[ch];
+            float s2 = z2[ch];
+            for (int i = ch; i < total; i += channels) {
+                const float x = buffer[i];
+                const float y = b0 * x + s1;
+                s1 = b1 * x - a1 * y + s2;
+                s2 = b2 * x - a2 * y;
+                buffer[i] = y;
+            }
+            z1[ch] = s1;
+            z2[ch] = s2;
+        }
+    }
+
+    const float gain = st.preamp;
+    if (st.limiter) {
+        for (int i = 0; i < total; ++i) {
+            buffer[i] = softLimit(buffer[i] * gain);
+        }
+    } else {
+        for (int i = 0; i < total; ++i) {
+            buffer[i] *= gain;
+        }
+    }
+}
+
 }  // namespace
 
 extern "C" {
@@ -199,28 +279,7 @@ Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeDsp_process(
         buffer[i] = static_cast<float>(readSample(in + i * sampleBytes, encoding)) / 8388608.0f;
     }
 
-    const int bandCount = static_cast<int>(state->bands.size());
-    for (int band = 0; band < bandCount; ++band) {
-        const Biquad& bq = state->bands[band];
-        if (!bq.enabled) continue;
-        for (int i = 0; i < total; ++i) {
-            const int channel = i % channels;
-            const int idx = band * channels + channel;
-            const float x = buffer[i];
-            const float y = bq.b0 * x + state->z1[idx];
-            state->z1[idx] = bq.b1 * x - bq.a1 * y + state->z2[idx];
-            state->z2[idx] = bq.b2 * x - bq.a2 * y;
-            buffer[i] = y;
-        }
-    }
-
-    const float gain = state->preamp;
-    const bool limiter = state->limiter;
-    for (int i = 0; i < total; ++i) {
-        float v = buffer[i] * gain;
-        if (limiter) v = softLimit(v);
-        buffer[i] = v;
-    }
+    applyBandsAndGain(*state, buffer.data(), total);
 
     for (int i = 0; i < total; ++i) {
         writeSample(out + i * sampleBytes, encoding, buffer[i]);
@@ -236,29 +295,7 @@ Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeDsp_processFloat(
     if (buf == nullptr) return;
 
     std::lock_guard<std::mutex> lock(state->mutex);
-    const int channels = state->channels;
-    const int bandCount = static_cast<int>(state->bands.size());
-    for (int band = 0; band < bandCount; ++band) {
-        const Biquad& bq = state->bands[band];
-        if (!bq.enabled) continue;
-        for (int i = 0; i < total; ++i) {
-            const int channel = i % channels;
-            const int idx = band * channels + channel;
-            const float x = buf[i];
-            const float y = bq.b0 * x + state->z1[idx];
-            state->z1[idx] = bq.b1 * x - bq.a1 * y + state->z2[idx];
-            state->z2[idx] = bq.b2 * x - bq.a2 * y;
-            buf[i] = y;
-        }
-    }
-
-    const float gain = state->preamp;
-    const bool limiter = state->limiter;
-    for (int i = 0; i < total; ++i) {
-        float v = buf[i] * gain;
-        if (limiter) v = softLimit(v);
-        buf[i] = v;
-    }
+    applyBandsAndGain(*state, buf, total);
 
     env->ReleaseFloatArrayElements(samples, buf, 0);
 }
@@ -287,28 +324,7 @@ Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeDsp_processBuffer(
         buffer[i] = static_cast<float>(readSample(in + i * sampleBytes, encoding)) / 8388608.0f;
     }
 
-    const int bandCount = static_cast<int>(state->bands.size());
-    for (int band = 0; band < bandCount; ++band) {
-        const Biquad& bq = state->bands[band];
-        if (!bq.enabled) continue;
-        for (int i = 0; i < total; ++i) {
-            const int channel = i % channels;
-            const int idx = band * channels + channel;
-            const float x = buffer[i];
-            const float y = bq.b0 * x + state->z1[idx];
-            state->z1[idx] = bq.b1 * x - bq.a1 * y + state->z2[idx];
-            state->z2[idx] = bq.b2 * x - bq.a2 * y;
-            buffer[i] = y;
-        }
-    }
-
-    const float gain = state->preamp;
-    const bool limiter = state->limiter;
-    for (int i = 0; i < total; ++i) {
-        float v = buffer[i] * gain;
-        if (limiter) v = softLimit(v);
-        buffer[i] = v;
-    }
+    applyBandsAndGain(*state, buffer.data(), total);
 
     for (int i = 0; i < total; ++i) {
         writeSample(outBase + i * sampleBytes, encoding, buffer[i]);
@@ -323,8 +339,7 @@ Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeDsp_processBytes(
     auto* state = reinterpret_cast<TuningState*>(handle);
     if (state == nullptr) return 0;
     jbyte* in = env->GetByteArrayElements(input, nullptr);
-    jbyte* out = env->GetByteArrayElements(output, nullptr);
-    if (in == nullptr || out == nullptr) {
+    jbyte* out = env->GetByteArrayElements(output, nullptr);    if (in == nullptr || out == nullptr) {
         if (in != nullptr) env->ReleaseByteArrayElements(input, in, JNI_ABORT);
         if (out != nullptr) env->ReleaseByteArrayElements(output, out, JNI_ABORT);
         return 0;
@@ -344,28 +359,7 @@ Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeDsp_processBytes(
         buffer[i] = static_cast<float>(readSample(inBytes + i * sampleBytes, encoding)) / 8388608.0f;
     }
 
-    const int bandCount = static_cast<int>(state->bands.size());
-    for (int band = 0; band < bandCount; ++band) {
-        const Biquad& bq = state->bands[band];
-        if (!bq.enabled) continue;
-        for (int i = 0; i < total; ++i) {
-            const int channel = i % channels;
-            const int idx = band * channels + channel;
-            const float x = buffer[i];
-            const float y = bq.b0 * x + state->z1[idx];
-            state->z1[idx] = bq.b1 * x - bq.a1 * y + state->z2[idx];
-            state->z2[idx] = bq.b2 * x - bq.a2 * y;
-            buffer[i] = y;
-        }
-    }
-
-    const float gain = state->preamp;
-    const bool limiter = state->limiter;
-    for (int i = 0; i < total; ++i) {
-        float v = buffer[i] * gain;
-        if (limiter) v = softLimit(v);
-        buffer[i] = v;
-    }
+    applyBandsAndGain(*state, buffer.data(), total);
 
     for (int i = 0; i < total; ++i) {
         writeSample(outBytes + i * sampleBytes, encoding, buffer[i]);

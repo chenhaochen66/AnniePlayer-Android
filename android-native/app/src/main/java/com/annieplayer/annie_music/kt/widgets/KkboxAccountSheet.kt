@@ -24,11 +24,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
@@ -49,21 +46,17 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
 import com.annieplayer.annie_music.kt.data.model.KkboxAccount
 import com.annieplayer.annie_music.kt.data.model.KkboxSession
-import com.annieplayer.annie_music.kt.data.sources.login
+import com.annieplayer.annie_music.kt.data.sources.kkbox.login
 import com.annieplayer.annie_music.kt.ui.theme.AppBorder
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
@@ -100,48 +93,42 @@ fun KkboxAccountSheet(
     val scope = rememberCoroutineScope()
     val accounts by kkboxViewModel.state.collectAsState()
 
-    var nameText by remember { mutableStateOf("") }
-    var emailText by remember { mutableStateOf("") }
-    var passwordText by remember { mutableStateOf("") }
-    var showAdd by remember { mutableStateOf(false) }
-    var editingId by remember { mutableStateOf<String?>(null) }
-    var showPassword by remember { mutableStateOf(false) }
     var loginLoadingId by remember { mutableStateOf<String?>(null) }
     var dialog by remember { mutableStateOf<KkboxAccountSheetDialog?>(null) }
     var pendingRemove by remember { mutableStateOf<KkboxAccount?>(null) }
 
-    fun resetForm() {
-        nameText = ""
-        emailText = ""
-        passwordText = ""
-        showAdd = false
-        editingId = null
-        showPassword = false
+    // 新增 / 编辑走弹窗（与 Qobuz Token、Apple Wrapper 地址共用 `MultiFieldDialog`）
+    var editorVisible by remember { mutableStateOf(false) }
+    var editorTarget by remember { mutableStateOf<KkboxAccount?>(null) }
+    var editorError by remember { mutableStateOf<String?>(null) }
+
+    fun openEditor(target: KkboxAccount?) {
+        editorTarget = target
+        editorError = null
+        editorVisible = true
     }
 
-    fun handleSave() {
-        val name = nameText.trim()
-        val email = emailText.trim()
-        val password = passwordText
+    /** @return true = 已保存；false = 校验不过（弹窗保持打开） */
+    fun handleSave(values: List<String>): Boolean {
+        val name = values.getOrElse(0) { "" }.trim()
+        val email = values.getOrElse(1) { "" }.trim()
+        val password = values.getOrElse(2) { "" }
         if (name.isEmpty() || email.isEmpty() || password.isEmpty()) {
-            dialog = KkboxAccountSheetDialog("提示", "请填写名称、邮箱和密码")
-            return
+            editorError = "请填写名称、邮箱和密码"
+            return false
         }
-        val editing = editingId
+        val editing = editorTarget
         if (editing != null) {
-            val old = accounts.firstOrNull { it.id == editing }
-            if (old != null) {
-                kkboxViewModel.updateAccount(
-                    KkboxAccount(
-                        id = old.id,
-                        name = name,
-                        email = email,
-                        password = password,
-                        session = old.session,
-                        isActive = old.isActive,
-                    ),
-                )
-            }
+            kkboxViewModel.updateAccount(
+                KkboxAccount(
+                    id = editing.id,
+                    name = name,
+                    email = email,
+                    password = password,
+                    session = editing.session,
+                    isActive = editing.isActive,
+                ),
+            )
         } else {
             kkboxViewModel.addAccount(
                 KkboxAccount(
@@ -153,15 +140,9 @@ fun KkboxAccountSheet(
                 ),
             )
         }
-        resetForm()
-    }
-
-    fun handleEdit(item: KkboxAccount) {
-        editingId = item.id
-        nameText = item.name
-        emailText = item.email
-        passwordText = item.password
-        showAdd = true
+        editorVisible = false
+        editorTarget = null
+        return true
     }
 
     fun handleLogin(item: KkboxAccount) {
@@ -210,7 +191,8 @@ fun KkboxAccountSheet(
     // 因此完全隐藏时**整个浮层不参与组合**，等价 Flutter 的 IgnorePointer(ignoring: !visible)。
     if (!visible && scrimAlpha == 0f) return
     Box(modifier = modifier.fillMaxSize()) {
-        // 遮罩（隐藏时不启用 -> 不吃触摸）
+        // 遮罩：只吞点击，**不关闭**（退出只走返回手势 / 标题栏「关闭」）
+        // `clickable` 必须保留：吃掉触摸、阻止点击穿透到下层页面。
         val scrimInteraction = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
@@ -220,7 +202,7 @@ fun KkboxAccountSheet(
                     enabled = visible,
                     interactionSource = scrimInteraction,
                     indication = null,
-                    onClick = onClose,
+                    onClick = {},
                 )
                 .background(AppColors.scrim50),
         )
@@ -242,30 +224,9 @@ fun KkboxAccountSheet(
                 .imePadding(),
         ) {
             KkboxAccountSheetHeader(
-                showAdd = showAdd,
                 onClose = onClose,
-                onToggleAdd = {
-                    if (editingId != null) {
-                        resetForm()
-                    } else {
-                        showAdd = !showAdd
-                    }
-                },
+                onAdd = { openEditor(null) },
             )
-            if (showAdd) {
-                KkboxAccountSheetForm(
-                    name = nameText,
-                    onNameChange = { nameText = it },
-                    email = emailText,
-                    onEmailChange = { emailText = it },
-                    password = passwordText,
-                    onPasswordChange = { passwordText = it },
-                    showPassword = showPassword,
-                    onTogglePassword = { showPassword = !showPassword },
-                    editing = editingId != null,
-                    onSave = { handleSave() },
-                )
-            }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 if (accounts.isEmpty()) {
                     KkboxAccountSheetEmpty()
@@ -280,7 +241,7 @@ fun KkboxAccountSheet(
                                 loginLoading = loginLoadingId == item.id,
                                 onLogin = { handleLogin(item) },
                                 onSelect = { kkboxViewModel.setActive(item.id) },
-                                onEdit = { handleEdit(item) },
+                                onEdit = { openEditor(item) },
                                 onRemove = { pendingRemove = item },
                             )
                         }
@@ -288,6 +249,38 @@ fun KkboxAccountSheet(
                 }
             }
         }
+
+        // 新增 / 编辑弹窗（与 Qobuz Token、Apple Wrapper 地址共用同一个组件）
+        MultiFieldDialog(
+            visible = editorVisible,
+            title = if (editorTarget != null) "编辑 KKBOX 账号" else "添加 KKBOX 账号",
+            fields = listOf(
+                MultiFieldDialogField(
+                    hint = "名称（如：主账号）",
+                    initial = editorTarget?.name.orEmpty(),
+                ),
+                MultiFieldDialogField(
+                    hint = "邮箱",
+                    initial = editorTarget?.email.orEmpty(),
+                    keyboardType = KeyboardType.Email,
+                ),
+                MultiFieldDialogField(
+                    hint = "密码",
+                    initial = editorTarget?.password.orEmpty(),
+                    password = true,
+                    imeAction = ImeAction.Done,
+                ),
+            ),
+            error = editorError,
+            tip = "保存后需要点条目上的登录按钮完成 KKBOX 登录",
+            confirmLabel = if (editorTarget != null) "更新" else "保存",
+            onDismiss = {
+                editorVisible = false
+                editorTarget = null
+                editorError = null
+            },
+            onConfirm = { values -> handleSave(values) },
+        )
 
         // 提示弹窗（对齐 Dart `_alert`）
         dialog?.let { d ->
@@ -357,9 +350,8 @@ private fun kkboxAccountSheetErrorText(e: Throwable): String {
 /** 头部：返回 + 标题 + 新增 / 关闭切换（对齐 Dart `_buildHeader`） */
 @Composable
 private fun KkboxAccountSheetHeader(
-    showAdd: Boolean,
     onClose: () -> Unit,
-    onToggleAdd: () -> Unit,
+    onAdd: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -372,13 +364,8 @@ private fun KkboxAccountSheetHeader(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .clickableNoRipple(onClose)
-                .padding(AppSpacing.sp4),
-        ) {
-            DetailChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
-        }
+        // 统一的返回按钮（见 `SheetBackButton`）
+        SheetBackButton(onClose = onClose)
         Spacer(modifier = Modifier.size(AppSpacing.sp8))
         Text(
             text = "KKBOX 账号管理",
@@ -389,144 +376,15 @@ private fun KkboxAccountSheetHeader(
         )
         Box(
             modifier = Modifier
-                .clickableNoRipple(onToggleAdd)
+                .clickableNoRipple(onAdd)
                 .padding(AppSpacing.sp4),
         ) {
             Icon(
-                imageVector = if (showAdd) Icons.Default.Close else Icons.Default.Add,
-                contentDescription = null,
+                imageVector = Icons.Default.Add,
+                contentDescription = "添加 KKBOX 账号",
                 tint = AppColors.primary,
                 modifier = Modifier.size(AppIconSize.icon24),
             )
-        }
-    }
-}
-
-/** 表单：名称 + 邮箱 + 密码 + 保存 / 更新（对齐 Dart `_buildForm`） */
-@Composable
-private fun KkboxAccountSheetForm(
-    name: String,
-    onNameChange: (String) -> Unit,
-    email: String,
-    onEmailChange: (String) -> Unit,
-    password: String,
-    onPasswordChange: (String) -> Unit,
-    showPassword: Boolean,
-    onTogglePassword: () -> Unit,
-    editing: Boolean,
-    onSave: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = AppSpacing.sp24, end = AppSpacing.sp24, bottom = AppSpacing.sp12)
-            .background(AppColors.whiteA03, RoundedCornerShape(AppRadius.card))
-            .padding(AppSpacing.sp16),
-    ) {
-        KkboxAccountSheetField(
-            value = name,
-            onValueChange = onNameChange,
-            hint = "名称（如：主账号）",
-        )
-        Spacer(modifier = Modifier.height(AppSpacing.sp8))
-        KkboxAccountSheetField(
-            value = email,
-            onValueChange = onEmailChange,
-            hint = "邮箱",
-            keyboardType = KeyboardType.Email,
-        )
-        Spacer(modifier = Modifier.height(AppSpacing.sp8))
-        // 密码行：外层 0.05 底 + 右侧显隐按钮，输入框自身不填充（对齐 Dart）
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.r8)),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(modifier = Modifier.weight(1f).padding(AppSpacing.sp12)) {
-                BasicTextField(
-                    value = password,
-                    onValueChange = onPasswordChange,
-                    singleLine = true,
-                    textStyle = TextStyle(color = AppColors.white, fontSize = AppFontSize.size15),
-                    cursorBrush = SolidColor(AppColors.primary),
-                    visualTransformation = if (showPassword) {
-                        VisualTransformation.None
-                    } else {
-                        PasswordVisualTransformation()
-                    },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (password.isEmpty()) {
-                    Text(text = "密码", color = AppColors.white30, fontSize = AppFontSize.size15)
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .clickableNoRipple(onTogglePassword)
-                    .padding(
-                        start = AppSpacing.sp8,
-                        top = AppSpacing.sp8,
-                        end = AppSpacing.sp12,
-                        bottom = AppSpacing.sp8,
-                    ),
-            ) {
-                KkboxAccountSheetEyeGlyph(
-                    off = showPassword,
-                    modifier = Modifier.size(AppIconSize.icon20),
-                    tint = AppColors.textTertiary,
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(AppSpacing.sp12))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickableNoRipple(onSave)
-                .background(AppColors.primary, RoundedCornerShape(AppRadius.r8))
-                .padding(vertical = AppSpacing.sp10),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = if (editing) "更新" else "保存",
-                color = AppColors.white,
-                fontSize = AppFontSize.size15,
-                fontWeight = AppFontWeight.semiBold,
-            )
-        }
-    }
-}
-
-/** 单行输入框（对齐 Dart `_inputDecoration`：0.05 底、圆角 8、无边框、内边距 12） */
-@Composable
-private fun KkboxAccountSheetField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    hint: String,
-    modifier: Modifier = Modifier,
-    keyboardType: KeyboardType = KeyboardType.Text,
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.r8))
-            .padding(AppSpacing.sp12),
-    ) {
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            textStyle = TextStyle(color = AppColors.white, fontSize = AppFontSize.size15),
-            cursorBrush = SolidColor(AppColors.primary),
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (value.isEmpty()) {
-            Text(text = hint, color = AppColors.white30, fontSize = AppFontSize.size15)
         }
     }
 }
@@ -612,13 +470,13 @@ private fun KkboxAccountSheetItem(
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = null,
-                            tint = AppColors.whiteA40,
+                            tint = AppColors.glyphMid,
                             modifier = Modifier.size(AppIconSize.icon22),
                         )
                     } else {
                         KkboxAccountSheetLoginGlyph(
                             modifier = Modifier.size(AppIconSize.icon22),
-                            tint = AppColors.whiteA40,
+                            tint = AppColors.glyphMid,
                         )
                     }
                     Spacer(modifier = Modifier.height(AppSpacing.sp2))
@@ -676,7 +534,7 @@ private fun KkboxAccountSheetItem(
                 Icon(
                     imageVector = Icons.Default.Edit,
                     contentDescription = null,
-                    tint = AppColors.textTertiary,
+                    tint = AppColors.glyphMid,
                     modifier = Modifier.size(AppIconSize.icon20),
                 )
             }
@@ -688,7 +546,7 @@ private fun KkboxAccountSheetItem(
                 Icon(
                     imageVector = Icons.Default.Delete,
                     contentDescription = null,
-                    tint = AppColors.whiteA25,
+                    tint = AppColors.glyphDim,
                     modifier = Modifier.size(AppIconSize.icon20),
                 )
             }
@@ -745,35 +603,6 @@ private fun KkboxAccountSheetLoginGlyph(
 }
 
 /**
- * 密码显隐图标：眼睛轮廓 + 瞳孔，[off] 时叠加斜杠。
- * 对齐 Flutter `Icons.visibility_outlined` / `visibility_off_outlined`（自绘等价剪影）。
+ * 登录图标：横杆 + 右向箭头 + 右侧门框。
+ * 形状对齐 Flutter `Icons.login`（核心图标集无此图标，自绘等价剪影）。
  */
-@Composable
-private fun KkboxAccountSheetEyeGlyph(
-    off: Boolean,
-    modifier: Modifier = Modifier,
-    tint: Color = AppColors.textTertiary,
-) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = w * 0.09f
-        val eye = Path().apply {
-            moveTo(w * 0.08f, h * 0.5f)
-            cubicTo(w * 0.30f, h * 0.16f, w * 0.70f, h * 0.16f, w * 0.92f, h * 0.5f)
-            cubicTo(w * 0.70f, h * 0.84f, w * 0.30f, h * 0.84f, w * 0.08f, h * 0.5f)
-            close()
-        }
-        drawPath(path = eye, color = tint, style = Stroke(width = stroke))
-        drawCircle(color = tint, radius = w * 0.12f, center = Offset(w * 0.5f, h * 0.5f))
-        if (off) {
-            drawLine(
-                color = tint,
-                start = Offset(w * 0.15f, h * 0.85f),
-                end = Offset(w * 0.85f, h * 0.15f),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round,
-            )
-        }
-    }
-}

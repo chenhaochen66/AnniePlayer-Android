@@ -16,6 +16,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 
 /**
  * Android 媒体库扫描（1:1 移植 Flutter `lib/core/platform/media_store_scan.dart`，
@@ -76,8 +77,115 @@ object MediaStoreScan {
         }
     }
 
-    /** 是否已授予「所有文件访问」权限（MANAGE_EXTERNAL_STORAGE）。 */
-    fun isManageStorageGranted(): Boolean =
+    /**
+     * 直接开一个「写进去就是成品」的落点（没有临时文件、没有二次复制）。
+     *
+     * - Android 10+：插一条 `IS_PENDING=1` 的 `MediaStore.Audio` 记录，返回它的输出流；
+     *   [DownloadSink.commit] 把 `IS_PENDING` 置 0，[DownloadSink.abort] 删掉这条记录。
+     * - Android 9 及以下：没有可写的 MediaStore，直接写公共 `Music/AnnieMusic`，
+     *   提交时触发一次媒体扫描。
+     *
+     * 返回 null 表示未初始化或目录创建失败 —— 调用方按失败处理，不要静默继续。
+     */
+    fun openAudioSink(displayName: String): DownloadSink? {
+        val ctx = _appContext ?: return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return _pendingSink(ctx, displayName)
+        return runCatching {
+            @Suppress("DEPRECATION")
+            val musicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+            val targetDir = File(musicDir, "AnnieMusic")
+            if (!targetDir.exists()) targetDir.mkdirs()
+            val target = File(targetDir, displayName)
+            if (target.exists()) target.delete()
+            LegacyMusicSink(ctx, target)
+        }.getOrNull()
+    }
+
+    /**
+     * Android 10+ 的 pending 条目落点。
+     *
+     * 回填走 `openFileDescriptor(uri, "rw")` 直接拿 fd 定位写，**不重开输出流**（重开会把
+     * 已有内容截断）。
+     */
+    private fun _pendingSink(context: Context, displayName: String): DownloadSink? {
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Audio.Media.MIME_TYPE, _mimeTypeFor(displayName))
+            put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/AnnieMusic")
+            put(MediaStore.Audio.Media.IS_PENDING, 1)
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+        val stream = resolver.openOutputStream(uri) ?: run {
+            runCatching { resolver.delete(uri, null, null) }
+            return null
+        }
+        return MediaStoreSink(context, uri, stream)
+    }
+
+    /** Android 9 及以下：写公共目录，提交后扫描入库。 */
+    private class LegacyMusicSink(
+        private val context: Context,
+        file: File,
+    ) : DownloadSink {
+        private val inner = FileDownloadSink(file)
+
+        override val output
+            get() = inner.output
+
+        override fun commit(): String {
+            val path = inner.commit()
+            MediaScannerConnection.scanFile(context, arrayOf(path), null, null)
+            return path
+        }
+
+        override fun abort() = inner.abort()
+
+        override fun patch(offset: Long, bytes: ByteArray) = inner.patch(offset, bytes)
+    }
+
+    private class MediaStoreSink(
+        private val context: Context,
+        private val uri: Uri,
+        private val stream: java.io.OutputStream,
+    ) : DownloadSink {
+
+        private var committed = false
+
+        override val output
+            get() = stream
+
+        override fun commit(): String {
+            runCatching { stream.flush() }
+            runCatching { stream.close() }
+            val done = ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }
+            context.contentResolver.update(uri, done, null, null)
+            committed = true
+            return uri.toString()
+        }
+
+        override fun abort() {
+            runCatching { stream.close() }
+            if (committed) return
+            runCatching { context.contentResolver.delete(uri, null, null) }
+        }
+
+        override fun patch(offset: Long, bytes: ByteArray) {
+            runCatching { stream.flush() }
+            val pfd = context.contentResolver.openFileDescriptor(uri, "rw")
+                ?: throw IllegalStateException("openFileDescriptor returned null")
+            try {
+                // 直接拿 fd 的 channel 定位写：另开一个 FileOutputStream 会截断已有内容
+                val channel = FileOutputStream(pfd.fileDescriptor).channel
+                channel.position(offset)
+                channel.write(java.nio.ByteBuffer.wrap(bytes))
+            } finally {
+                runCatching { pfd.close() }
+            }
+        }
+    }
+
+    /** 是否已授予「所有文件访问」权限（MANAGE_EXTERNAL_STORAGE）。 */    fun isManageStorageGranted(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
@@ -150,6 +258,30 @@ object MediaStoreScan {
     }
 
     // ---------------- 原生实现细节 ----------------
+
+    /**
+     * 删掉 MediaStore 里指向 [path] 的音频记录（删文件时配套调用）。
+     *
+     * 只删索引记录、不碰文件：文件由调用方自己 `delete()`。顺序必须是**先删记录再删文件**
+     * （记录里存着 `_data` 路径，文件先没了就查不到这一行了）。
+     * 宿主已声明 `MANAGE_EXTERNAL_STORAGE`，直接按 `_data` 条件删除不会被 Recoverable 拦截；
+     * 拿不到权限时静默失败 —— 系统媒体库里留一条打不开的条目，不影响本 App 的曲库。
+     *
+     * @return 删除的行数（失败返回 0）
+     */
+    fun deleteFromMediaStore(path: String): Int {
+        val ctx = _appContext ?: return 0
+        if (path.isBlank()) return 0
+        return try {
+            ctx.contentResolver.delete(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                "${MediaStore.Audio.Media.DATA} = ?",
+                arrayOf(path),
+            )
+        } catch (_: Throwable) {
+            0
+        }
+    }
 
     private fun _mimeTypeFor(displayName: String): String = when {
         displayName.endsWith(".flac", ignoreCase = true) -> "audio/flac"

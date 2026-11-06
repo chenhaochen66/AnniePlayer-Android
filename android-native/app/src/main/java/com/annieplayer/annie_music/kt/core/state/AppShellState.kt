@@ -6,14 +6,23 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * 宿主屏 tab（Android-only 设计，Flutter 基线无对应实现）。
+ * 底栏 tab（Android-only 设计，Flutter 基线无对应实现）。
  *
- * 三个 tab：搜索（原首页内容）、歌单解析（从搜索模式迁出的独立页面）、本地曲库（占位页）。
- * 底栏排布「左上搜索 + 其右侧歌单解析 / 右上本地曲库 / 中间封面」，左右数量不对称是有意为之。
+ * ## [Home] 为什么不再叫 Search
+ *
+ * 它是 App 的**根页**：顶栏（菜单 + 头像）、搜索模式切换、待下载条、搜索框、结果区
+ * 全在里面，共八件东西里六件是「首页」的框架，只有搜索框和结果区属于搜索功能。
+ * 历史上这个 tab 叫 `Search`，于是「根页」和「搜索功能」在代码里长期混在一起
+ * （连退出确认都写着「回到搜索页主界面」）。
+ *
+ * 现在名字对齐了根页语义。将来要把搜索功能拆成 Home 的子页面时，只需要往
+ * `UiState.pageStack` 压一个搜索路由，不用再动 tab。
+ *
+ * 底栏排布「左上首页 + 其右侧歌单解析 / 右上本地曲库 / 中间封面」，左右数量不对称是有意为之。
  */
 enum class AppTab {
-    /** 搜索（首页） */
-    Search,
+    /** 首页（根页）。搜索框与结果区目前仍是它的一部分。 */
+    Home,
 
     /** 歌单解析（粘贴歌单链接 / ID → 打开歌单详情浮层） */
     PlaylistParse,
@@ -35,7 +44,7 @@ enum class AppTab {
  */
 class AppShellViewModel : ViewModel() {
 
-    private val _selectedTab = MutableStateFlow(AppTab.Search)
+    private val _selectedTab = MutableStateFlow(AppTab.Home)
 
     /** 当前选中的 tab（UI 层 collect 渲染） */
     val selectedTab: StateFlow<AppTab> = _selectedTab.asStateFlow()

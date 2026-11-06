@@ -35,8 +35,11 @@ powershell -ExecutionPolicy Bypass -File android-native\native\temari\build-andr
 
 1. 指定 NDK clang 作为链接器（`aarch64-linux-android21-clang.cmd`）；
 2. `RUSTFLAGS` 里写死两条**必须**的链接参数：
-   - `-Wl,-soname,libtemari.so` —— 运行时 `libannietemari.so` 用 `dlopen("libtemari.so")` 加载它，
-     少了 SONAME，动态库会记录构建机的绝对路径，真机 `dlopen` 直接失败；
+   - `-Wl,-soname,libtemari.so` —— `libannietemari.so` 是通过 **`DT_NEEDED`** 依赖它的
+     （CMake 的 `target_link_libraries(annietemari … temari)`），而 NEEDED 里记录的就是
+     **SONAME**。少了 SONAME，这个字段会变成构建机上的绝对路径，真机加载直接失败。
+     注意：这条链**不是** `dlopen` —— `libannietemari.so` 里的 `tmpl_from_json` /
+     `decrypt_sample_ffi` / `tmpl_destroy` 都是 `UND`，由动态链接器在加载期解析；
    - `-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384` —— Android 15+ 的 16KB 页对齐要求；
 3. 把 `target/aarch64-linux-android/release/libtemari.so` 复制到
    `app/src/main/jniLibs/arm64-v8a/libtemari.so`。

@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
@@ -95,6 +94,8 @@ fun LxPluginManagerSheet(
     if (!visible && scrimAlpha == 0f) return
 
     Box(modifier = modifier.fillMaxSize()) {
+        // 遮罩：只吞点击，**不关闭**（退出只走返回手势 / 顶栏返回）
+        // `clickable` 必须保留：吃掉触摸、阻止点击穿透到下层页面。
         val scrimInteraction = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
@@ -104,7 +105,7 @@ fun LxPluginManagerSheet(
                     enabled = visible,
                     interactionSource = scrimInteraction,
                     indication = null,
-                    onClick = onClose,
+                    onClick = {},
                 )
                 .background(AppColors.scrim50),
         )
@@ -123,18 +124,8 @@ fun LxPluginManagerSheet(
                     .padding(start = AppSpacing.sp24, top = AppSpacing.sp40, end = AppSpacing.sp24, bottom = AppSpacing.sp8),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .clickableNoRipple(onClose)
-                        .padding(AppSpacing.sp4),
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDescription = "返回",
-                        tint = AppColors.textSecondary,
-                        modifier = Modifier.size(AppIconSize.icon22),
-                    )
-                }
+                // 统一的返回按钮（见 `SheetBackButton`）
+                SheetBackButton(onClose = onClose)
                 Spacer(modifier = Modifier.width(AppSpacing.sp8))
                 Text(
                     text = "插件管理",
@@ -160,7 +151,7 @@ fun LxPluginManagerSheet(
 
             if (emptyWarning) {
                 Text(
-                    text = "已启用插件，但没有可用插件：国内四平台将无法播放/下载",
+                    text = "没有可用的插件：国内四平台无法播放和下载，请先导入一个插件",
                     color = AppColors.danger,
                     fontSize = AppFontSize.sm,
                     modifier = Modifier.padding(
@@ -171,7 +162,7 @@ fun LxPluginManagerSheet(
                 )
             } else {
                 Text(
-                    text = "一次只能启用一个插件（点条目选中）；它覆盖哪些平台由插件自己声明",
+                    text = "四平台的下载由插件提供、播放优先走插件；一次只能启用一个（点条目选中）",
                     color = AppColors.textTertiary,
                     fontSize = AppFontSize.sm,
                     modifier = Modifier.padding(
@@ -316,7 +307,7 @@ private fun LxPluginRow(
                     Icon(
                         imageVector = Icons.Default.Delete,
                         contentDescription = "删除",
-                        tint = AppColors.whiteA25,
+                        tint = AppColors.glyphDim,
                         modifier = Modifier.size(AppIconSize.icon20),
                     )
                 }
@@ -332,6 +323,19 @@ private fun LxPluginRow(
             if (meta.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(AppSpacing.sp1))
                 Text(text = meta, color = AppColors.textTertiary, fontSize = AppFontSize.sm, maxLines = 1)
+            }
+
+            // 插件描述（排在「版本 · 作者」之后，字体与元信息行统一）：
+            // 洛雪源取 `@description`，独家源取标识块 `#@description`，导入时已并入 header
+            if (plugin.description.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(AppSpacing.sp1))
+                Text(
+                    text = plugin.description,
+                    color = AppColors.textTertiary,
+                    fontSize = AppFontSize.sm,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
 
             val usable = plugin.sources.filter { LxSourceMapper.isMappable(it.source) }

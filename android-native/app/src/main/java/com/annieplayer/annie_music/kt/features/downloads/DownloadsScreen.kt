@@ -267,7 +267,7 @@ private fun DownloadsTaskRow(
             contentAlignment = Alignment.Center,
         ) {
             if (task.cover.isEmpty() || coverFailed) {
-                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon24), tint = AppColors.white24)
+                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon24), tint = AppColors.glyphDim)
             } else {
                 AsyncImage(
                     model = task.cover,
@@ -349,7 +349,7 @@ private fun DownloadsTaskRow(
         }
         if (task.status == DownloadStatus.error) {
             DownloadsIconAction(onTap = onRemove) {
-                DownloadsCloseIcon(tint = AppColors.white24)
+                DownloadsCloseIcon(tint = AppColors.glyphDim)
             }
         }
     }
@@ -399,7 +399,7 @@ private fun DownloadsStatusIndicator(status: DownloadStatus) {
             Icon(
                 imageVector = Icons.Default.Close,
                 contentDescription = null,
-                tint = AppColors.white24,
+                tint = AppColors.glyphDim,
                 modifier = Modifier.size(AppIconSize.icon18),
             )
             Text(text = "已取消", color = AppColors.white24, fontSize = AppFontSize.size10)

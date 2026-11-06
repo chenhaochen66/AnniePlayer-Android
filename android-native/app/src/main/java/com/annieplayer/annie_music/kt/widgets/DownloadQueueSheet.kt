@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -123,7 +122,8 @@ fun DownloadQueueSheet(
     // 因此完全隐藏时**整个浮层不参与组合**，等价 Flutter 的 IgnorePointer(ignoring: !visible)。
     if (!visible && scrimAlpha == 0f) return
     Box(modifier = modifier.fillMaxSize()) {
-        // ── 遮罩（隐藏时不启用 → 不吃触摸） ──
+        // ── 遮罩：只吞点击，**不关闭**（退出只走返回手势 / 标题栏 ✕） ──
+        // `clickable` 必须保留：吃掉触摸、阻止点击穿透到下层页面。
         val scrimInteraction = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
@@ -133,7 +133,7 @@ fun DownloadQueueSheet(
                     enabled = visible,
                     interactionSource = scrimInteraction,
                     indication = null,
-                    onClick = onClose,
+                    onClick = {},
                 )
                 .background(AppColors.scrim50),
         )
@@ -184,18 +184,8 @@ private fun DownloadQueueHeader(onClose: () -> Unit) {
             .padding(start = AppSpacing.sp24, top = AppSpacing.sp40, end = AppSpacing.sp24, bottom = AppSpacing.sp8),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .clickableNoRipple(onClose)
-                .padding(AppSpacing.sp4),
-        ) {
-            Icon(
-                imageVector = Icons.Default.KeyboardArrowLeft,
-                contentDescription = null,
-                tint = AppColors.textSecondary,
-                modifier = Modifier.size(AppIconSize.icon22),
-            )
-        }
+        // 统一的返回按钮（见 `SheetBackButton`）
+        SheetBackButton(onClose = onClose)
         Spacer(modifier = Modifier.width(AppSpacing.sp8))
         Text(
             text = "下载任务",

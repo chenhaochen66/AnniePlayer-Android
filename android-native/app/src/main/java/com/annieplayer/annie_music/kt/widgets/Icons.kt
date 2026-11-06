@@ -14,7 +14,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -23,6 +22,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -207,7 +207,8 @@ fun PlayTriangle(
 @Composable
 fun DownloadRing(modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "downloadRing")
-    val angle by transition.animateFloat(
+    // 角度只在 `graphicsLayer` 里读（绘制阶段）：组合期读它会让本节点每帧重组一次。
+    val angle = transition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
@@ -219,7 +220,11 @@ fun DownloadRing(modifier: Modifier = Modifier) {
     val ringTrack = Color(0x336366F1)
 
     LayoutBox(modifier = modifier.size(16.dp)) {
-        Canvas(modifier = Modifier.size(16.dp).rotate(angle)) {
+        Canvas(
+            modifier = Modifier
+                .size(16.dp)
+                .graphicsLayer { rotationZ = angle.value },
+        ) {
             val stroke = 2.dp.toPx()
             val inset = stroke / 2f
             val arcSize = Size(size.width - stroke, size.height - stroke)
@@ -357,38 +362,36 @@ fun VinylRecord(
 }
 
 /**
- * 放大镜（底栏「搜索」tab 图标，自绘）。
+ * 主页（房子）图标（底栏「主页」tab，自绘）。
  *
- * 为什么不直接用 `Icons.Default.Search`：本工程底栏另两个图形（[SearchGlyph] 的同侪
- * [LocalLibraryGlyph] 与 [VinylRecord]）都是「圆头描边 + [GlyphStrokeRatio] 比例」的自绘风格，
- * 而 material-icons-core 的 Search 是实心路径且端点为平头，三者并排会出现粗细/端点不一致，
- * 因此统一自绘。
+ * 为什么不直接用 `Icons.Default.Home`：本工程底栏另两个图形（[LocalLibraryGlyph]、
+ * [PlaylistParseGlyph]）都是「圆头描边 + [GlyphStrokeRatio] 比例」的自绘风格，
+ * 而 material-icons-core 的 Home 是实心路径且端点为平头，三者并排会出现粗细/端点不一致。
+ *
+ * 结构：屋顶折线（左檐 → 顶点 → 右檐）+ 房身 U 形（左墙 → 底 → 右墙）。
+ * 两个子路径分开描边，转角用 [StrokeJoin.Round]，与圆头端点同族。
  */
 @Composable
-fun SearchGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) {
+fun HomeGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) {
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
         val stroke = w * GlyphStrokeRatio
-        val lensRadius = w * 0.30f
-        val lensCenter = Offset(w * 0.44f, h * 0.44f)
-
-        drawCircle(
+        val path = Path().apply {
+            // 屋顶：左檐 → 顶点 → 右檐（屋檐略外伸）
+            moveTo(w * 0.09f, h * 0.47f)
+            lineTo(w * 0.50f, h * 0.11f)
+            lineTo(w * 0.91f, h * 0.47f)
+            // 房身：从屋顶斜线内侧起笔 → 左墙 → 底 → 右墙
+            moveTo(w * 0.21f, h * 0.40f)
+            lineTo(w * 0.21f, h * 0.89f)
+            lineTo(w * 0.79f, h * 0.89f)
+            lineTo(w * 0.79f, h * 0.40f)
+        }
+        drawPath(
+            path = path,
             color = tint,
-            radius = lensRadius,
-            center = lensCenter,
-            style = Stroke(width = stroke),
-        )
-        // 手柄：自镜头 45° 处起，指向右下角（端点圆头，与其它 glyph 一致）
-        drawLine(
-            color = tint,
-            start = Offset(
-                lensCenter.x + lensRadius * 0.707f,
-                lensCenter.y + lensRadius * 0.707f,
-            ),
-            end = Offset(w * 0.86f, h * 0.86f),
-            strokeWidth = stroke,
-            cap = StrokeCap.Round,
+            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
         )
     }
 }
@@ -397,7 +400,7 @@ fun SearchGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) {
  * 「本地曲库」glyph（底栏右侧 tab 图标，自绘）。
  *
  * 语义拆解：圆角矩形 = 唱片套 / 文库，内嵌八分音符 = 音乐，合起来表达「本地音乐库」；
- * 与 [SearchGlyph]、[VinylRecord] 共用 [GlyphStrokeRatio] 的圆头笔画，三个图形并排粗细一致。
+ * 与 [HomeGlyph]、[VinylRecord] 共用 [GlyphStrokeRatio] 的圆头笔画，三个图形并排粗细一致。
  */
 @Composable
 fun LocalLibraryGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) {
@@ -439,7 +442,7 @@ fun LocalLibraryGlyph(modifier: Modifier = Modifier, tint: Color = Color.White) 
 /**
  * 「歌单解析」glyph（底栏搜索右侧 tab 图标，自绘）。
  *
- * 语义拆解：左侧三行 = 歌单条目，右侧向下箭头 = 「解析 / 导入进来」；与 [SearchGlyph]、
+ * 语义拆解：左侧三行 = 歌单条目，右侧向下箭头 = 「解析 / 导入进来」；与 [HomeGlyph]、
  * [LocalLibraryGlyph] 共用 [GlyphStrokeRatio] 的圆头笔画，三个图形并排粗细一致。
  */
 @Composable

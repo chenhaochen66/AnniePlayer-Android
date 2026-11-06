@@ -2,13 +2,35 @@ package com.annieplayer.annie_music.kt.core.audio
 
 import kotlin.math.abs
 
-/** 调音引擎：同一时间只跑一条链（对齐海贝：均衡器 / PEQ / MSEB 互斥）。 */
+/**
+ * 调音引擎：同一时间只跑一条链（对齐海贝：均衡器 / PEQ / MSEB 互斥）。
+ *
+ * ## 为什么有「无」
+ *
+ * 以前「我不想要任何 DSP」只能靠输出通路的开关表达（系统通路关掉「直通」以外的路、
+ * 或 AAudio 的 Bit Perfect），而那些开关讲的是**别的事**：
+ *
+ * - 「直通」（offload）说的是**不解码** —— 压缩帧整段交给 HAL，所以顺带没法调音；
+ * - 「Bit Perfect」说的是**独占流里一个采样都别动**。
+ *
+ * 两者都不是「我解码，但我不想调音」。而且它们都挂在某一条通路上 —— 换个通路
+ * 就没有对应的表达方式了（USB 独占、蓝牙下无从下手）。
+ *
+ * 「无」把这个意图提到调音自己的位置上：**引擎 = 无 ⇒ 这一首没有 DSP**，
+ * 与通路无关，与直通关不关也无关。派生关系见 `tuningEnabled`。
+ */
 enum class TuningEngine(val key: String, val label: String) {
+    /** 不做任何 DSP：不加滤波器、不加前级、不限幅。（放最前 = 它是「关闭」这一档） */
+    none("none", "无"),
     graphic("graphic", "均衡器"),
     parametric("parametric", "PEQ"),
     mseb("mseb", "MSEB");
 
     companion object {
+        /**
+         * 老存档里没有 `none` 这个值（它是后加的），所以"读不到"仍落回 `graphic` ——
+         * 不能落回 `none`，那等于替升级上来的用户把调音关了。
+         */
         fun fromKey(key: String?): TuningEngine =
             entries.firstOrNull { it.key == key } ?: graphic
     }
@@ -128,6 +150,9 @@ data class TuningConfig(
     val limiter: Boolean = false,
 ) {
     fun specs(): List<BiquadSpec> = when (engine) {
+        // 「无」= 一条滤波器都不给。不是"给一条 0 dB 的"——那也会量化和相位代价。
+        TuningEngine.none -> emptyList()
+
         TuningEngine.graphic -> GraphicEqFrequencies.mapIndexed { index, freq ->
             BiquadSpec(FilterType.peaking, freq, 1.41f, graphicGains.getOrElse(index) { 0f })
         }.filter { abs(it.gainDb) > 0.01f }
@@ -140,6 +165,7 @@ data class TuningConfig(
     }
 
     fun preampDb(): Float = when (engine) {
+        TuningEngine.none -> 0f
         TuningEngine.graphic -> graphicAmpDb
         TuningEngine.parametric -> peqAmpDb
         TuningEngine.mseb -> mseb.preamp.toFloat()

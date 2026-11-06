@@ -28,6 +28,10 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
  * @param onOpenMenu 点击左侧菜单按钮（打开菜单抽屉）。
  * @param titleAdornment 紧跟标题之后的可选装饰（如本地曲库页的「建设中」角标）；默认无。
  * @param trailing 顶栏最右侧的可选插槽（如搜索页头像）；默认无。
+ * @param titleContent 标题插槽：传入时**替代** [title] 的默认文本。
+ *        用于需要标题本身做动画的场景（搜索态「安妮音乐盒 → 搜索」的淡入淡出）。
+ *        传入方需自行套用与默认实现相同的 token
+ *        （[AppFontSize.size26] / [AppFontWeight.bold] / [AppLetterSpacing.tight] / 纯白）。
  */
 @Composable
 fun AppTopBar(
@@ -36,6 +40,7 @@ fun AppTopBar(
     modifier: Modifier = Modifier,
     titleAdornment: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = modifier.padding(
@@ -50,13 +55,17 @@ fun AppTopBar(
             onOpen = onOpenMenu,
             modifier = Modifier.size(AppSize.headerActionHeight),
         )
-        Text(
-            text = title,
-            color = AppColors.white,
-            fontSize = AppFontSize.size26,
-            fontWeight = AppFontWeight.bold,
-            letterSpacing = AppLetterSpacing.tight,
-        )
+        if (titleContent != null) {
+            titleContent()
+        } else {
+            Text(
+                text = title,
+                color = AppColors.white,
+                fontSize = AppFontSize.size26,
+                fontWeight = AppFontWeight.bold,
+                letterSpacing = AppLetterSpacing.tight,
+            )
+        }
         if (titleAdornment != null) {
             Spacer(modifier = Modifier.width(AppSpacing.sp8))
             titleAdornment()

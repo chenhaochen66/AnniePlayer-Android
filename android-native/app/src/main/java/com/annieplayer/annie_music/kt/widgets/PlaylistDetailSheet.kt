@@ -51,9 +51,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.audio.apple.ApplePrefetch
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.routing.BackTarget
-import com.annieplayer.annie_music.kt.core.routing.OverlayVisibilityFlags
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
@@ -65,7 +65,8 @@ import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.PlaylistDetailData
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
-import com.annieplayer.annie_music.kt.core.util.bestQuality
+import com.annieplayer.annie_music.kt.core.state.toOverlayFlags
+import com.annieplayer.annie_music.kt.core.util.downloadQualityFor
 import com.annieplayer.annie_music.kt.data.PlaylistService
 import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
@@ -96,7 +97,7 @@ import kotlinx.coroutines.launch
  * → 玻璃列表容器（歌曲行 60dp）；多选时底部常驻「多选下载条」（[MultiSelectDownloadBar]）。
  *
  * 视觉（液态玻璃链路）：面板背景 = 封面模糊 + 取色染色氛围（[CoverPaletteBackdrop]）；
- * 列表 = 毛玻璃容器（[glassPanel]，圆角 [AppRadius.panel]）；命中当前歌的行 = 正在播放动效
+ * 列表**直接铺在氛围背景上**（不套玻璃面板）；命中当前歌的行 = 正在播放动效
  * （[playingRowBackground] + [PlayingIndicator]）；进入时把全局色板临时切为该歌单色板、
  * 退出恢复（[SnapshotPaletteAndRestore]，与播放页同一套取色链路）。
  *
@@ -193,7 +194,9 @@ private fun PlaylistDetailContent(
         val idx = st.songs.indexOfFirst { it.id == song.id }
         if (idx < 0) return
         // 先入队立刻开播（与专辑详情一致），音源地址随后异步补
-        playerViewModel.setQueue(st.songs, idx)
+        // fromPlaylist：把「这份队列来自哪个歌单」记进播放状态，之后在任何页面
+        // （播放页 / 搜索页 / 歌手页 …）打开 ⋮ 都能「跳转到歌单」回来
+        playerViewModel.setQueue(st.songs, idx, fromPlaylist = data)
         try {
             val url = fetchPlayUrlBySong(song)
             val lyric = fetchLyric(song)
@@ -226,13 +229,15 @@ private fun PlaylistDetailContent(
         st.batchPickerVisible = false
         st.batchDownloading = true
         val songs = st.songs.filter { st.selectedIds.contains(it.id) }
-        for (s in songs) downloadViewModel.addTask(s, quality)
+        for (s in songs) downloadViewModel.addTask(s, downloadQualityFor(s, quality))
         var index = 0
         for (song in songs) {
             // 多选下载条进度文案（仅展示；串行下载顺序与既有逻辑不变）
             index++
             st.batchProgress = "$index/${songs.size} ${song.title}"
-            val actual = bestQuality(quality, song.qualities)
+            val actual = downloadQualityFor(song, quality)
+            // 前置预备：把后面两首的清单请求提前打掉（Apple session 是串行的，只能靠重叠）
+            ApplePrefetch.ahead(songs.drop(index), quality)
             downloadOneAndRegister(
                 downloadViewModel = downloadViewModel,
                 playerViewModel = playerViewModel,
@@ -241,6 +246,8 @@ private fun PlaylistDetailContent(
                 onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
             )
         }
+        // 批量结束：丢掉还没开始的预热（正在跑的那一首随它跑完，Apple session 不能中途打断）
+        ApplePrefetch.drain()
         st.batchDownloading = false
         st.batchProgress = ""
         st.selectMode = false
@@ -296,27 +303,14 @@ private fun PlaylistDetailContent(
         }
     }
 
-    // 返回手势：多选模式优先退出（子页返回不播滑出）；更高层浮层可见时让位（见 OverlayStack.kt）
-    val higherFlags = OverlayVisibilityFlags(
-        songActions = uiState.songActionsVisible,
-        artistPicker = uiState.artistPickerVisible,
-        qualityPicker = uiState.pickerVisible || st.batchPickerVisible,
-        queue = uiState.queueVisible,
-        playerOverlay = uiState.playerOverlayVisible,
-        detail = true,
-        downloadQueue = uiState.downloadQueueVisible,
-        menuDrawer = uiState.drawerVisible,
-    )
-    val detailIsTop = isTop &&
-        !uiState.downloadQueueVisible &&
-        handleBack(higherFlags) == BackTarget.DETAIL
-    BackHandler(enabled = st.selectMode || detailIsTop) {
-        if (st.selectMode) {
-            toggleSelectMode()
-        } else {
-            requestClose()
-        }
-    }
+    // 把「带动画出栈」注册给返回裁决（AppShell 收到返回时优先走这里，而不是直接 popRoute）
+    com.annieplayer.annie_music.kt.core.routing.RememberPageClose { requestClose() }
+    // 返回手势：本页**只管多选退出**这一层。出栈由 `AppShell` 的全局 PAGE 处理器统一做。
+    //
+    // **必须带 `isTop`**：被压在别的详情页下面时，本 handler 若仍启用，就会在
+    // OnBackPressedDispatcher 的逆序派发里抢先吃掉返回（上层页面往往没有启用的 BackHandler），
+    // 表现就是「返回键毫无反应」——它只把下层的多选退掉了。
+    BackHandler(enabled = isTop && st.selectMode) { toggleSelectMode() }
 
     Box(modifier = modifier.fillMaxSize()) {
         // ── 遮罩（Flutter: Color(0x80000000)，点击不关闭） ──
@@ -391,9 +385,14 @@ private fun PlaylistDetailContent(
         if (pickerHost == null) {
             pickerPanel()
         } else {
+            // **可见性必须在组合期读一次**。`SideEffect` 块里的读取不建立组合依赖：
+            // 只在块里读的话，`batchPickerVisible` 从 false 变 true 不会让本页重组 →
+            // `SideEffect` 不重跑 → 槽位永远不写 → 第一次点下载什么都不弹，
+            // 要等下一次无关重组（例如退出多选）才把面板「迟到」地挂上去。
+            val pickerOpen = st.batchPickerVisible
             // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
             SideEffect {
-                if (st.batchPickerVisible) {
+                if (pickerOpen) {
                     pickerHost.show(pickerOwner, pickerPanel)
                 }
             }
@@ -523,7 +522,6 @@ private fun PlaylistDetailBody(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .glassPanel(shape = RoundedCornerShape(AppRadius.panel))
                         .shortScrollbar(listState),
                     contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
                 ) {

@@ -31,6 +31,7 @@ import com.annieplayer.annie_music.kt.core.audio.AudioOutputController
 import com.annieplayer.annie_music.kt.core.audio.AudioRoute
 import com.annieplayer.annie_music.kt.core.audio.BluetoothCodec
 import com.annieplayer.annie_music.kt.core.audio.BluetoothCodecInfo
+import com.annieplayer.annie_music.kt.core.audio.specText
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
@@ -143,20 +144,16 @@ private fun AudioDeviceRow(
 private fun bluetoothSubtitle(codec: BluetoothCodecInfo): String? {
     // ColorOS 等 offload 模式下 getCodecStatus 返回 NONE（sampleRate=0 / codec 未知），
     // 直接拼出来就是「未知 · 0.0 kHz / 2 bit」这种垃圾，退回设备能力列表
-    if (codec.sampleRate <= 0 || codec.codecName.isEmpty() || codec.codecName == "未知") return null
+    if (codec.sampleRate <= 0 || codec.codecName.isEmpty() || codec.codecName.startsWith("未知")) return null
     return buildList {
         add("蓝牙")
         add(codec.codecName)
-        val rate = formatKhz(codec.sampleRate)
-        val depth = if (codec.bitsPerSample > 0) "${codec.bitsPerSample} bit" else ""
-        val rateDepth = listOf(rate, depth).filter { it.isNotEmpty() }.joinToString(" / ")
-        if (rateDepth.isNotEmpty()) add(rateDepth)
+        // 与播放页同一套配对规则：位深在前、采样率在后、单位 `Bit` / `kHz`
+        val spec = specText(codec.bitsPerSample, codec.sampleRate)
+        if (spec.isNotEmpty()) add(spec)
         if (codec.bitrate > 0) add("${codec.bitrate / 1000} kbps")
     }.joinToString(" · ")
 }
-
-private fun formatKhz(rate: Int): String =
-    if (rate % 1000 == 0) "${rate / 1000} kHz" else "%.1f kHz".format(rate / 1000f)
 
 private fun subtitleOf(device: AudioOutputController.DeviceInfo, route: AudioRoute): String {
     val rates = device.sampleRates

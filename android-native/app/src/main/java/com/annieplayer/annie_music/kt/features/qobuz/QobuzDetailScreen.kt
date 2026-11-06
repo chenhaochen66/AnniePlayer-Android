@@ -23,7 +23,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -51,7 +53,6 @@ import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
 import com.annieplayer.annie_music.kt.features.downloads.DownloadMeta
 import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
-import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.state.QobuzViewModel
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
@@ -63,12 +64,12 @@ import com.annieplayer.annie_music.kt.data.model.DownloadStatus
 import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
-import com.annieplayer.annie_music.kt.data.sources.getFileUrl
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualityFormatId
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
-import com.annieplayer.annie_music.kt.data.sources.getQobuzAlbum
-import com.annieplayer.annie_music.kt.data.sources.qobuzTrackToSong
-import com.annieplayer.annie_music.kt.data.sources.getTrack
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getFileUrl
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzQualityFormatId
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzQualityLabel
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getQobuzAlbum
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzTrackToSong
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getTrack
 import com.annieplayer.annie_music.kt.ui.theme.AppBorder
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
@@ -82,6 +83,7 @@ import com.annieplayer.annie_music.kt.widgets.DetailCheckBox
 import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
 import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
 import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
+import com.annieplayer.annie_music.kt.widgets.LocalDetailQualityPickerHost
 import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
@@ -89,7 +91,6 @@ import com.annieplayer.annie_music.kt.widgets.QualityPickerSheet
 import com.annieplayer.annie_music.kt.widgets.clickableRipple
 import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
 import com.annieplayer.annie_music.kt.widgets.SongMoreGlyph
-import com.annieplayer.annie_music.kt.widgets.glassPanel
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
 import com.annieplayer.annie_music.kt.widgets.shortScrollbar
 import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
@@ -159,7 +160,7 @@ private fun qobuzDetailToSong(track: QobuzTrack, hires: Boolean = false): Song =
  *
  * 视觉分层（行为完全不变）：
  * - 底层 [CoverPaletteBackdrop]：模糊封面 + 取色染色渐变 + 顶部压暗的氛围背景；
- * - 列表用 `glassPanel` 承载（圆角 [AppRadius.panel] 液态玻璃），底部仍保留
+ * - 列表**直接铺在氛围背景上**（不套玻璃面板），底部仍保留
  *   [AppSpacing.listBottomInset]（迷你条 + 手势条）预留；
  * - 正在播放行：`playingRowBackground(palette.primary)` + [PlayingIndicator] + 标题主色；
  * - 多选：行内 [DetailCheckBox]，底部浮层 [MultiSelectDownloadBar]（替换旧头部批量按钮）；
@@ -172,6 +173,12 @@ fun QobuzDetailScreen(
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     onBack: () -> Unit,
+    /**
+     * 是否可以吃返回键：宿主的 `localTop`（栈顶且没有更高层浮层）。
+     *
+     * 只用于页内多选退出这一层；出栈由 AppShell 的 PAGE 处理器 + `PageCloseRelay` 统一做。
+     */
+    isTop: Boolean = true,
     modifier: Modifier = Modifier,
     type: String = "",
     id: String = "",
@@ -332,13 +339,21 @@ fun QobuzDetailScreen(
         if (activeTokenId != null && activeTokenId != st.loadedToken && !st.loading) load()
     }
 
-    // 返回手势：多选模式优先退出（对齐 Dart `PopScope(canPop: !_selectMode)`）
-    BackHandler {
-        if (st.selectMode) {
-            st.selectMode = false
-        } else {
-            onBack()
-        }
+    // 返回手势：本页**只管多选退出**这一层，且只在真正「可以吃返回」时才启用。
+    //
+    // 出栈不再由本页直接做：宿主（AppShell）用 `LocalOverlayFrame` 包住本页，
+    // 关闭入口统一走它给的 `requestClose`（先滑出、动画结束才 popRoute），
+    // 返回裁决由 `AppShell` 唯一的 PAGE 处理器 + `PageCloseRelay` 负责。
+    //
+    // 两处都必须保留：
+    // - 删掉这里的 `onBack()`：否则本页多一条独立的出栈路径，和 relay 抢同一件事；
+    // - 但**不能只删不注册**：relay 取「最后挂载的注册者」，本页不注册时尾部会指向
+    //   下面那一页，返回会把下层页面滑出、本页留在原地。注册由 `LocalOverlayFrame` 做。
+    //
+    // `isTop` 必须是宿主的 `localTop`（栈顶且无更高层浮层）：否则被压住的页面会抢返回，
+    // 而它只清掉自己的 selectMode，上层页面纹丝不动 —— 看起来就是「返回键失效」。
+    BackHandler(enabled = isTop && st.selectMode) {
+        st.selectMode = false
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -403,23 +418,48 @@ fun QobuzDetailScreen(
             )
         }
 
-        QualityPickerSheet(
-            visible = st.batchPickerVisible,
-            qualities = listOf(Quality.hires, Quality.flac, Quality.k320k),
-            labelOf = { q -> qobuzQualityLabel(q) },
-            specOf = { q ->
-                when (q) {
-                    Quality.hires -> listOfNotNull(
-                        st.maxBitDepth?.let { "${it}bit" },
-                        st.maxSamplingRateKhz?.let { "${qobuzRateText(it)}kHz" },
-                    ).joinToString("/").ifEmpty { null }
-                    Quality.flac -> "16bit/44.1kHz"
-                    else -> null
-                }
-            },
-            onSelect = { q -> batchDownload(q) },
-            onCancel = { st.batchPickerVisible = false },
-        )
+        // 批量下载音质面板：内容交给宿主（`AppShell`）在「迷你播放条之后」渲染。
+        //
+        // 以前这里是**内联**渲染的：面板画在本页内部，而迷你播放条 / 底栏都在本页上层，
+        // 于是底部那几档音质和「取消」会被迷你条压住。专辑 / 歌手 / 歌单三个详情页早就
+        // 为同一个原因改成了宿主槽位（见 `DetailQualityPickerHost` 注释），这里跟上。
+        //
+        // 无宿主时（独立整页版单测 / 预览）退化为内联渲染，行为与改造前一致。
+        val pickerHost = LocalDetailQualityPickerHost.current
+        val pickerOwner = remember { Any() }
+        val pickerPanel: @Composable () -> Unit = {
+            QualityPickerSheet(
+                visible = st.batchPickerVisible,
+                qualities = listOf(Quality.hires, Quality.flac, Quality.k320k),
+                labelOf = { q -> qobuzQualityLabel(q) },
+                specOf = { q ->
+                    when (q) {
+                        Quality.hires -> listOfNotNull(
+                            st.maxBitDepth?.let { "${it}bit" },
+                            st.maxSamplingRateKhz?.let { "${qobuzRateText(it)}kHz" },
+                        ).joinToString("/").ifEmpty { null }
+                        Quality.flac -> "16bit/44.1kHz"
+                        else -> null
+                    }
+                },
+                onSelect = { q -> batchDownload(q) },
+                onCancel = { st.batchPickerVisible = false },
+            )
+        }
+        if (pickerHost == null) {
+            pickerPanel()
+        } else {
+            // **可见性必须在组合期读一次**：`SideEffect` 块里的读取不建立组合依赖，
+            // 只在那里读的话第一次点下载不会触发重组、面板要等下一次无关重组才出现。
+            val pickerOpen = st.batchPickerVisible
+            // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
+            SideEffect {
+                if (pickerOpen) pickerHost.show(pickerOwner, pickerPanel)
+            }
+            DisposableEffect(pickerOwner) {
+                onDispose { pickerHost.clear(pickerOwner) }
+            }
+        }
     }
 }
 
@@ -527,7 +567,7 @@ private fun QobuzDetailBody(
         }
 
         else -> {
-            // 玻璃承载列表：圆角 panel + 侧边留白，让取色氛围背景从玻璃边缘透出；
+            // 列表直接铺在取色氛围背景上（不套玻璃面板）；
             // 底部内容预留不变（迷你条 + 手势条）
             val listState = rememberLazyListState()
             LazyColumn(
@@ -535,7 +575,6 @@ private fun QobuzDetailBody(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = AppSpacing.sp12)
-                    .glassPanel(shape = RoundedCornerShape(AppRadius.panel))
                     .shortScrollbar(listState),
                 contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
             ) {
@@ -581,7 +620,7 @@ private fun QobuzDetailListHeader(st: QobuzDetailScreenState) {
         ) {
             var coverFailed by remember(st.cover) { mutableStateOf(false) }
             if (st.cover.isEmpty() || coverFailed) {
-                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.white24)
+                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.glyphDim)
             } else {
                 AsyncImage(
                     model = st.cover,

@@ -1,5 +1,6 @@
 package com.annieplayer.annie_music.kt.data.source
 
+import com.annieplayer.annie_music.kt.core.util.effectivePlayQuality
 import com.annieplayer.annie_music.kt.data.builtinDownloadUrl
 import com.annieplayer.annie_music.kt.data.builtinPlayUrl
 import com.annieplayer.annie_music.kt.data.model.Quality
@@ -9,8 +10,13 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * 音源提供方：内置四平台与落雪插件是**平级实现**，由 `MusicRepository` 的路由链串联
- * （插件优先、内置兜底）。**不合并四平台文件**。
+ * 音源提供方：内置音源与落雪插件是**平级实现**，由 `MusicRepository` 的路由链串联。
+ *
+ * 现状：
+ * - 国内四平台（网易/QQ/酷狗/酷我）的播放与下载**只走落雪插件**，没插件直接失败；
+ * - 内置实现只剩 Qobuz（+ 本地文件播放）；
+ * - KKBOX 走它自己的官方票据接口，Apple 走各自的专用下载器/播放代理。
+ * **不合并四平台文件**。
  */
 interface MusicSourceProvider {
     /** [playQuality] 为 null = 自动：沿用各平台既有取档规则（旧行为） */
@@ -18,7 +24,7 @@ interface MusicSourceProvider {
     suspend fun resolveDownloadUrl(song: Song, quality: Quality): String
 }
 
-/** 内置四平台：仅转发到 `MusicRepository` 里既有的按平台分发实现 */
+/** 内置音源：仅 Qobuz / 本地文件（其余平台在实现里直接抛错） */
 class BuiltinSourceProvider : MusicSourceProvider {
     override suspend fun resolvePlayUrl(song: Song, playQuality: Quality?): String =
         builtinPlayUrl(song, playQuality)
@@ -35,8 +41,12 @@ class LxPluginSourceProvider : MusicSourceProvider {
     override suspend fun resolveDownloadUrl(song: Song, quality: Quality): String = resolve(song, quality)
 
     private suspend fun resolve(song: Song, quality: Quality?): String {
-        val code = LxSourceMapper.lxCodeOf(song.platform) ?: error("该平台不支持落雪插件")
-        val plugin = LxPluginRegistry.pluginFor(song.platform) ?: error("没有支持该平台的落雪插件")
+        val code = LxSourceMapper.lxCodeOf(song.platform)
+            ?: throw IllegalStateException("${song.platform.label}没有对应的落雪音源，无法走插件解析")
+        val plugin = LxPluginRegistry.pluginFor(song.platform)
+            ?: throw IllegalStateException(
+                "${song.platform.label}缺少可用的落雪插件，请先在「插件管理」里导入并启用一个",
+            )
         val declared = plugin.sources.firstOrNull { it.source == code }?.qualities.orEmpty()
         return LxPluginHost.resolveMusicUrl(
             cacheKey = plugin.id,
@@ -49,19 +59,20 @@ class LxPluginSourceProvider : MusicSourceProvider {
     }
 
     /**
-     * 选请求给插件的音质档位。
+     * 选请求给插件的音质档位。**两级收敛**：先定「这次到底要哪一档」，再按插件声明收敛。
      *
-     * **播放**：与内置播放一致（有 320k 就 `320k`，否则 `128k`）。曾经取"插件声明的最高档"，
-     * 会对没有 HiRes 的歌去要 `hires`/`4000kflac`，插件查表失败或接口直接拒绝 ——
-     * 表现就是「酷我/网易经常失败」「酷我跳歌」。
-     * **下载**：用用户选的档位；插件没声明该档位就退到它声明的最高档，避免"不支持的音质"。
+     * 1. **定档**（[effectivePlayQuality]）：
+     *    - 用户配了档位 → 按这首歌夹档（`hires` 但只有 320k 的歌 → `320k`）；
+     *    - 用户选「自动」→ **这首歌自己的最高档**（有无损就拿无损，不再固定 320k）；
+     *      档位未知（老队列项没带 `qualities`）才退回 `320k`。
+     * 2. **按插件声明收敛**：插件没声明该档位时，退到它声明里「不超过该档位」的最高档
+     *    （`flac24bit` 不可用 → 退 `flac`，而不是 320k）；声明里全都比该档位高时取**最低**的那个
+     *    （档位越高越可能不可用，取最低离所选最近）。
      */
     private fun pickQuality(song: Song, quality: Quality?, declared: List<String>): String {
-        val want = if (quality != null) {
-            lxQualityString(quality)
-        } else {
-            if (song.qualities.contains(Quality.k320k)) "320k" else "128k"
-        }
+        val want = lxQualityString(
+            effectivePlayQuality(song.platform, song.qualities, quality),
+        )
         if (want in declared) return want
         // 退到「声明里不超过所选档位」的最高档（hires 不可用 → 退 flac，而不是 320k）
         val wantRank = _LxQualityOrder.indexOf(want)
@@ -70,7 +81,7 @@ class LxPluginSourceProvider : MusicSourceProvider {
             if (r >= 0) r to q else null
         }
         return ranked.filter { it.first <= wantRank }.maxByOrNull { it.first }?.second
-            ?: ranked.maxByOrNull { it.first }?.second
+            ?: ranked.minByOrNull { it.first }?.second
             ?: want
     }
 }

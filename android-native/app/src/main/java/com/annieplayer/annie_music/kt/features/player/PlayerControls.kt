@@ -354,11 +354,16 @@ fun PlayerControlsBar(
  * 音量条（1:1 移植 Flutter `PlayerVolumeSlider`）：
  * 左右 14dp 喇叭图标（white 0.25）、中间 5dp 轨道（white 0.08 / 已音量 white 0.3）。
  * 点击与水平拖拽均更新音量。
+ *
+ * [enabled] = false 时**只保留外观**、不参与命中测试：透明模式下音量由绝对音量
+ * （蓝牙 AVRCP / 系统媒体音量）决定，我方不做数字衰减 —— 一个"可拖但不改变音量"的
+ * 控件会被当成 bug 上报，所以这里直接断开交互。
  */
 @Composable
 fun PlayerVolumeSlider(
     volume: Double,
     onVolume: (Double) -> Unit,
+    enabled: Boolean = true,
 ) {
     val clamped = volume.coerceIn(0.0, 1.0)
 
@@ -368,7 +373,7 @@ fun PlayerVolumeSlider(
     ) {
         PlayerSpeakerGlyph(
             modifier = Modifier.size(PlayerVolumeIconSize),
-            tint = AppColors.whiteA25,
+            tint = AppColors.glyphDim,
             loud = false,
         )
         Spacer(modifier = Modifier.width(AppSpacing.sp10))
@@ -378,21 +383,28 @@ fun PlayerVolumeSlider(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(PlayerVolumeTouchHeight)
-                        .pointerInput(widthPx) {
-                            detectTapGestures { tap ->
-                                onVolume((tap.x / widthPx).coerceIn(0f, 1f).toDouble())
-                            }
-                        }
-                        .pointerInput(widthPx) {
-                            detectHorizontalDragGestures(
-                                onDragStart = { start ->
-                                    onVolume((start.x / widthPx).coerceIn(0f, 1f).toDouble())
-                                },
-                                onHorizontalDrag = { change, _ ->
-                                    onVolume((change.position.x / widthPx).coerceIn(0f, 1f).toDouble())
-                                },
-                            )
-                        },
+                        .then(
+                            if (!enabled) {
+                                Modifier
+                            } else {
+                                Modifier
+                                    .pointerInput(widthPx) {
+                                        detectTapGestures { tap ->
+                                            onVolume((tap.x / widthPx).coerceIn(0f, 1f).toDouble())
+                                        }
+                                    }
+                                    .pointerInput(widthPx) {
+                                        detectHorizontalDragGestures(
+                                            onDragStart = { start ->
+                                                onVolume((start.x / widthPx).coerceIn(0f, 1f).toDouble())
+                                            },
+                                            onHorizontalDrag = { change, _ ->
+                                                onVolume((change.position.x / widthPx).coerceIn(0f, 1f).toDouble())
+                                            },
+                                        )
+                                    }
+                            },
+                        ),
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Box(
@@ -414,7 +426,7 @@ fun PlayerVolumeSlider(
         Spacer(modifier = Modifier.width(AppSpacing.sp10))
         PlayerSpeakerGlyph(
             modifier = Modifier.size(PlayerVolumeIconSize),
-            tint = AppColors.whiteA25,
+            tint = AppColors.glyphDim,
             loud = true,
         )
     }

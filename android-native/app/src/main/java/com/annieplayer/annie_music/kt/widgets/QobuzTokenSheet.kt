@@ -24,11 +24,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
@@ -48,17 +45,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import com.annieplayer.annie_music.kt.core.state.QobuzViewModel
 import com.annieplayer.annie_music.kt.data.model.QobuzToken
-import com.annieplayer.annie_music.kt.data.sources.checkToken
+import com.annieplayer.annie_music.kt.data.sources.qobuz.checkToken
 import com.annieplayer.annie_music.kt.ui.theme.AppBorder
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
@@ -94,36 +88,34 @@ fun QobuzTokenSheet(
     val scope = rememberCoroutineScope()
     val tokens by qobuzViewModel.state.collectAsState()
 
-    var nameText by remember { mutableStateOf("") }
-    var tokenText by remember { mutableStateOf("") }
-    var showAdd by remember { mutableStateOf(false) }
-    var editingId by remember { mutableStateOf<String?>(null) }
     var checkingId by remember { mutableStateOf<String?>(null) }
     var dialog by remember { mutableStateOf<QobuzTokenSheetDialog?>(null) }
     var pendingRemove by remember { mutableStateOf<QobuzToken?>(null) }
 
-    fun resetForm() {
-        nameText = ""
-        tokenText = ""
-        showAdd = false
-        editingId = null
+    // 新增 / 编辑走弹窗（与 KKBOX 账号、Apple Wrapper 地址共用 `MultiFieldDialog`）
+    var editorVisible by remember { mutableStateOf(false) }
+    var editorTarget by remember { mutableStateOf<QobuzToken?>(null) }
+    var editorError by remember { mutableStateOf<String?>(null) }
+
+    fun openEditor(target: QobuzToken?) {
+        editorTarget = target
+        editorError = null
+        editorVisible = true
     }
 
-    fun handleSave() {
-        val name = nameText.trim()
-        val token = tokenText.trim()
+    /** @return true = 已保存；false = 校验不过（弹窗保持打开） */
+    fun handleSave(values: List<String>): Boolean {
+        val name = values.getOrElse(0) { "" }.trim()
+        val token = values.getOrElse(1) { "" }.trim()
         if (name.isEmpty() || token.isEmpty()) {
-            dialog = QobuzTokenSheetDialog("提示", "请填写名称和 Token")
-            return
+            editorError = "请填写名称和 Token"
+            return false
         }
-        val editing = editingId
+        val editing = editorTarget
         if (editing != null) {
-            val old = tokens.firstOrNull { it.id == editing }
-            if (old != null) {
-                qobuzViewModel.updateToken(
-                    QobuzToken(id = old.id, name = name, token = token, isActive = old.isActive),
-                )
-            }
+            qobuzViewModel.updateToken(
+                QobuzToken(id = editing.id, name = name, token = token, isActive = editing.isActive),
+            )
         } else {
             qobuzViewModel.addToken(
                 QobuzToken(
@@ -134,14 +126,9 @@ fun QobuzTokenSheet(
                 ),
             )
         }
-        resetForm()
-    }
-
-    fun handleEdit(item: QobuzToken) {
-        editingId = item.id
-        nameText = item.name
-        tokenText = item.token
-        showAdd = true
+        editorVisible = false
+        editorTarget = null
+        return true
     }
 
     fun handleCheck(item: QobuzToken) {
@@ -181,7 +168,8 @@ fun QobuzTokenSheet(
     // 因此完全隐藏时**整个浮层不参与组合**，等价 Flutter 的 IgnorePointer(ignoring: !visible)。
     if (!visible && scrimAlpha == 0f) return
     Box(modifier = modifier.fillMaxSize()) {
-        // 遮罩（隐藏时不启用 -> 不吃触摸）
+        // 遮罩：只吞点击，**不关闭**（退出只走返回手势 / 标题栏「关闭」）
+        // `clickable` 必须保留：吃掉触摸、阻止点击穿透到下层页面。
         val scrimInteraction = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
@@ -191,7 +179,7 @@ fun QobuzTokenSheet(
                     enabled = visible,
                     interactionSource = scrimInteraction,
                     indication = null,
-                    onClick = onClose,
+                    onClick = {},
                 )
                 .background(AppColors.scrim50),
         )
@@ -213,26 +201,9 @@ fun QobuzTokenSheet(
                 .imePadding(),
         ) {
             QobuzTokenSheetHeader(
-                showAdd = showAdd,
                 onClose = onClose,
-                onToggleAdd = {
-                    if (editingId != null) {
-                        resetForm()
-                    } else {
-                        showAdd = !showAdd
-                    }
-                },
+                onAdd = { openEditor(null) },
             )
-            if (showAdd) {
-                QobuzTokenSheetForm(
-                    name = nameText,
-                    onNameChange = { nameText = it },
-                    token = tokenText,
-                    onTokenChange = { tokenText = it },
-                    editing = editingId != null,
-                    onSave = { handleSave() },
-                )
-            }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 if (tokens.isEmpty()) {
                     QobuzTokenSheetEmpty()
@@ -247,7 +218,7 @@ fun QobuzTokenSheet(
                                 checking = checkingId == item.id,
                                 onCheck = { handleCheck(item) },
                                 onSelect = { qobuzViewModel.setActive(item.id) },
-                                onEdit = { handleEdit(item) },
+                                onEdit = { openEditor(item) },
                                 onRemove = { pendingRemove = item },
                             )
                         }
@@ -255,6 +226,31 @@ fun QobuzTokenSheet(
                 }
             }
         }
+
+        // 新增 / 编辑弹窗（与 KKBOX 账号、Apple Wrapper 地址共用同一个组件）
+        MultiFieldDialog(
+            visible = editorVisible,
+            title = if (editorTarget != null) "编辑 Token" else "添加 Token",
+            fields = listOf(
+                MultiFieldDialogField(
+                    hint = "名称（如：主账号）",
+                    initial = editorTarget?.name.orEmpty(),
+                ),
+                MultiFieldDialogField(
+                    hint = "Token",
+                    initial = editorTarget?.token.orEmpty(),
+                    imeAction = ImeAction.Done,
+                ),
+            ),
+            error = editorError,
+            confirmLabel = if (editorTarget != null) "更新" else "保存",
+            onDismiss = {
+                editorVisible = false
+                editorTarget = null
+                editorError = null
+            },
+            onConfirm = { values -> handleSave(values) },
+        )
 
         // 提示弹窗（对齐 Dart `_alert`）
         dialog?.let { d ->
@@ -317,12 +313,11 @@ private fun qobuzTokenSheetErrorText(e: Throwable): String {
     return if (!message.isNullOrEmpty()) message else e.toString()
 }
 
-/** 头部：返回 + 标题 + 新增 / 关闭切换（对齐 Dart `_buildHeader`） */
+/** 头部：返回 + 标题 + 「+」（点开新增弹窗） */
 @Composable
 private fun QobuzTokenSheetHeader(
-    showAdd: Boolean,
     onClose: () -> Unit,
-    onToggleAdd: () -> Unit,
+    onAdd: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -335,13 +330,8 @@ private fun QobuzTokenSheetHeader(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .clickableNoRipple(onClose)
-                .padding(AppSpacing.sp4),
-        ) {
-            DetailChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
-        }
+        // 统一的返回按钮（见 `SheetBackButton`）
+        SheetBackButton(onClose = onClose)
         Spacer(modifier = Modifier.size(AppSpacing.sp8))
         Text(
             text = "Qobuz Token 管理",
@@ -352,93 +342,15 @@ private fun QobuzTokenSheetHeader(
         )
         Box(
             modifier = Modifier
-                .clickableNoRipple(onToggleAdd)
+                .clickableNoRipple(onAdd)
                 .padding(AppSpacing.sp4),
         ) {
             Icon(
-                imageVector = if (showAdd) Icons.Default.Close else Icons.Default.Add,
-                contentDescription = null,
+                imageVector = Icons.Default.Add,
+                contentDescription = "添加 Token",
                 tint = AppColors.primary,
                 modifier = Modifier.size(AppIconSize.icon24),
             )
-        }
-    }
-}
-
-/** 表单：名称 + Token + 保存 / 更新（对齐 Dart `_buildForm`） */
-@Composable
-private fun QobuzTokenSheetForm(
-    name: String,
-    onNameChange: (String) -> Unit,
-    token: String,
-    onTokenChange: (String) -> Unit,
-    editing: Boolean,
-    onSave: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = AppSpacing.sp24, end = AppSpacing.sp24, bottom = AppSpacing.sp12)
-            .background(AppColors.whiteA03, RoundedCornerShape(AppRadius.card))
-            .padding(AppSpacing.sp16),
-    ) {
-        QobuzTokenSheetField(
-            value = name,
-            onValueChange = onNameChange,
-            hint = "名称（如：主账号）",
-        )
-        Spacer(modifier = Modifier.height(AppSpacing.sp8))
-        QobuzTokenSheetField(
-            value = token,
-            onValueChange = onTokenChange,
-            hint = "Token",
-            imeAction = ImeAction.Done,
-        )
-        Spacer(modifier = Modifier.height(AppSpacing.sp12))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickableNoRipple(onSave)
-                .background(AppColors.primary, RoundedCornerShape(AppRadius.r8))
-                .padding(vertical = AppSpacing.sp10),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = if (editing) "更新" else "保存",
-                color = AppColors.white,
-                fontSize = AppFontSize.size15,
-                fontWeight = AppFontWeight.semiBold,
-            )
-        }
-    }
-}
-
-/** 单行输入框（对齐 Dart `_inputDecoration`：0.05 底、圆角 8、无边框、内边距 12） */
-@Composable
-private fun QobuzTokenSheetField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    hint: String,
-    modifier: Modifier = Modifier,
-    imeAction: ImeAction = ImeAction.Next,
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.r8))
-            .padding(AppSpacing.sp12),
-    ) {
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            textStyle = TextStyle(color = AppColors.white, fontSize = AppFontSize.size15),
-            cursorBrush = SolidColor(AppColors.primary),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = imeAction),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (value.isEmpty()) {
-            Text(text = hint, color = AppColors.white30, fontSize = AppFontSize.size15)
         }
     }
 }
@@ -521,7 +433,7 @@ private fun QobuzTokenSheetItem(
                     Icon(
                         imageVector = Icons.Default.Search,
                         contentDescription = null,
-                        tint = AppColors.whiteA40,
+                        tint = AppColors.glyphMid,
                         modifier = Modifier.size(AppIconSize.icon22),
                     )
                     Spacer(modifier = Modifier.height(AppSpacing.sp2))
@@ -575,7 +487,7 @@ private fun QobuzTokenSheetItem(
                 Icon(
                     imageVector = Icons.Default.Edit,
                     contentDescription = null,
-                    tint = AppColors.textTertiary,
+                    tint = AppColors.glyphMid,
                     modifier = Modifier.size(AppIconSize.icon20),
                 )
             }
@@ -587,7 +499,7 @@ private fun QobuzTokenSheetItem(
                 Icon(
                     imageVector = Icons.Default.Delete,
                     contentDescription = null,
-                    tint = AppColors.whiteA25,
+                    tint = AppColors.glyphDim,
                     modifier = Modifier.size(AppIconSize.icon20),
                 )
             }

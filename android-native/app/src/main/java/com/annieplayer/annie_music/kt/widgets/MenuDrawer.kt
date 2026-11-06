@@ -120,13 +120,14 @@ fun MenuDrawer(
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val panelWidth = maxWidth * AppSize.drawerWidthFraction
 
-        // ── 遮罩：仅打开时存在（Flutter: if (isOpen) Positioned.fill） ──
+        // ── 遮罩：只吞点击，**不关闭**（退出只走返回手势 / 标题栏「×」） ──
+        // `clickableNoRipple` 必须保留：吃掉触摸、阻止点击穿透到下层页面。
         if (visible) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(AppColors.black54)
-                    .clickableNoRipple(onClose),
+                    .clickableNoRipple { },
             )
         }
 
@@ -159,15 +160,8 @@ fun MenuDrawer(
                     .height(AppSize.headerActionHeight),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = null,
-                    tint = AppColors.white70,
-                    modifier = Modifier
-                        .clickableNoRipple(onClose)
-                        .padding(AppSpacing.sp4)
-                        .size(AppIconSize.icon22),
-                )
+                // 统一的关闭按钮（见 `SheetCloseButton`）
+                SheetCloseButton(onClose = onClose)
                 Spacer(modifier = Modifier.width(AppSpacing.sp12))
                 Text(
                     text = "菜单",
@@ -188,7 +182,7 @@ fun MenuDrawer(
                     true -> "已授权（可全盘读写）"
                     false -> "未授权，点击去开启"
                 },
-                icon = { MenuDrawerFolderOpenIcon(tint = AppColors.white54) },
+                icon = { MenuDrawerFolderOpenIcon(tint = AppColors.glyphStrong) },
             )
             MenuDrawerSwitchRow(
                 label = "耗电优化",
@@ -199,7 +193,7 @@ fun MenuDrawer(
                 },
                 checked = batteryExempt == true,
                 onCheckedChange = onToggleBattery,
-                icon = { MenuDrawerBatteryIcon(tint = AppColors.white54) },
+                icon = { MenuDrawerBatteryIcon(tint = AppColors.glyphStrong) },
             )
             Spacer(modifier = Modifier.height(AppSpacing.sp8))
 
@@ -210,21 +204,21 @@ fun MenuDrawer(
                 onTap = {
                     onAppleService()
                 },
-                icon = { MenuDrawerKeyIcon(tint = AppColors.white54) },
+                icon = { MenuDrawerKeyIcon(tint = AppColors.glyphStrong) },
             )
             MenuDrawerRow(
                 label = "Qobuz Token 管理",
                 onTap = {
                     onQobuzToken()
                 },
-                icon = { MenuDrawerKeyIcon(tint = AppColors.white54) },
+                icon = { MenuDrawerKeyIcon(tint = AppColors.glyphStrong) },
             )
             MenuDrawerRow(
                 label = "KKBOX 账号管理",
                 onTap = {
                     onKkboxAccount()
                 },
-                icon = { MenuDrawerKeyIcon(tint = AppColors.white54) },
+                icon = { MenuDrawerKeyIcon(tint = AppColors.glyphStrong) },
             )
             Spacer(modifier = Modifier.height(AppSpacing.sp8))
 
@@ -239,7 +233,7 @@ fun MenuDrawer(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.List,
                         contentDescription = null,
-                        tint = AppColors.white54,
+                        tint = AppColors.glyphStrong,
                         modifier = Modifier.fillMaxSize(),
                     )
                 },
@@ -260,7 +254,7 @@ fun MenuDrawer(
                     onClearCache()
                 },
                 subtitle = menuDrawerCacheSubtitle(cacheSize),
-                icon = { MenuDrawerDeleteOutlineIcon(tint = AppColors.white54) },
+                icon = { MenuDrawerDeleteOutlineIcon(tint = AppColors.glyphStrong) },
             )
             Spacer(modifier = Modifier.height(AppSpacing.sp8))
 
@@ -278,7 +272,7 @@ fun MenuDrawer(
                     Icon(
                         imageVector = Icons.Default.Settings,
                         contentDescription = null,
-                        tint = AppColors.white54,
+                        tint = AppColors.glyphStrong,
                         modifier = Modifier.fillMaxSize(),
                     )
                 },
@@ -291,13 +285,13 @@ fun MenuDrawer(
                 label = "HIFI 科普网站",
                 onTap = onHifiSite,
                 subtitle = "by@买葱花也要砍一刀(2801497426)",
-                icon = { MenuDrawerGlobeIcon(tint = AppColors.white54) },
+                icon = { MenuDrawerGlobeIcon(tint = AppColors.glyphStrong) },
             )
             MenuDrawerRow(
                 label = "频谱分析网站",
                 onTap = onSpectrumSite,
                 subtitle = "by@HIFI神医章鱼哥(430768125)",
-                icon = { MenuDrawerGlobeIcon(tint = AppColors.white54) },
+                icon = { MenuDrawerGlobeIcon(tint = AppColors.glyphStrong) },
             )
             // 注意：Flutter 版点「联系我们」不关抽屉（联系弹窗叠在抽屉之上），此处保持一致
             MenuDrawerRow(
@@ -307,7 +301,7 @@ fun MenuDrawer(
                     Icon(
                         imageVector = Icons.Default.MailOutline,
                         contentDescription = null,
-                        tint = AppColors.white54,
+                        tint = AppColors.glyphStrong,
                         modifier = Modifier.fillMaxSize(),
                     )
                 },
@@ -426,7 +420,7 @@ private fun MenuDrawerRow(
         Icon(
             imageVector = Icons.Default.KeyboardArrowRight,
             contentDescription = null,
-            tint = AppColors.white24,
+            tint = AppColors.glyphDim,
             modifier = Modifier.size(AppIconSize.icon16),
         )
     }
@@ -512,7 +506,7 @@ private fun MenuDrawerSaveLocationCard(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(AppIconSize.icon18), contentAlignment = Alignment.Center) {
-                MenuDrawerFolderIcon(tint = AppColors.white54)
+                MenuDrawerFolderIcon(tint = AppColors.glyphStrong)
             }
             Spacer(modifier = Modifier.width(AppSpacing.sp10))
             Text(
@@ -532,7 +526,7 @@ private fun MenuDrawerSaveLocationCard(
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = null,
-                        tint = AppColors.white38,
+                        tint = AppColors.glyphMid,
                         modifier = Modifier.size(AppIconSize.icon16),
                     )
                 }

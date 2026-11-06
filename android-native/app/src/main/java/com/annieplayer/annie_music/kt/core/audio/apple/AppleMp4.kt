@@ -1,6 +1,8 @@
 package com.annieplayer.annie_music.kt.core.audio.apple
 
 import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -225,130 +227,124 @@ fun patchAppleSegmentClear(bytes: ByteArray) {
 }
 
 /**
- * 生成普通（非分片）m4a 的 ftyp+moov。
- * sample 数据由调用方按顺序写在 mdat 中。
+ * 边下边写用的「前置头」：`ftyp` + 一个 **64 位长度的 `mdat` 头**。
+ *
+ * 为什么用 64 位头：下载开始时不知道音频会有多少字节，但 mdat 头必须**先**写出去（音频紧跟其后），
+ * 只能写完再回填。用 32 位头就得判断「会不会超过 4GB」，用 64 位头一律按 8 字节长度处理，
+ * 回填位置固定（`ftyp.size + 8`），少一个分支。多花 8 字节。
  */
-fun buildAppleHeader(
-    ftyp: ByteArray,
+fun buildApplePrologue(ftyp: ByteArray): ByteArray {
+    val out = java.io.ByteArrayOutputStream(ftyp.size + APPLE_MDAT_HEADER)
+    out.write(ftyp)
+    writeU32(out, 1) // size=1 → 真正的长度在 largesize 里
+    out.write("mdat".toByteArray(Charsets.US_ASCII))
+    out.write(ByteArray(8)) // largesize 占位，写完回填
+    return out.toByteArray()
+}
+
+/**
+ * `mdat` 头的固定长度（`size` 4 + `mdat` 4 + `largesize` 8）。
+ *
+ * 也是 chunk 起点相对 `mdat` 盒起点的偏移：第一个 sample 落在 `ftyp.size + 16`。
+ */
+const val APPLE_MDAT_HEADER = 16
+
+/** `mdat` 的 largesize 回填位置（相对文件起点）。 */
+fun appleMdatSizeOffset(ftypSize: Int): Long = ftypSize + 8L
+
+/** `mdat` 的 largesize 值 = 音频字节数 + 16（含头）。 */
+fun appleMdatSizeBytes(sampleBytes: Long): ByteArray {
+    val total = sampleBytes + APPLE_MDAT_HEADER
+    return byteArrayOf(
+        ((total ushr 56) and 0xFF).toByte(),
+        ((total ushr 48) and 0xFF).toByte(),
+        ((total ushr 40) and 0xFF).toByte(),
+        ((total ushr 32) and 0xFF).toByte(),
+        ((total ushr 24) and 0xFF).toByte(),
+        ((total ushr 16) and 0xFF).toByte(),
+        ((total ushr 8) and 0xFF).toByte(),
+        (total and 0xFF).toByte(),
+    )
+}
+
+/**
+ * 生成 **`moov` 在文件尾** 的 m4a 布局（边下边写专用）。
+ *
+ * ```
+ * ftyp | mdat 头 | 逐 sample 音频 …… | moov
+ *        ↑ chunk 起点 = ftyp + 16，与 moov 自身长度**无关**
+ * ```
+ *
+ * 这是这套下载器能做到「音频只搬一趟」的关键：
+ * - `stco` 只需要知道音频的起点，而这个起点在写第一个 sample 之前就定了（`ftyp` 长度已知），
+ *   所以**不用**为 moov 预留空洞、也不用估算 moov 大小；
+ * - moov 里的 `stsz` / `stts` 要等全部 sample 到手才知道，正好放在最后写。
+ *
+ * 以前是「先写 raw 临时文件 → 再 ftyp+moov+raw 复制成 .part → 再复制进媒体库」，
+ * 一首无损要搬 3 遍；现在只搬 1 遍。
+ *
+ * @param chunkOffset 第一个 sample 的绝对偏移（`ftyp.size + [APPLE_MDAT_HEADER]`）
+ * @param udta `AnnieTag.mp4UdtaBox()` 生成的标签盒子，追加进 moov
+ */
+fun buildAppleTrailingMoov(
     moov: ByteArray,
     codec: String,
     durations: List<Int>,
     sizes: List<Int>,
+    chunkOffset: Int,
+    udta: ByteArray? = null,
 ): ByteArray {
-    val rebuilt = rebuildMoov(moov, codec, durations, sizes)
-    val header = ftyp + rebuilt
-    patchStco(header, header.size + 8)
-    patchDurations(header, durations)
-    return header
+    val rebuilt = rebuildMoov(moov, codec, durations, sizes, udta)
+    patchStcoIn(rebuilt, 8, rebuilt.size, chunkOffset)
+    patchDurationsIn(rebuilt, 8, rebuilt.size, durations)
+    return rebuilt
 }
 
 /**
- * 把 raw sample 文件封装成最终 m4a。
+ * ALAC element 尾位修正需要的三个 magic cookie 参数。
  *
- * @param rawSamples 已解密、按 sample 顺序拼接的裸音频帧
+ * 以前这套参数在两个地方各解析一遍：播放侧三个 `get()` 属性（**每个 sample 各跑一次
+ * `findAlacCookie`**，一首 4 分钟的歌白跑七千多次 box 遍历），下载侧用
+ * `alacFix(file)` 事后扫一遍文件。现在统一在 [alacTailParams] 解析一次。
  */
-fun writeAppleMp4(
-    header: ByteArray,
-    rawSamples: File,
-    output: File,
-) {
-    val sampleBytes = rawSamples.length()
-    val large = sampleBytes + 8 > 0xFFFFFFFFL
-    output.parentFile?.mkdirs()
-    RandomAccessFile(output, "rw").use { out ->
-        out.setLength(0)
-        out.write(header)
-        if (large) {
-            writeU32(out, 1)
-            out.write("mdat".toByteArray(Charsets.US_ASCII))
-            writeU64(out, sampleBytes + 16)
-        } else {
-            writeU32(out, (sampleBytes + 8).toInt())
-            out.write("mdat".toByteArray(Charsets.US_ASCII))
-        }
-        RandomAccessFile(rawSamples, "r").use { src ->
-            // 整段裸样本可能几百 MB，用 transferTo 走内核零拷贝，避免 256KB 缓冲的往返 copy
-            val srcChannel = src.channel
-            val dstChannel = out.channel
-            val total = srcChannel.size()
-            var position = 0L
-            while (position < total) {
-                val moved = srcChannel.transferTo(position, total - position, dstChannel)
-                if (moved <= 0L) break
-                position += moved
-            }
-        }
+internal data class AlacTailParams(val maxBlock: Int, val channels: Int, val bits: Int)
+
+/** 从 moov 的 ALAC magic cookie 里读 maxBlock / 声道 / 位深；非 ALAC 或读不全返回 null。 */
+internal fun alacTailParams(moov: ByteArray): AlacTailParams? {
+    val cookie = findAlacCookie(moov) ?: return null
+    val base = if (cookie.size >= 8 && String(cookie, 4, 4, Charsets.US_ASCII) == "alac") 12 else 0
+
+    fun field(offset: Int, size: Int): Int? {
+        if (base + offset + size > cookie.size) return null
+        var value = 0
+        for (i in 0 until size) value = (value shl 8) or (cookie[base + offset + i].toInt() and 0xFF)
+        return value
     }
-}
 
-/** 修正 ALAC 每帧末尾的 3 个保留位；返回修正帧数。 */
-fun alacFix(file: File): Int {
-    RandomAccessFile(file, "rw").use { raf ->
-        val moov = findMoovBytes(raf) ?: return 0
-        val cookie = findAlacCookie(moov) ?: return 0
-        val off = if (cookie.size >= 8 && String(cookie, 4, 4, Charsets.US_ASCII) == "alac") 12 else 0
-        val body = cookie.copyOfRange(off, cookie.size)
-        if (body.size < 24) return 0
-        val frameLength = i32(body, 0)
-        val channels = body[9].toInt() and 0xFF
-        val depth = body[5].toInt() and 0xFF
-        if (frameLength <= 0 || channels <= 0 || depth <= 0) return 0
-        val expected = (frameLength * channels * depth + 32 + 7) / 8
-
-        val stbl = findStbl(moov) ?: return 0
-        val stsz = children(stbl, 8, stbl.size).firstOrNull { it.type == "stsz" } ?: return 0
-        val stco = children(stbl, 8, stbl.size).firstOrNull { it.type == "stco" } ?: return 0
-        val count = i32(moov, stsz.payloadStart + 8)
-        val per = i32(moov, stsz.payloadStart + 4)
-        val nco = i32(moov, stco.payloadStart + 4)
-        var dataStart = if (nco > 0) i32(moov, stco.payloadStart + 8).toLong() else 0L
-        var fixed = 0
-
-        val starts = LongArray(count)
-        val sizes = IntArray(count)
-        if (per != 0) {
-            for (i in 0 until count) sizes[i] = per
-        } else {
-            var p = stsz.payloadStart + 12
-            for (i in 0 until count) {
-                sizes[i] = i32(moov, p)
-                p += 4
-            }
-        }
-        for (i in 0 until count) {
-            starts[i] = dataStart
-            dataStart += sizes[i]
-        }
-        val pair = ByteArray(2)
-        for (i in 0 until count) {
-            val s = sizes[i]
-            val d = starts[i] + s
-            if (starts[i] < 0 || d > raf.length() || s <= 2 || kotlin.math.abs(s - expected) > 4) continue
-            raf.seek(d - 2)
-            // 一次 readFully 取 2 字节，省掉逐字节 read() 的往返
-            raf.readFully(pair)
-            val b1 = pair[0].toInt() and 0xFF
-            val b2 = pair[1].toInt() and 0xFF
-            if ((((b1 and 1) shl 2) or ((b2 shr 6) and 3)) != 7) {
-                raf.seek(d - 2)
-                raf.write((b1 and 0xFE) or 1)
-                raf.write((b2 and 0x3F) or 0xC0)
-                fixed++
-            }
-        }
-        return fixed
-    }
+    val maxBlock = field(0, 4) ?: return null
+    val bits = field(5, 1) ?: return null
+    val channels = field(9, 1) ?: return null
+    if (maxBlock <= 0 || channels <= 0 || bits <= 0) return null
+    return AlacTailParams(maxBlock, channels, bits)
 }
 
 // ── moov 重建 ──
 
-private fun rebuildMoov(moov: ByteArray, codec: String, durations: List<Int>, sizes: List<Int>): ByteArray {
+private fun rebuildMoov(
+    moov: ByteArray,
+    codec: String,
+    durations: List<Int>,
+    sizes: List<Int>,
+    udta: ByteArray? = null,
+): ByteArray {
     val out = java.io.ByteArrayOutputStream()
     for (box in children(moov, 8, moov.size)) {
         if (box.type == "mvex" || box.type == "pssh" || box.type == "udta") continue
         val raw = moov.copyOfRange(box.start, box.start + box.size)
         out.write(if (box.type == "trak") rebuildTrak(raw, codec, durations, sizes) else raw)
     }
+    // 标签放在 moov 末尾。必须在 patchStco 之前写进来：stco 的基准是 header 的最终长度。
+    if (udta != null) out.write(udta)
     return boxBytes("moov", out.toByteArray())
 }
 
@@ -475,51 +471,49 @@ private fun stco(): ByteArray {
     return fullBox("stco", body.toByteArray())
 }
 
-private fun patchStco(file: ByteArray, chunkOffset: Int) {
-    val ftyp = boxAt(file, 0, file.size) ?: return
-    val moov = boxAt(file, ftyp.start + ftyp.size, file.size) ?: return
-    fun rec(start: Int, end: Int): Boolean {
-        for (box in children(file, start, end)) {
+/** 在任意缓冲区里把第一个 `stco` 的 chunk 偏移改成 [chunkOffset]（单 chunk 布局）。 */
+private fun patchStcoIn(buf: ByteArray, payloadStart: Int, end: Int, chunkOffset: Int) {
+    fun rec(start: Int, stop: Int): Boolean {
+        for (box in children(buf, start, stop)) {
             if (box.type == "stco") {
-                writeU32Into(file, box.payloadStart + 8, chunkOffset)
+                writeU32Into(buf, box.payloadStart + 8, chunkOffset)
                 return true
             }
             if (box.type in CONTAINERS && rec(box.payloadStart, box.start + box.size)) return true
         }
         return false
     }
-    rec(moov.payloadStart, moov.start + moov.size)
+    rec(payloadStart, end)
 }
 
-private fun patchDurations(file: ByteArray, durations: List<Int>) {
+/** 在任意缓冲区里回填 mvhd / tkhd / mdhd / elst 的时长（moov 可以不在 ftyp 后面）。 */
+private fun patchDurationsIn(buf: ByteArray, payloadStart: Int, end: Int, durations: List<Int>) {
     val total = durations.sum()
-    val ftyp = boxAt(file, 0, file.size) ?: return
-    val moov = boxAt(file, ftyp.start + ftyp.size, file.size) ?: return
-    fun rec(start: Int, end: Int) {
-        for (box in children(file, start, end)) {
+    fun rec(start: Int, stop: Int) {
+        for (box in children(buf, start, stop)) {
             val p = box.payloadStart
             when (box.type) {
                 "mvhd", "tkhd", "mdhd" -> {
-                    val v = file[p].toInt() and 0xFF
+                    val v = buf[p].toInt() and 0xFF
                     val at = when (box.type) {
                         "mvhd" -> p + if (v == 1) 20 else 16
                         "tkhd" -> p + if (v == 1) 28 else 20
                         else -> p + if (v == 1) 28 else 16
                     }
-                    if (v == 1) writeU64Into(file, at, total.toLong()) else writeU32Into(file, at, total)
+                    if (v == 1) writeU64Into(buf, at, total.toLong()) else writeU32Into(buf, at, total)
                 }
                 "elst" -> {
-                    val v = file[p].toInt() and 0xFF
-                    val n = i32(file, p + 4)
+                    val v = buf[p].toInt() and 0xFF
+                    val n = i32(buf, p + 4)
                     var q = p + 8
                     repeat(n) {
                         if (v == 1) {
-                            writeU64Into(file, q, total.toLong())
-                            writeU64Into(file, q + 8, 0L)
+                            writeU64Into(buf, q, total.toLong())
+                            writeU64Into(buf, q + 8, 0L)
                             q += 20
                         } else {
-                            writeU32Into(file, q, total)
-                            writeU32Into(file, q + 4, 0)
+                            writeU32Into(buf, q, total)
+                            writeU32Into(buf, q + 4, 0)
                             q += 12
                         }
                     }
@@ -528,7 +522,7 @@ private fun patchDurations(file: ByteArray, durations: List<Int>) {
             if (box.type in CONTAINERS_WITH_EDTS) rec(box.payloadStart, box.start + box.size)
         }
     }
-    rec(moov.payloadStart, moov.start + moov.size)
+    rec(payloadStart, end)
 }
 
 private fun mdhdTimescale(moov: ByteArray): Int {
@@ -709,29 +703,6 @@ private fun parseSampleIvs(
 
 // ── alac cookie ──
 
-private fun findMoovBytes(raf: RandomAccessFile): ByteArray? {
-    raf.seek(0)
-    if (raf.length() < 8) return null
-    val head = ByteArray(16)
-    val read = raf.read(head)
-    if (read < 8) return null
-    var ftypSize = i32(head, 0)
-    if (ftypSize == 1) {
-        if (read < 16) return null
-        ftypSize = u64(head, 8).toInt()
-    }
-    if (ftypSize < 8) return null
-    raf.seek(ftypSize.toLong())
-    val moovHead = ByteArray(16)
-    if (raf.read(moovHead) < 8) return null
-    val moovSize = i32(moovHead, 0)
-    if (moovSize < 8) return null
-    raf.seek(ftypSize.toLong())
-    val data = ByteArray(moovSize)
-    raf.readFully(data)
-    return data
-}
-
 private fun findStbl(moov: ByteArray): ByteArray? {
     for (trak in children(moov, 8, moov.size)) {
         if (trak.type != "trak") continue
@@ -863,11 +834,6 @@ private fun writeU32(raf: RandomAccessFile, value: Int) {
     raf.write((value ushr 16) and 0xFF)
     raf.write((value ushr 8) and 0xFF)
     raf.write(value and 0xFF)
-}
-
-private fun writeU64(raf: RandomAccessFile, value: Long) {
-    writeU32(raf, (value ushr 32).toInt())
-    writeU32(raf, value.toInt())
 }
 
 private fun writeU32Into(buf: ByteArray, off: Int, value: Int) {

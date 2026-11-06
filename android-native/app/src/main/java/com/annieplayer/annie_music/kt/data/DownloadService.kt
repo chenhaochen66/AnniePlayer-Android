@@ -4,26 +4,37 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.util.Log
+import com.annieplayer.annie_music.kt.core.platform.DownloadSink
+import com.annieplayer.annie_music.kt.core.platform.FileDownloadSink
 import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
 import com.annieplayer.annie_music.kt.core.state.MoreSettings
 import com.annieplayer.annie_music.kt.core.util.LyricLine
 import com.annieplayer.annie_music.kt.core.util.lrcTimeOfMs
 import com.annieplayer.annie_music.kt.core.util.mmssOfMs
 import com.annieplayer.annie_music.kt.core.util.parseLrcWithTranslation
+import com.annieplayer.annie_music.kt.data.local.stream.StreamTag
+import com.annieplayer.annie_music.kt.data.local.tag.AnnieTag
+import com.annieplayer.annie_music.kt.data.local.tag.CoverBytes
+import com.annieplayer.annie_music.kt.data.local.tag.TagBag
+import com.annieplayer.annie_music.kt.data.local.tag.TagKey
+import com.annieplayer.annie_music.kt.data.local.tag.TagMapper
+import com.annieplayer.annie_music.kt.data.local.tag.WritePolicy
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
-import com.annieplayer.annie_music.kt.data.sources.decodeHtmlEntities
-import com.annieplayer.annie_music.kt.data.sources.getTrack
-import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
+import com.annieplayer.annie_music.kt.data.sources.common.decodeHtmlEntities
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getTrack
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzTokenProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Request
 import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
@@ -38,28 +49,24 @@ import kotlin.math.roundToInt
  * - 目录解析：Dart `downloadDirService.getDownloadDirPath()`；这里同包 [DownloadDirService]。
  * - 媒体库入库：Dart 走 MethodChannel；这里直接调用同工程原生实现
  *   [com.annieplayer.annie_music.kt.core.platform.MediaStoreScan]。
- * - 进度语义完全一致：下载中用 `received / total`，随后依次回调 0.5 / 0.65 / 0.8 / 1.0。
- * - 文件名规则一致：`{title} - {artist}{.mp3|.flac}`，非法字符替换为 `_`；临时文件 `tmp_{safeSongId}{ext}`。
+ * - 文件名规则一致：`{title} - {artist}{.mp3|.flac}`，非法字符替换为 `_`。
+ * - 进度：下载中用 `received / total`，打标与入库各占一小段收尾。
  *
  * Context 依赖：通过 [init] 解析 `context.cacheDir` 作为临时目录（与
  * [com.annieplayer.annie_music.kt.data.network.CacheService] 的 `init(context)` 模式一致）。
  * 未调用 [init] 时退化为 JVM 临时目录，保证 API 在初始化前仍可工作。
  *
- * ## 元数据写入（ffmpeg-kit 已被上游停止维护，改用平台 API）
+ * ## 两条落盘路径
  *
- * 读取统一使用 [MediaMetadataRetriever]（见 [readTags]）。写入按封装格式区分，**不静默跳过**：
+ * 1. **快路径**（[_tryStreaming]）：字节从网络来的同时就把容器头和标签写出去，直接落进
+ *    目标（自定义目录的真实文件 / `MediaStore` 的 pending 条目）。全程只有下载这一趟写盘，
+ *    没有临时文件、没有入库复制。覆盖 mp3 / flac / ogg / opus / aac / dsd / dff / wav / aiff
+ *    —— 具体由 `StreamTag` 的格式表决定。
+ * 2. **落盘路径**（[_downloadLegacy]）：快路径放弃的格式（m4a 的 `moov` 在文件尾、ape 系
+ *    的旧尾标签没法在流里裁掉）先写临时文件，再用 `AnnieTag` 打标。`AnnieTag` 对这些格式
+ *    也尽量「只碰几 KB」，但至少多一趟落盘。
  *
- * - **MP3**：可写。纯 Kotlin 生成 ID3v2.4 标签块（UTF-8），帧包括 TIT2/TPE1/TALB/TPE2/
- *   TRCK/TPOS/TDRC/USLT（歌词），封面写为 APIC（picture type=3，front cover）。
- * - **FLAC**：可写。改写 FLAC 元数据块（Vorbis comment，UTF-8；封面写为 PICTURE 块），
- *   STREAMINFO 仍保持在首块，SEEKTABLE/APPLICATION/CUESHEET 原样保留。
- * - **M4A / MP4 / AAC**：**不可写**。`android.media.MediaMuxer` 没有通用元数据标签 API，
- *   平台侧无法在不引入 Media3 Transformer 依赖的前提下写入标题/封面；[MediaMetadataRetriever]
- *   只能读取。此类文件仅完成下载，保持原始文件并在日志中明确记录（不静默跳过打标）。
- * - 其它格式：同样明确记录后保持原文件。
- *
- * 封面下载与打标的失败回退与 Dart 完全对齐：先带封面打标，失败则去掉封面重试一次，
- * 再失败则使用原始文件（至少保证文件可用）。
+ * 打标内容与「事后补标」（[tagAudioFile]）共用同一个 [buildTagBag]，两处字段不会走偏。
  */
 object DownloadService {
 
@@ -73,6 +80,9 @@ object DownloadService {
      * 256KB 时降到四百次以内，在 UFS 上就能吃满顺序写带宽。
      */
     private const val COPY_BUFFER = 256 * 1024
+
+    /** 封面字节上限。超过就当作「没有封面」—— 30MB 的 BMP 塞进标签只会拖垮播放器。 */
+    private const val COVER_LIMIT = 8 * 1024 * 1024L
 
     /** Chrome UA（与 Flutter `download_service.dart` 的 `_chromeUa` 完全一致） */
     private const val _chromeUa =
@@ -90,26 +100,8 @@ object DownloadService {
     private fun _tempDir(): File =
         _cacheDir ?: File(System.getProperty("java.io.tmpdir") ?: ".")
 
-    /** Apple 下载等外部流程复用的临时目录。 */
-    internal fun tempDirectory(): File = _tempDir()
-
-    /** 与 [downloadSong] 相同的下载目录（含末尾分隔符）。 */
-    internal fun downloadDirectory(): String {
-        val customDir = DownloadDirService.getDownloadDirPath()
-        return if (!customDir.isNullOrEmpty()) {
-            if (customDir.endsWith("/") || customDir.endsWith("\\")) customDir
-            else customDir + File.separator
-        } else {
-            _tempDir().absolutePath + File.separator + "downloads" + File.separator
-        }
-    }
-
-    /** 用户是否设置了自定义下载目录（非默认私有 downloads/）。 */
-    internal fun hasCustomDownloadDirectory(): Boolean =
-        !DownloadDirService.getDownloadDirPath().isNullOrEmpty()
-
     /** 活跃下载（对齐 Dart `ActiveDownload`），用于暂停/取消 */
-    private class ActiveDownload(val call: Call, val tempPath: String) {
+    private class ActiveDownload(val call: Call) {
         @Volatile
         var cancelReason: String? = null
     }
@@ -280,204 +272,258 @@ object DownloadService {
         composer: String? = null,
         genre: String? = null,
         isrc: String? = null,
+        copyright: String? = null,
+        version: String? = null,
+        /** 结构化歌手名列表；给了就按 `A / B` 拼（多歌手统一写法），没给才用 [artist] 原串 */
+        artistNames: List<String> = emptyList(),
     ): String {
         var isrcValue: String? = isrc
-        var versionValue: String? = null
-        var copyrightValue: String? = null
-        if (songId.startsWith("qobuz:")) {
+        var versionValue: String? = version
+        var copyrightValue: String? = copyright
+        // Qobuz 的 `Song` 现在自己就带全了（isrc / version / copyright），
+        // 只有真缺字段时才去补一次 track 详情 —— 省掉每首一次网络请求。
+        if (songId.startsWith("qobuz:") &&
+            (isrcValue == null || versionValue == null || copyrightValue == null)
+        ) {
             runCatching { getTrack(songId.removePrefix("qobuz:"), qobuzTokenProvider().orEmpty()) }
                 .getOrNull()
                 ?.let {
-                    isrcValue = it.isrc
-                    versionValue = it.version
-                    copyrightValue = it.copyright
+                    isrcValue = isrcValue ?: it.isrc
+                    versionValue = versionValue ?: it.version
+                    copyrightValue = copyrightValue ?: it.copyright
                 }
         }
         val safeTitle = decodeHtmlEntities(title)
         val safeArtist = decodeHtmlEntities(artist)
-        var e = _ext(quality)
-        // 先不算最终文件名：真实格式要等拿到字节才能定（见下方嗅探）。
+        // 先不算最终文件名：真实格式要等拿到字节才能定（见 StreamTag.extensionOf）。
         // 否则「请求 flac 但平台只给 mp3」会把 mp3 内容写成 .flac 扩展名 + FLAC 标签。
         val safeBaseName = "$safeTitle - $safeArtist".replace(Regex("[/\\\\?%*:|\"<>]"), "_")
-
-        // 目标目录：优先用户自定义下载目录，否则私有 downloads/（对齐 Dart）
-        val customDir = DownloadDirService.getDownloadDirPath()
-        val downloadDir: String = if (!customDir.isNullOrEmpty()) {
-            if (customDir.endsWith("/") || customDir.endsWith("\\")) {
-                customDir
-            } else {
-                customDir + File.separator
-            }
-        } else {
-            _tempDir().absolutePath + File.separator + "downloads" + File.separator
+        val mergedLyric = mergeLyrics(lyric, tlyric, wordLyric)
+        val bagOf: (CoverBytes?) -> TagBag = { cover ->
+            buildTagBag(
+                cover = cover,
+                title = safeTitle,
+                artist = safeArtist,
+                artistNames = artistNames,
+                album = album ?: "",
+                lyric = mergedLyric,
+                albumArtist = albumArtist,
+                trackNumber = trackNumber,
+                discNumber = discNumber,
+                releaseDate = releaseDate,
+                composer = composer,
+                genre = genre,
+                isrc = isrcValue,
+                version = versionValue,
+                copyright = copyrightValue,
+            )
         }
-        val dir = File(downloadDir)
+
+        val result = coroutineScope {
+            // 封面与音频流并发：封面必须赶在「写出头部」之前到（flac/mp3 的标签在文件最前），
+            // 但整首要下好几秒，这点 RTT 完全被遮掉。
+            val coverDeferred = async(Dispatchers.IO) {
+                if (coverUrl.isEmpty()) null else fetchCoverBytes(coverUrl, songId)
+            }
+            try {
+                // 快路径：边收边封装 + 直写（一趟，零音频拷贝、零临时文件）
+                _tryStreaming(
+                    songId = songId,
+                    downloadUrl = downloadUrl,
+                    baseName = safeBaseName,
+                    requestedExt = _ext(quality),
+                    bagOf = bagOf,
+                    cover = { coverDeferred.await() },
+                    onProgress = onProgress,
+                ) ?: _downloadLegacy(
+                    songId = songId,
+                    downloadUrl = downloadUrl,
+                    baseName = safeBaseName,
+                    requestedExt = _ext(quality),
+                    bagOf = bagOf,
+                    cover = { coverDeferred.await() },
+                    onProgress = onProgress,
+                )
+            } catch (ex: Exception) {
+                when (_activeDownloads[songId]?.cancelReason) {
+                    "paused" -> {
+                        _activeDownloads.remove(songId)
+                        throw IllegalStateException("下载已暂停")
+                    }
+                    "cancelled" -> {
+                        _activeDownloads.remove(songId)
+                        throw IllegalStateException("下载已取消")
+                    }
+                    else -> {
+                        // 普通失败（含 L3 内容校验不过）也要摘掉登记：
+                        // 留着会让之后的「暂停 / 取消」拿到一个已经结束的 call。
+                        _activeDownloads.remove(songId)
+                        throw ex
+                    }
+                }
+            }
+        }
+        onProgress(1.0)
+        _activeDownloads.remove(songId)
+        if (MoreSettings.saveLrcFile.value) _writeLrc(result, mergedLyric)
+        return result
+    }
+
+    /**
+     * 快路径：**边收边封装 + 直写**。
+     *
+     * mp3 / flac / ogg / dsd / wav / aiff 这些「标签在头部或尾部」的格式，可以在字节流经过的
+     * 同时把容器头和标签写出去 —— 落地的就是成品，全程只有下载那一趟写盘。
+     *
+     * @return 落定地址（真实路径或 `content://`）；**null** = 这个格式不能流式注入，
+     *   调用方接着走 [downloadLegacy]。
+     *
+     * 返回 null 时代价只有一个头部预读（≤ [StreamTag.PEEK]，通常 256KB）：
+     * `StreamTag.write` 在判定放弃之前既不写目标、也不读到 head 之后。
+     */
+    private suspend fun _tryStreaming(
+        songId: String,
+        downloadUrl: String,
+        baseName: String,
+        requestedExt: String,
+        bagOf: (CoverBytes?) -> TagBag,
+        cover: suspend () -> CoverBytes?,
+        onProgress: (Double) -> Unit,
+    ): String? = coroutineScope {
+        val request = Request.Builder().url(downloadUrl).header("User-Agent", _chromeUa).build()
+        val call = globalOkHttp.newCall(request)
+        _activeDownloads[songId] = ActiveDownload(call)
+
+        withContext(Dispatchers.IO) {
+            call.execute().use { resp ->
+                if (!resp.isSuccessful) throw IOException("Download failed: ${resp.code}")
+                val body = resp.body ?: throw IOException("Download failed")
+                val total = body.contentLength()
+                val input = BufferedInputStream(body.byteStream(), COPY_BUFFER)
+                val head = _readUpTo(input, StreamTag.PEEK)
+                if (head.isEmpty()) throw IOException("Download failed: 内容为空")
+
+                val ext = StreamTag.extensionOf(head) ?: requestedExt
+                val bag = bagOf(cover())
+                // 先问一句「能不能流式」。不能就在**还没写任何东西**的时候收手，
+                // 交给落盘路径 —— 这样不会留下一个写了一半的 MediaStore 条目。
+                if (!StreamTag.canStream(head, total, bag)) return@use null
+
+                val sink = openDownloadSink(baseName + ext)
+                    ?: throw IOException("无法创建下载目标")
+                try {
+                    val out = BufferedOutputStream(sink.output, COPY_BUFFER)
+                    var lastPct = -1
+                    val outcome = StreamTag.write(
+                        head = head,
+                        rest = input,
+                        contentLength = total,
+                        bag = bag,
+                        out = out,
+                        onBytes = { consumed ->
+                            if (total > 0) {
+                                val pct = ((consumed * 100) / total).toInt()
+                                if (pct != lastPct && pct < 100) {
+                                    lastPct = pct
+                                    onProgress(0.02 + 0.93 * consumed.toDouble() / total)
+                                }
+                            }
+                        },
+                    )
+                    if (outcome == null) {
+                        // canStream 已经拦过一遍，正常到不了这里；真到了就干净回滚再去落盘
+                        runCatching { sink.abort() }
+                        return@use null
+                    }
+                    out.flush()
+                    // 长度字段（RIFF/FORM/DSF/DSDIFF）只有最后一字节落地才知道，这里回填
+                    for ((offset, bytes) in outcome.patches) sink.patch(offset, bytes)
+                    sink.commit()
+                } catch (t: Throwable) {
+                    runCatching { sink.abort() }
+                    throw t
+                }
+            }
+        }
+    }
+
+    /**
+     * 落盘路径：先写临时文件，再用 `AnnieTag` 打标，最后搬进目标。
+     *
+     * 只有 [StreamTag] 覆盖不到的格式才会走到这里（m4a 的 `moov` 在文件尾、ape 系的旧尾标签
+     * 无法在流里裁掉）。`AnnieTag` 对这些格式多半也是「截尾追加」或「旧 moov 改 free」，
+     * 所以这里的音频搬运通常只有一次。
+     */
+    private suspend fun _downloadLegacy(
+        songId: String,
+        downloadUrl: String,
+        baseName: String,
+        requestedExt: String,
+        bagOf: (CoverBytes?) -> TagBag,
+        cover: suspend () -> CoverBytes?,
+        onProgress: (Double) -> Unit,
+    ): String = coroutineScope {
+        val customDir = DownloadDirService.getDownloadDirPath()
+        val isCustom = !customDir.isNullOrEmpty()
+        // 默认目录要入库：`scanFileToMediaStore` 用文件名当 DISPLAY_NAME，
+        // 所以临时文件也必须叫最终名字，不能叫 tmp_xxx。
+        val dir = if (isCustom) File(customDir) else File(_tempDir(), "pending")
         if (!dir.exists()) dir.mkdirs()
 
         val safeSongId = songId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
-        var tempPath = downloadDir + "tmp_$safeSongId" + e
-        var tmpFile = File(tempPath)
-        if (tmpFile.exists()) tmpFile.delete()
-
         val request = Request.Builder().url(downloadUrl).header("User-Agent", _chromeUa).build()
         val call = globalOkHttp.newCall(request)
-        _activeDownloads[songId] = ActiveDownload(call, tempPath)
+        _activeDownloads[songId] = ActiveDownload(call)
 
-        try {
-            withContext(Dispatchers.IO) { _streamToFile(call, tmpFile, onProgress) }
-        } catch (ex: Exception) {
-            when (_activeDownloads[songId]?.cancelReason) {
-                "paused" -> {
-                    _activeDownloads.remove(songId)
-                    throw IllegalStateException("下载已暂停")
-                }
-                "cancelled" -> {
-                    _activeDownloads.remove(songId)
-                    try {
-                        if (tmpFile.exists()) tmpFile.delete()
-                    } catch (_: Throwable) {
-                        // 忽略
-                    }
-                    throw IllegalStateException("下载已取消")
-                }
-                else -> throw ex
-            }
-        }
-        if (!tmpFile.exists()) throw IllegalStateException("Download failed")
+        val finalFile = withContext(Dispatchers.IO) {
+            var file = File(dir, "tmp_$safeSongId$requestedExt")
+            if (file.exists()) file.delete()
+            _streamToFile(call, file) { p -> onProgress(p * 0.9) }
+            if (!file.exists()) throw IllegalStateException("Download failed")
 
-        // 以**实际字节**为准修正扩展名（同时决定后面按 FLAC 还是 MP3 写标签）
-        val realExt = _sniffAudioExt(tempPath)
-        if (realExt != null && realExt != e) {
-            val renamed = File(downloadDir + "tmp_$safeSongId" + realExt)
-            if (tmpFile.renameTo(renamed)) {
-                Log.i(TAG, "[download] format fixed: requested $e but got $realExt ($songId)")
-                e = realExt
-                tempPath = renamed.absolutePath
-                tmpFile = renamed
-            }
-        }
-        onProgress(0.5)
-
-        val coverPath = _downloadCover(coverUrl, songId)
-        onProgress(0.65)
-
-        val mergedLyric = mergeLyrics(lyric, tlyric, wordLyric)
-        withContext(Dispatchers.IO) {
-            try {
-                _tagFile(
-                    inputPath = tempPath,
-                    coverPath = coverPath,
-                    title = safeTitle,
-                    artist = safeArtist,
-                    album = album ?: "",
-                    lyric = mergedLyric,
-                    albumArtist = albumArtist,
-                    trackNumber = trackNumber,
-                    discNumber = discNumber,
-                    releaseDate = releaseDate,
-                    composer = composer,
-                    genre = genre,
-                    isrc = isrcValue,
-                    version = versionValue,
-                    copyright = copyrightValue,
+            // 以实际字节为准确定扩展名。**认不出来就判失败**（L3 落盘校验）：
+            // 走到这里说明 StreamTag 的各类 codec 全都不认识这段字节 —— 那不是音频，
+            // 是「该档位不存在」的回执或错误页（加密包 `mgg`/`mflac`、跨源地址、
+            // 会员/版权提示页）。以前会套用请求档位的扩展名，产出
+            // 「文件名 .flac、内容是密文」的坏文件并且任务照样标成功。
+            val ext = _sniffFileExt(file)
+            if (ext == null) {
+                val bytes = file.length()
+                file.delete()
+                throw IllegalStateException(
+                    "下载内容不是可识别音频（$bytes 字节），已丢弃 —— " +
+                        "直链返回的不是音频文件（加密包或错误页），换个音质或换个插件再试",
                 )
-            } catch (ex: Throwable) {
-                Log.w(TAG, "[download] tag failed (with cover): $ex")
-                // 封面往往是失败主因；去掉封面重试一次，至少保证文本标签写入成功。
-                try {
-                    _tagFile(
-                        inputPath = tempPath,
-                        coverPath = null,
-                        title = safeTitle,
-                        artist = safeArtist,
-                        album = album ?: "",
-                        lyric = mergedLyric,
-                        albumArtist = albumArtist,
-                        trackNumber = trackNumber,
-                        discNumber = discNumber,
-                        releaseDate = releaseDate,
-                        composer = composer,
-                        genre = genre,
-                        isrc = isrcValue,
-                        version = versionValue,
-                        copyright = copyrightValue,
-                    )
-                    Log.i(TAG, "[download] tag retry WITHOUT cover succeeded")
-                } catch (ex2: Throwable) {
-                    Log.w(TAG, "[download] tag failed (no cover) too, using raw: $ex2")
+            }
+            if (ext != requestedExt) {
+                val renamed = File(dir, "tmp_$safeSongId$ext")
+                if (file.renameTo(renamed)) file = renamed
+            }
+            _tagFile(file.absolutePath, bagOf(cover()))
+            onProgress(0.97)
+
+            val target = File(dir, baseName + ext)
+            if (target.exists()) target.delete()
+            if (file.absolutePath != target.absolutePath) {
+                if (!file.renameTo(target)) {
+                    file.copyTo(target, overwrite = true)
+                    file.delete()
                 }
             }
-        }
-        onProgress(0.8)
-
-        if (coverPath != null) {
-            val cf = File(coverPath)
-            try {
-                if (cf.exists()) cf.delete()
-            } catch (_: Throwable) {
-                // 与 Dart 一致：忽略
-            }
+            target
         }
 
-        val finalPath = downloadDir + safeBaseName + e
-        if (tempPath != finalPath) {
-            withContext(Dispatchers.IO) {
-                val src = File(tempPath)
-                val finalFile = File(finalPath)
-                if (finalFile.exists()) finalFile.delete()
-                try {
-                    if (!src.renameTo(finalFile)) {
-                        src.copyTo(finalFile, overwrite = true)
-                        src.delete()
-                    }
-                } catch (_: Throwable) {
-                    try {
-                        src.copyTo(finalFile, overwrite = true)
-                    } catch (_: Throwable) {
-                        // 与 Dart `catchError((_) => File(...))` 一致：保留原文件
-                    }
-                }
-            }
-        }
+        if (isCustom) return@coroutineScope finalFile.absolutePath
 
-        if (MoreSettings.saveLrcFile.value) {
-            withContext(Dispatchers.IO) {
-                try {
-                    val audio = File(finalPath)
-                    File(audio.parentFile, audio.nameWithoutExtension + ".lrc").writeText(mergedLyric)
-                } catch (ex: Throwable) {
-                    Log.w(TAG, "[download] write lrc failed: $ex")
-                }
-            }
+        // 默认目录：入库（Android 10+ 插入 MediaStore.Audio，文件进 Music/AnnieMusic）
+        val uri = withContext(Dispatchers.IO) {
+            runCatching { MediaStoreScan.scanFileToMediaStore(finalFile.absolutePath) }.getOrNull()
+        }.orEmpty()
+        if (uri.isNotEmpty()) {
+            runCatching { finalFile.delete() }
+            return@coroutineScope uri
         }
-
-        val isCustomDir = !customDir.isNullOrEmpty()
-        if (isCustomDir) {
-            onProgress(1.0)
-            _activeDownloads.remove(songId)
-            return finalPath
-        }
-
-        // 默认目录：媒体库扫描（Android 10+ 插入 MediaStore.Audio，文件进入 Music/AnnieMusic）
-        var outUri = ""
-        try {
-            outUri = withContext(Dispatchers.IO) { MediaStoreScan.scanFileToMediaStore(finalPath) } ?: ""
-        } catch (_: Throwable) {
-            // 与 Dart 一致：扫描失败静默，保留私有副本
-        }
-
-        if (outUri.isNotEmpty()) {
-            val privateFile = File(finalPath)
-            try {
-                if (privateFile.exists()) privateFile.delete()
-            } catch (_: Throwable) {
-                // ignore
-            }
-        }
-
-        onProgress(1.0)
-        _activeDownloads.remove(songId)
-        return if (outUri.isNotEmpty()) outUri else finalPath
+        finalFile.absolutePath
     }
 
     /** 扩展名：flac/hires 用 `.flac`，其余 `.mp3`（对齐 Dart `_ext`）。 */
@@ -487,26 +533,74 @@ object DownloadService {
         else ".mp3"
 
     /**
-     * 嗅探真实音频格式（读文件头 4 字节）。
+     * 嗅探已落盘文件的真实格式，返回带点的扩展名；不认识返回 null。
      *
-     * 为什么必须嗅探：请求档位 ≠ 实际拿到的格式 —— 该曲没有无损时平台回的是 mp3，
-     * 若沿用请求档位定扩展名与打标分支，就会产出「扩展名 flac、内容 mp3」的假无损文件。
+     * **返回值是"能不能落盘"的判据，不是"扩展名猜一个"**：调用方拿到 null 必须判失败
+     * （见 `_downloadLegacy`）。原因有两条：
+     *
+     * 1. 请求档位 ≠ 实际拿到的格式 —— 该曲没有无损时平台可能回 mp3，
+     *    沿用请求档位定扩展名就会产出「扩展名 flac、内容 mp3」的假无损；
+     * 2. 更糟的是**内容根本不是音频**：拿到的可能是加密包（`mgg` / `mflac`，
+     *    酷我对不存在的档位就是这么回的、QQ 跨源也回这种）或一张会员/版权提示页。
+     *    这两类送到这里都是「所有 codec 全不认识」，套扩展名落盘就得到一个打不开的
+     *    文件 + 一个打勾的任务。四平台的下载走落雪插件后，这层校验更要留着 ——
+     *    插件把某档位解析成加密地址时，只有这里能挡住。
+     *
+     * 覆盖范围由 `StreamTag.codecs` 决定（mp4 / flac / ogg / dsd / riff / ape 系 / aac / mp3，
+     * 其中 mp3 认 ID3 与裸帧同步），四家平台实际会返回的容器都在里面。
      */
-    private fun _sniffAudioExt(path: String): String? {
-        return try {
-            val head = ByteArray(4)
-            FileInputStream(path).use { if (it.read(head) < 4) return null }
-            val b0 = head[0].toInt() and 0xFF
-            val b1 = head[1].toInt() and 0xFF
-            when {
-                b0 == 0x66 && b1 == 0x4C && head[2].toInt() == 0x61 && head[3].toInt() == 0x43 -> ".flac"
-                b0 == 0x49 && b1 == 0x44 && head[2].toInt() == 0x33 -> ".mp3"
-                b0 == 0xFF && (b1 and 0xE0) == 0xE0 -> ".mp3"
-                b0 == 0x66 && b1 == 0x74 && head[2].toInt() == 0x79 && head[3].toInt() == 0x70 -> ".m4a"
-                else -> null
+    private fun _sniffFileExt(file: File): String? = try {
+        val head = ByteArray(64)
+        val read = FileInputStream(file).use { it.read(head) }
+        if (read <= 0) null else StreamTag.extensionOf(head.copyOf(read))
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * 从源流预读最多 [max] 字节（头部解析用）。
+     *
+     * 返回的字节会作为「已经消费过的源前缀」交给 [StreamTag.write]，它内部用
+     * `SequenceInputStream` 拼回去，所以调用方**不用**把流往回退。
+     */
+    private fun _readUpTo(input: InputStream, max: Int): ByteArray {
+        val out = ByteArrayOutputStream(minOf(max, 64 * 1024))
+        val chunk = ByteArray(64 * 1024)
+        var left = max
+        while (left > 0) {
+            val n = input.read(chunk, 0, minOf(chunk.size, left))
+            if (n <= 0) break
+            out.write(chunk, 0, n)
+            left -= n
+        }
+        return out.toByteArray()
+    }
+
+    /**
+     * 打开下载落点：自定义目录 → 真实文件；默认目录 → MediaStore pending 条目。
+     *
+     * 两边的共同点是「写进去的就是最终字节」，所以下载与打标能在同一个流里完成。
+     */
+    internal fun openDownloadSink(displayName: String): DownloadSink? {
+        val customDir = DownloadDirService.getDownloadDirPath()
+        if (!customDir.isNullOrEmpty()) {
+            val dir = File(customDir)
+            if (!dir.exists()) dir.mkdirs()
+            return FileDownloadSink(File(dir, displayName))
+        }
+        return MediaStoreScan.openAudioSink(displayName)
+    }
+
+    /** 写 `.lrc` 旁挂文件。目标是 `content://` 时没有「旁边」，直接跳过。 */
+    private suspend fun _writeLrc(path: String, lyric: String) {
+        if (path.startsWith("content://")) return
+        withContext(Dispatchers.IO) {
+            try {
+                val audio = File(path)
+                File(audio.parentFile, audio.nameWithoutExtension + ".lrc").writeText(lyric)
+            } catch (ex: Throwable) {
+                Log.w(TAG, "[download] write lrc failed: $ex")
             }
-        } catch (_: Throwable) {
-            null
         }
     }
 
@@ -543,52 +637,37 @@ object DownloadService {
         }
     }
 
-    /** 下载封面为临时文件，返回路径（失败返回 null，对齐 Dart `_downloadCover`）。 */
-    private suspend fun _downloadCover(coverUrl: String, songId: String): String? =
+    /**
+     * 取封面**字节**（不再落临时文件）。
+     *
+     * 以前封面要下载到 `cacheDir/cover_xxx.jpg`，用完再删 —— 多两次磁盘操作、还要处理
+     * 「异常路径没删干净」。标签库本来就要的是字节（`AnnieTag.coverOf`），直接读进内存
+     * 一步到位；封面是 600×600 的 JPEG/PNG，几十~一百多 KB。
+     *
+     * 失败一律返回 null：封面缺失不该让整首下载失败。
+     */
+    internal suspend fun fetchCoverBytes(coverUrl: String, coverCacheKey: String): CoverBytes? =
         withContext(Dispatchers.IO) {
-            try {
-                val extName = if (coverUrl.contains(".")) {
-                    coverUrl.split(".").last().split("?").first()
-                } else {
-                    "jpg"
-                }
-                val safeExt = if (extName.contains("/")) "jpg" else extName
-                val coverTmp = File(_tempDir(), "cover_$songId.$safeExt")
-                coverTmp.parentFile?.mkdirs()
-                if (coverTmp.exists()) coverTmp.delete()
-
+            runCatching {
                 val request = Request.Builder().url(coverUrl).header("User-Agent", _chromeUa).build()
-                val ok = globalOkHttp.newCall(request).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        false
-                    } else {
-                        val body = resp.body
-                        if (body == null) {
-                            false
-                        } else {
-                            body.byteStream().use { input ->
-                                coverTmp.outputStream().use { output ->
-                                    input.copyTo(output, COPY_BUFFER)
-                                }
-                            }
-                            true
-                        }
-                    }
+                globalOkHttp.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use null
+                    val body = resp.body ?: return@use null
+                    // 有的 CDN 不报长度，所以两条路都卡上限
+                    if (body.contentLength() > COVER_LIMIT) return@use null
+                    val bytes = body.bytes()
+                    if (bytes.size > COVER_LIMIT) null else AnnieTag.coverOf(bytes)
                 }
-                if (ok && coverTmp.exists()) coverTmp.path else null
-            } catch (_: Throwable) {
-                null
-            }
+            }.getOrNull()
         }
 
     // ---------------- 元数据打标 ----------------
 
     /**
-     * 为「已落盘的文件」写元数据（供 KKBOX DRM 解密路径等复用，对齐 Flutter `_tagDrmAudio`）。
+     * 为「已落盘的文件」写元数据（供 KKBOX DRM 解密路径等复用）。
      *
-     * 与 [downloadSong] 内联打标同源：先尝试带封面打标，失败则去掉封面重试一次；
-     * 仍失败则保留原文件（不抛异常）。MP3/FLAC 可写，其余封装格式按 [_tagFile] 的既有约定
-     * 保留原始文件。
+     * 与 [downloadSong] 共用同一套 [buildTagBag] + [AnnieTag]；先带封面写一次，
+     * 失败就去掉封面重试一次，仍失败保留原文件（不抛异常）。
      */
     suspend fun tagAudioFile(
         inputPath: String,
@@ -603,65 +682,39 @@ object DownloadService {
         releaseDate: String? = null,
         composer: String? = null,
         genre: String? = null,
+        /** ISRC：与 [downloadSong] 的写入集对齐 */
+        isrc: String? = null,
         coverCacheKey: String = inputPath,
+        /** 调用方已经取好的封面；给了就不再下载 */
+        prefetchedCover: CoverBytes? = null,
     ) {
-        val safeTitle = decodeHtmlEntities(title)
-        val safeArtist = decodeHtmlEntities(artist)
-        val coverPath = if (coverUrl.isNotEmpty()) _downloadCover(coverUrl, coverCacheKey) else null
-        withContext(Dispatchers.IO) {
-            try {
-                _tagFile(
-                    inputPath = inputPath,
-                    coverPath = coverPath,
-                    title = safeTitle,
-                    artist = safeArtist,
-                    album = album,
-                    lyric = lyric,
-                    albumArtist = albumArtist,
-                    trackNumber = trackNumber,
-                    discNumber = discNumber,
-                    releaseDate = releaseDate,
-                    composer = composer,
-                    genre = genre,
-                )
-            } catch (ex: Throwable) {
-                Log.w(TAG, "[tag] tag failed (with cover): $ex")
-                try {
-                    _tagFile(
-                        inputPath = inputPath,
-                        coverPath = null,
-                        title = safeTitle,
-                        artist = safeArtist,
-                        album = album,
-                        lyric = lyric,
-                        albumArtist = albumArtist,
-                        trackNumber = trackNumber,
-                        discNumber = discNumber,
-                        releaseDate = releaseDate,
-                        composer = composer,
-                        genre = genre,
-                    )
-                } catch (ex2: Throwable) {
-                    Log.w(TAG, "[tag] tag failed (no cover) too, using raw: $ex2")
-                }
-            }
-        }
-        if (coverPath != null) {
-            try {
-                File(coverPath).takeIf { it.exists() }?.delete()
-            } catch (_: Throwable) {
-                // 忽略清理失败
-            }
-        }
+        val cover = prefetchedCover
+            ?: if (coverUrl.isNotEmpty()) fetchCoverBytes(coverUrl, coverCacheKey) else null
+        val bag = buildTagBag(
+            cover = cover,
+            title = decodeHtmlEntities(title),
+            artist = decodeHtmlEntities(artist),
+            album = album,
+            lyric = lyric,
+            albumArtist = albumArtist,
+            trackNumber = trackNumber,
+            discNumber = discNumber,
+            releaseDate = releaseDate,
+            composer = composer,
+            genre = genre,
+            isrc = isrc,
+        )
+        withContext(Dispatchers.IO) { _tagFile(inputPath, bag) }
     }
 
     /**
-     * 打标调度：按扩展名选择写入器。MP3/FLAC 可写，其余格式明确记录后使用原始文件。
-     * 打标成功后用 [readTags] 读取校验并写日志。
+     * 组装一份标签载荷。
+     *
+     * 抽成独立函数是为了「下载」与「事后补标」这两条路写下去的字段**必然一致** ——
+     * 以前两处各抄一份 `put(...)` 列表，加字段时漏一边就会出现「下载写了、编辑界面看不到」。
      */
-    private fun _tagFile(
-        inputPath: String,
-        coverPath: String?,
+    private fun buildTagBag(
+        cover: CoverBytes?,
         title: String,
         artist: String,
         album: String,
@@ -675,34 +728,45 @@ object DownloadService {
         isrc: String? = null,
         version: String? = null,
         copyright: String? = null,
-    ) {
-        // 交给 ffmpeg 写入（覆盖 mp3/flac/m4a 等全格式，对齐 Flutter 的 ffmpeg 打标）
-        fun runTag(cover: String?): Boolean = FfmpegTagger.tagInPlace(
-            inputPath = inputPath,
-            coverPath = cover,
-            title = title,
-            artist = artist,
-            album = album,
-            lyric = lyric,
-            albumArtist = albumArtist,
-            trackNumber = trackNumber,
-            discNumber = discNumber,
-            releaseDate = releaseDate,
-            composer = composer,
-            genre = genre,
-            isrc = isrc,
-            version = version,
-            copyright = copyright,
-        )
+        artistNames: List<String> = emptyList(),
+    ): TagBag {
+        val text = LinkedHashMap<TagKey, String>()
+        fun put(key: TagKey, value: String?) {
+            if (!value.isNullOrEmpty()) text[key] = value
+        }
+        put(TagKey.Title, title)
+        // 多歌手统一写成 `A / B`：有结构化列表就用它，没有才用平台原串（不硬拆）
+        put(TagKey.Artist, TagMapper.artistOf(artistNames, artist))
+        put(TagKey.Album, album)
+        put(TagKey.AlbumArtist, albumArtist)
+        put(TagKey.Track, trackNumber)
+        put(TagKey.Disc, discNumber)
+        put(TagKey.Year, releaseDate)
+        put(TagKey.Composer, composer)
+        put(TagKey.Genre, genre)
+        put(TagKey.Isrc, isrc)
+        put(TagKey.Comment, version)
+        put(TagKey.Copyright, copyright)
+        put(TagKey.Lyric, lyric)
+        return TagBag(text, cover)
+    }
 
-        var ok = runTag(coverPath)
-        if (!ok && coverPath != null) {
-            // 封面常是打标失败主因：去掉封面重试一次，至少保证文本标签写入（对齐 Flutter）
-            Log.w(TAG, "[tag] ffmpeg 带封面打标失败，去封面重试: $inputPath")
-            ok = runTag(null)
+    /**
+     * 给「已落盘的文件」打标。
+     *
+     * 走 [AnnieTag]：能原地就原地（FLAC 复用 PADDING、MP3 复用旧 ID3 区、MP4 旧 moov 改 free），
+     * 装不下才退化成「新标签 + 复制音频」。封面常是失败主因（个别容器对 PICTURE 尺寸敏感），
+     * 所以带封面失败时去掉封面再试一次。
+     */
+    private fun _tagFile(inputPath: String, bag: TagBag) {
+        val file = File(inputPath)
+        var ok = AnnieTag.write(file, bag, WritePolicy.PreferInPlace).ok
+        if (!ok && bag.cover != null) {
+            Log.w(TAG, "[tag] 带封面打标失败，去封面重试: $inputPath")
+            ok = AnnieTag.write(file, bag.copy(cover = null), WritePolicy.PreferInPlace).ok
         }
         if (!ok) {
-            Log.w(TAG, "[tag] ffmpeg 打标失败，保留原始文件: $inputPath")
+            Log.w(TAG, "[tag] 打标失败，保留原始文件: $inputPath")
             return
         }
         val verified = readTags(inputPath)

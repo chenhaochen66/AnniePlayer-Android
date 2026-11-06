@@ -43,6 +43,10 @@ class TuningAudioProcessor : BaseAudioProcessor() {
         )
     }
 
+    /** 真的有处理要做吗（`isActive` 与 `queueInput` 必须**用同一个判据**） */
+    private fun hasProcessing(): Boolean =
+        _specs.isNotEmpty() || abs(_preampDb) > 0.01f || _limiterEnabled
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         val encoding = inputAudioFormat.encoding
         if (encoding != C.ENCODING_PCM_16BIT &&
@@ -64,7 +68,14 @@ class TuningAudioProcessor : BaseAudioProcessor() {
         return inputAudioFormat
     }
 
-    override fun isActive(): Boolean = true
+    /**
+     * 只在**真的有处理要做**时才进链路。
+     *
+     * 这里曾经恒 `true`：于是透明模式（用户要求"原样送出"）也会把每一块 PCM 过一遍
+     * `queueInput`（虽然只是拷贝透传），既白花一次拷贝，也让"到底是谁在吞数据"没法判断。
+     * 判据与 `queueInput` 里的 `hasProcessing` 保持一致。
+     */
+    override fun isActive(): Boolean = hasProcessing()
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         val size = inputBuffer.remaining()
@@ -81,9 +92,8 @@ class TuningAudioProcessor : BaseAudioProcessor() {
             return
         }
 
-        val hasProcessing = _specs.isNotEmpty() || abs(_preampDb) > 0.01f || _limiterEnabled
         val handle = _nativeHandle
-        if (!hasProcessing || handle == 0L) {
+        if (!hasProcessing() || handle == 0L) {
             val out = replaceOutputBuffer(size).order(ByteOrder.LITTLE_ENDIAN)
             out.put(inputBuffer)
             out.flip()

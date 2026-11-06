@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -15,11 +16,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
@@ -59,6 +63,33 @@ fun AppSheet(
     title: String,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * 是否在底部为常驻底栏预留 [AppSpacing.sheetBottomInset]（68dp = 栏体 60 + 8 呼吸）。
+     *
+     * 默认 true（底栏常驻，浮层永远压在它上面）；**从设置页打开的纯信息面板传 false**
+     * （那些面板是从设置页内部弹出的，底下没有底栏，留了就是一块死空白）。
+     */
+    reserveBottomInset: Boolean = true,
+    /**
+     * 内容区固定高度 = 「本面板可用高度」× 该比例；null = 原行为（内容多高，面板就多高）。
+     *
+     * 字段多的信息面板（本地歌曲详情这类）需要「固定高度 + 内部滚动」的形态：
+     * 按内容撑高会在小屏上把抓手和标题顶出屏幕，只加 `heightIn(max)` 又会一路顶到整屏。
+     * 这里不写死 dp —— 可用高度由面板自己算（已扣抓手 / 标题 / 底部 inset），
+     * 传 0.6 左右就是「占屏一多半、内容在内部滑」。
+     */
+    contentHeightFraction: Float? = null,
+    /**
+     * 内容区**最大**高度 = 「本面板可用高度」× 该比例；null = 不设上限（内容多高就多高）。
+     *
+     * 与 [contentHeightFraction] 的分工，别混用：
+     * - [contentHeightFraction] 是**固定**高度 —— 内容少也撑满（字段固定的信息面板）；
+     * - 本参数是**上限** —— 内容少就按内容，只有超出才内部滚动（条目数不定的列表）。
+     *
+     * 典型场景：多歌手选择。一首合唱曲挂 20+ 个歌手时，按内容撑高会把面板一路顶到
+     * 屏幕最上面、抓手和标题贴到状态栏，观感像整页而不是面板。传 0.5 就是「最多半屏、多了滑」。
+     */
+    contentMaxHeightFraction: Float? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     // 返回手势：打开时先关面板
@@ -82,17 +113,19 @@ fun AppSheet(
     // 因此完全隐藏时**整个浮层不参与组合**，等价 Flutter 的 IgnorePointer(ignoring: !visible)。
     if (!visible && scrimAlpha == 0f) return
     Box(modifier = modifier.fillMaxSize()) {
-        // ── 遮罩（Flutter: Colors.black54） ──
+        // ── 遮罩（Flutter: Colors.black54）：只吞点击，**不关闭** ──
+        // 退出只走返回手势（本组件没有标题栏关闭按钮）。
         // 【关键】隐藏时**整条 clickable 都不挂**，而不是 clickable(enabled = false)。
         // Compose 的 clickable 即使 disabled 仍会占据命中测试，阻止事件传给下层兄弟节点
         // （表现为：面板隐藏着，顶栏抽屉按钮 / 搜索框 / 下拉全都点不动）。
         // 对齐 Flutter 的 IgnorePointer(ignoring: !visible)。
+        // 注意 `onClick = {}` 不能删：它是吃掉触摸、阻止点击穿透到下层页面的唯一手段。
         val scrimInteraction = remember { MutableInteractionSource() }
         val scrimClickModifier = if (visible) {
             Modifier.clickable(
                 interactionSource = scrimInteraction,
                 indication = null,
-                onClick = onClose,
+                onClick = {},
             )
         } else {
             Modifier
@@ -117,8 +150,8 @@ fun AppSheet(
                     color = AppColors.surface,
                     shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
                 )
-                // 底部留白避开迷你播放条（~92px → token 100）
-                .padding(bottom = AppSpacing.sheetBottomInset),
+                // 底部留白避开常驻底栏（栏体 60 + 8 呼吸，推导见 sheetBottomInset 注释）
+                .padding(bottom = if (reserveBottomInset) AppSpacing.sheetBottomInset else 0.dp),
             horizontalAlignment = Alignment.Start,
         ) {
             // 抓手
@@ -129,19 +162,60 @@ fun AppSheet(
                     .size(width = 36.dp, height = 4.dp)
                     .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(2.dp)),
             )
-            // 标题
-            Text(
-                text = title,
-                modifier = Modifier.padding(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 10.dp),
-                color = Color.White,
-                fontSize = AppFontSize.xl,
-                fontWeight = FontWeight.Bold,
-            )
-            content()
+            // 标题行：右侧统一关闭按钮。
+            // 本面板没有任何别的关闭入口（遮罩只吞点击、不关闭），必须在这里给一个可见出口。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = title,
+                    modifier = Modifier.weight(1f),
+                    color = Color.White,
+                    fontSize = AppFontSize.xl,
+                    fontWeight = FontWeight.Bold,
+                )
+                SheetCloseButton(onClose = onClose)
+            }
+            when {
+                contentHeightFraction != null -> {
+                    // 固定高度 + 由调用方在自己的内容里加 verticalScroll（面板不管滚动语义：
+                    // 有的面板是列表、有的是分组的表单）
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(maxHeight * contentHeightFraction),
+                        ) {
+                            content()
+                        }
+                    }
+                }
+                contentMaxHeightFraction != null -> {
+                    // 上限高度 + 面板自己提供滚动。
+                    // 注意 `heightIn` 必须在外、`verticalScroll` 在内：外层先把约束限到上限，
+                    // 滚动容器再用无限高度测量内容，自身取 min(内容高, 上限) ——
+                    // 于是「内容少 → 面板矮」「内容多 → 到上限就内部滑」。
+                    // 反过来写（先 scroll 再 heightIn）会让滚动容器把无限高度传给 heightIn，
+                    // 结果无论如何都撑到上限，内容只有两行也占半屏。
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = maxHeight * contentMaxHeightFraction)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            content()
+                        }
+                    }
+                }
+                else -> content()
+            }
         }
     }
 }
-
 /** 遮罩色：Flutter `Colors.black54` */
 private val ScrimColor = Color(0x8A000000)
 

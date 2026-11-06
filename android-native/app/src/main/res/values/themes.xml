@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+        系统栏颜色**不在这里设**：
+        - App 走 edge-to-edge（`MainActivity.enableEdgeToEdge` 在 super.onCreate 之前调用），
+          系统栏透明由代码设置，页面各自用 `systemBarsPadding()` / `statusBarsPadding()` 让位；
+        - `android:statusBarColor` / `android:navigationBarColor` 在 Android 15 起已废弃，
+          留着会被系统忽略，而且在 14 及以下会盖住 edge-to-edge 的透明效果。
+
+        `windowBackground` 保留：冷启动到 Compose 首帧之间露出的就是这一层底色。
+    -->
     <style name="Theme.AnnieMusicKt" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">#FF101014</item>
-        <item name="android:statusBarColor">#FF101014</item>
-        <item name="android:navigationBarColor">#FF101014</item>
     </style>
 </resources>

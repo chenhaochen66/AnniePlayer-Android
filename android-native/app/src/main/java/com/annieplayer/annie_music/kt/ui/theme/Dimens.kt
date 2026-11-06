@@ -41,8 +41,18 @@ object AppSpacing {
 
     // ---- 语义化内边距 ----
 
-    /** 浮层底部为迷你播放器预留（Flutter: `EdgeInsets.only(bottom: 100)`） */
-    val sheetBottomInset = 100.dp
+    /**
+     * 底部浮层为常驻底栏预留的高度（[AppSize.bottomBarHeight] 60 + 8dp 呼吸）。
+     *
+     * **不是 Flutter 的 100dp。** 那个值是给旧迷你播放条（约 92dp）留的，Android 侧改成常驻
+     * 底栏之后，栏体只有 60dp，且底栏的系统导航 inset 是内置在栏体里的 —— 浮层这边
+     * [AppSheet] 又已经做了 `navigationBarsPadding()`。两边都没有 inset 了，再按 100 留，
+     * 内容与底栏之间就会多出 32dp 的死空白（真机上表现为「面板底部空了一大块」）。
+     *
+     * 推导：内容底边 = navInset + 本值；底栏顶边 = navInset + 60 → 净空 8dp。
+     * 改这个值要同步检查 `searchListBottomInset` 的注释。
+     */
+    val sheetBottomInset = 68.dp
 
     /** 列表底部预留（Flutter: `EdgeInsets.only(bottom: 120)`） */
     val listBottomInset = 120.dp
@@ -59,13 +69,15 @@ object AppSpacing {
     /**
      * 搜索结果列表底部预留。
      *
-     * 旧注释只记录了 Flutter 原值，容易被误读为「为旧迷你条（约 78dp）预留」。按新几何重算：
-     * - 常驻底栏（内容区 60 + 封面凸出 20 = 80dp；系统 inset 内置于栏体）→ 仅需 80 + 呼吸；
-     * - 右下角 ⇄ 源切换按钮顶边 = [sheetBottomInset] 100 + [AppSize.headerActionHeight] 48 = 148dp
-     *   → 需 148 + 呼吸，**这才是主导约束**。
-     * 取较大者再加 22dp 呼吸，结论仍为 170dp：数值不变，仅补全推导（避免下一次改动误删）。
+     * 推导（按当前几何）：
+     * - 右下角 ⇄ 源切换按钮底边 = [sheetBottomInset] 68 + 1.5 × 按钮高 44 = 134dp；
+     * - 按钮顶边 = 134 + 44 = 178dp —— **这才是主导约束**（它浮在列表之上，压住最后一行就点不到）；
+     * - 178 + 22dp 呼吸 = 200dp。
+     *
+     * 三个搜索结果列表（歌曲 / 专辑 / 歌手）统一用这个值，不要各写各的：
+     * 之前专辑用 120、歌手写死 170，按钮抬高后会同时压住两边最后一行。
      */
-    val searchListBottomInset = 170.dp
+    val searchListBottomInset = 200.dp
 }
 
 /**

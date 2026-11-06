@@ -30,10 +30,31 @@ class FfmpegAudioRenderer(
         MimeTypes.AUDIO_AAC -> "aac"
         MimeTypes.AUDIO_AC3 -> "ac3"
         MimeTypes.AUDIO_E_AC3, "audio/eac3-joc" -> "eac3"
+        // 本地常见有损格式也统一交给 ffmpeg：
+        // 一是味道/音量与其他格式一致（都过同一条软解链），
+        // 二是 MediaCodec 的 MP3 解码器在不同 ROM 上行为不一致（有的是 float 有的是 s16）。
+        MimeTypes.AUDIO_MPEG -> "mp3"
+        // ⚠️ Opus / Vorbis 已退回 MediaCodec，别再往这里加：
+        // 这两者依赖容器给的 extradata（OpusHead / Xiph lacing），走这条软解链实测起不来
+        // （直接播放失败）；而 MediaCodec 自带的 opus/vorbis 解码器一直能放，
+        // 且有损格式本来就没有「位深被截断」的问题，接 ffmpeg 只是理念上统一、收益为零。
+        // WAV / AIFF 这类容器里装的本来就是 PCM：Media3 直接出 `audio/raw`，
+        // 没有"解码"这一步，走 AudioSink 直通，天然不截断，也不需要 ffmpeg 参与。
         else -> null
     }
 
     override fun supportsFormatInternal(format: Format): Int {
+        // **本地与流媒体同一条解码路径**：能交给 ffmpeg 的格式一律交给 ffmpeg。
+        // 这样本地 FLAC / ALAC / AAC / AC3 也走 24bit 软解，不会落到 MediaCodec 的
+        // 16bit 截断；也让「播放页显示的位深」和「实际解码位深」一致。
+        //
+        // 以前这里第一句是"直通优先"：能交给 HAL 直通时声明不支持、把这一首让给
+        // `MediaCodecAudioRenderer`。**offload 直通已整条删除**，所以没有让位这回事，
+        // 所有格式都走这一条路。
+        //
+        // 历史上本地曾被整体挡在 ffmpeg 之外（本地 FLAC 走 native 路径偶发 SIGSEGV，
+        // 当时为了不闪退直接禁了整条本地路径，只给 ALAC 开口子）。现已统一放开，
+        // 若再出现 native 崩溃，修 [FfmpegAudioDecoder] / native 侧，不要再按平台分流。
         if (codecNameOf(format) == null) return C.FORMAT_UNSUPPORTED_TYPE
         if (!NativeFfmpegDecoder.isAvailable()) return C.FORMAT_UNSUPPORTED_SUBTYPE
         return try {

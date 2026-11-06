@@ -1,10 +1,14 @@
 package com.annieplayer.annie_music.kt
 
 import android.Manifest
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.annieplayer.annie_music.kt.core.audio.AnnieAudioHolder
 import com.annieplayer.annie_music.kt.core.audio.BluetoothCodec
+import com.annieplayer.annie_music.kt.core.audio.ExclusiveVolume
 import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
 import com.annieplayer.annie_music.kt.core.platform.StoragePermissionDialog
 import com.annieplayer.annie_music.kt.core.platform.isManageStorageGranted
@@ -28,15 +33,16 @@ import com.annieplayer.annie_music.kt.data.AssetCache
 import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.network.CacheService
-import com.annieplayer.annie_music.kt.data.sources.AppleMusicSettings
-import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleChallenge
-import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleFixedKey
-import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleServiceSettings
-import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleWebViewFetch
+import com.annieplayer.annie_music.kt.data.sources.apple.AppleMusicSettings
+import com.annieplayer.annie_music.kt.data.sources.apple.wrapper.AppleFixedKey
+import com.annieplayer.annie_music.kt.data.sources.apple.wrapper.AppleServiceSettings
+import com.annieplayer.annie_music.kt.data.sources.apple.wrapper.AppleWrapperRegistry
+import com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxDownloader
 import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
 import com.annieplayer.annie_music.kt.features.search.SearchSettings
 import com.annieplayer.annie_music.kt.features.shell.AppShell
 import com.annieplayer.annie_music.kt.ui.theme.AnnieTheme
+import com.annieplayer.annie_music.kt.ui.widgets.ExclusiveVolumeBar
 import com.annieplayer.annie_music.kt.widgets.SplashScreen
 
 /**
@@ -66,6 +72,20 @@ class MainActivity : ComponentActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 【必须在 super.onCreate 之前】targetSdk 35+ 只让 **Android 15 及以上**的系统强制
+        // edge-to-edge；Android 14 及以下仍然按 `setDecorFitsSystemWindows(true)` 处理，
+        // 内容会被状态栏 / 导航栏挤开，主题里那两条实心色块就成了上下一圈「边框」。
+        //
+        // 而本项目所有页面根部本来就写着 `systemBarsPadding()` / `statusBarsPadding()`
+        // （按 edge-to-edge 设计的），decorFits=true 时这些 padding 恒为 0 —— 布局按全屏算、
+        // 系统栏却不透，观感正是「没做全屏」。这里显式开启后，Android 14 与 15+ 行为一致。
+        //
+        // `SystemBarStyle.dark(透明)`：本 App 恒为深色底 → 系统栏图标用浅色（白），
+        // 且系统栏本身透明，内容（封面 / 氛围背景）可以透上去。
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
 
         // 缓存服务需要 Context 才能持久化（未 init 时退化为纯内存，语义不变）
@@ -79,18 +99,27 @@ class MainActivity : ComponentActivity() {
         AssetCache.init(applicationContext)
         DownloadDirService.init(applicationContext)
         DownloadService.init(applicationContext)
+        // KKBOX 下载要 app cacheDir 放 DRM 解密中间文件
+        KkboxDownloader.init(applicationContext)
         AppleMusicSettings.init(applicationContext)
         AppleFixedKey.init(applicationContext)
-        AppleChallenge.init(applicationContext)
-        AppleWebViewFetch.init(applicationContext)
+        // Apple 的非官方接口：本机 WrapperLite（开关）↔ 用户自填的远程 wrapper 地址，二选一
         AppleServiceSettings.init(applicationContext)
+        AppleWrapperRegistry.init(applicationContext)
         SearchSettings.init(applicationContext)
         PlayerViewModel.init(applicationContext)
+        // 播放现场持久化（重启恢复队列 + 进度）
+        com.annieplayer.annie_music.kt.data.PlayerResumeStore.init(applicationContext)
         KkboxViewModel.init(applicationContext)
         QobuzViewModel.init(applicationContext)
         MoreSettings.init(applicationContext)
+        // 独占通路的音量：绕开 mixer 后系统音量键调的是一个和声音无关的旋钮，
+        // 所以这条链路的音量只能我方记、我方施加（见 `ExclusiveVolume`）。
+        ExclusiveVolume.init(SharedPrefsVolumeStore(applicationContext))
         LxPluginRegistry.init(applicationContext)
         BluetoothCodec.init(applicationContext)
+        // 本地曲库缓存（index.json + 抽出的封面）
+        com.annieplayer.annie_music.kt.data.local.LocalLibraryStore.init(applicationContext)
 
         // Android 13+ 媒体通知需要 POST_NOTIFICATIONS
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -128,8 +157,58 @@ class MainActivity : ComponentActivity() {
                         visible = showStorageDialog,
                         onDismiss = { showStorageDialog = false },
                     )
+                    // 独占通路的音量条：只在按音量键时出现，4 秒后自己淡出
+                    ExclusiveVolumeBar()
                 }
             }
         }
+    }
+
+    /**
+     * 退到后台时立刻把播放现场（队列下标 + 进度）落盘一次。
+     *
+     * ViewModel 里有 5 秒节流的进度写盘，但"从最近任务划掉 / 系统回收"可能刚好落在
+     * 两次写盘之间 —— 这里补一刀，保证下次启动的续播位置尽量接近退出时。
+     */
+    override fun onStop() {
+        super.onStop()
+        runCatching {
+            androidx.lifecycle.ViewModelProvider(this)[PlayerViewModel::class.java].persistResumeNow()
+        }
+    }
+
+    /**
+     * 音量键改由独占通路自己处理。
+     *
+     * 返回 true 就**吞掉事件**：系统不会弹音量条，也不会去调 `STREAM_MUSIC`
+     * —— 那个旋钮在独占流上没有任何接收方，让它响只会调了个寂寞。
+     *
+     * 只在「有可调的独占流」时接管（`ExclusiveVolume.step` 返回 false 就交回系统），
+     * 所以系统通路 / 蓝牙 / 没有独占流时行为完全不变。
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+            return super.onKeyDown(keyCode, event)
+        }
+        if (!ExclusiveVolume.handles) return super.onKeyDown(keyCode, event)
+        // 长按：系统的重复率约 20 次/秒，每来一次就 1 dB 等于 20 dB/s，完全不可控。
+        // 每三次取一次（≈7 dB/s）；不取的那些**同样要吞掉**，否则长按中途系统音量条会冒出来。
+        val repeat = event?.repeatCount ?: 0
+        if (repeat % 3 == 0) {
+            ExclusiveVolume.step(up = keyCode == KeyEvent.KEYCODE_VOLUME_UP)
+        }
+        return true
+    }
+}
+
+/** `ExclusiveVolume` 的持久化后端：与其余设置同一个 prefs，按通路分键。 */
+private class SharedPrefsVolumeStore(context: Context) : ExclusiveVolume.Store {
+    private val prefs = context.getSharedPreferences("annie_shared_prefs", Context.MODE_PRIVATE)
+
+    override fun get(key: String): Float? =
+        if (prefs.contains(key)) prefs.getFloat(key, 0f) else null
+
+    override fun put(key: String, db: Float) {
+        prefs.edit().putFloat(key, db).apply()
     }
 }

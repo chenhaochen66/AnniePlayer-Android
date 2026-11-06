@@ -31,6 +31,24 @@ class FfmpegAudioDecoder(
     private var outputBits: Int = 16
     private var pcm: ByteArray = ByteArray(0)
 
+    /**
+     * 压缩帧暂存。**跨帧复用**：FLAC / ALAC 的帧长在稳态下恒定，`size` 不变就是零分配。
+     *
+     * 之前每帧 `ByteArray(size)`：FLAC 24bit/192k 一帧约 32 KB、每秒约 11 帧，
+     * 也就是每秒 350 KB 的短命对象。量不算大，但它落在**解码线程**上，
+     * 一次 GC 停顿就可能让 AAudio 写线程欠载 —— 低端机上换来的是一次爆音。
+     */
+    private var inputScratch: ByteArray = ByteArray(0)
+
+    /**
+     * 保护 [handle] 的锁：`decode()` 与 [releaseNative] 互斥。
+     *
+     * `SimpleDecoder.release()` 只是请求解码线程停下，并不保证调用返回时那一帧已经解完；
+     * 而 `decode()` 跑在独立线程上。没有这把锁，`release()` 可能在
+     * `NativeFfmpegDecoder.decode()` 执行到一半时把 native 上下文 free 掉。
+     */
+    private val nativeLock = Any()
+
     /** 连续解码失败帧数（成功一帧就清零）；超过阈值才判定解码器不可用 */
     private var decodeFailures: Int = 0
 
@@ -44,6 +62,8 @@ class FfmpegAudioDecoder(
             "alac" -> alacConfig(format, sampleRate)
             "aac" -> aacConfig(format)
             "ac3", "eac3" -> compressedConfig(format)
+            // 有损常见格式：mp3 无 extradata 也能解
+            "mp3" -> compressedConfig(format)
             else -> throw FfmpegDecoderException("未支持的 ffmpeg 解码器: $codecName")
         }
         outputBits = if (bits > 16 && prefer24) 24 else 16
@@ -79,9 +99,27 @@ class FfmpegAudioDecoder(
     override fun createUnexpectedDecodeException(error: Throwable): FfmpegDecoderException =
         FfmpegDecoderException("$codecName 解码异常", error)
 
+    /**
+     * **先停解码线程，再释放 native 上下文。** 顺序不能反。
+     *
+     * [SimpleDecoder] 的 `decode()` 跑在自己的 `ExoPlayer:…SimpleDecoder` 线程上，
+     * 是异步的；而 [release] 由播放线程调用。若先 `releaseNative()`，
+     * 解码线程可能正卡在 `NativeFfmpegDecoder.decode()` 里、native 侧还有一帧在解，
+     * 此时 `avcodec_free_context()` 之后继续用 `AVCodecContext*` 就是 use-after-free。
+     *
+     * 真机表现（PLQ110 / Android 16，本地 FLAC）：
+     * ```
+     * F libc: Fatal signal 11 (SIGSEGV), fault addr 0x63, tid … (ExoPlayer:Simpl…)
+     * F DEBUG: #05 … libavcodec.so (avcodec_send_packet+164)
+     * F DEBUG: #06 … libanniedsp.so (NativeFfmpegDecoder_decode+276)
+     * ```
+     * `avctx` 指向已释放的块，内部字段被读成垃圾小整数再解引用 → fault addr 0x63。
+     *
+     * `super.release()` 内部会中断并 join 解码线程，返回时 `decode()` 保证已退出。
+     */
     override fun release() {
-        releaseNative()
         super.release()
+        releaseNative()
     }
 
     override fun decode(
@@ -96,16 +134,26 @@ class FfmpegAudioDecoder(
             return null
         }
 
-        val frame = ByteArray(size)
-        data.get(frame)
+        // 复用压缩帧缓冲（见 [inputScratch] 的说明）。**长度必须精确等于 size**：
+        // native 侧用 `GetArrayLength(input)` 决定读多少字节，留余量会把上一帧的
+        // 残字节当成本帧数据喂进 libavcodec。
+        if (inputScratch.size != size) inputScratch = ByteArray(size)
+        data.get(inputScratch, 0, size)
 
         if (handle == 0L) {
             return FfmpegDecoderException("ffmpeg $codecName 解码器未初始化")
         }
-        if (reset) NativeFfmpegDecoder.reset(handle)
 
         val written = try {
-            NativeFfmpegDecoder.decode(handle, frame, pcm)
+            synchronized(nativeLock) {
+                val active = handle
+                if (active == 0L) {
+                    // 解锁后到拿锁之间被 release 了：直接丢帧，不碰 native
+                    return FfmpegDecoderException("ffmpeg $codecName 解码器已释放")
+                }
+                if (reset) NativeFfmpegDecoder.reset(active)
+                NativeFfmpegDecoder.decode(active, inputScratch, pcm)
+            }
         } catch (t: Throwable) {
             return FfmpegDecoderException("$codecName 解码异常", t)
         }
@@ -135,10 +183,15 @@ class FfmpegAudioDecoder(
         return null
     }
 
+    /**
+     * 释放 native 上下文。与 [decode] 同锁：若此刻有一帧正在 native 里解，会等它解完。
+     */
     private fun releaseNative() {
-        if (handle != 0L) {
-            NativeFfmpegDecoder.release(handle)
-            handle = 0L
+        synchronized(nativeLock) {
+            if (handle != 0L) {
+                NativeFfmpegDecoder.release(handle)
+                handle = 0L
+            }
         }
     }
 
@@ -201,7 +254,10 @@ class FfmpegAudioDecoder(
         return 16 to extra
     }
 
-    /** AC-3 / E-AC-3（含 Atmos JOC）：extradata 可选，声道数从 Format 取。 */
+    /**
+     * `AC-3 / E-AC-3 / MP3 / Opus / Vorbis`：extradata 可选或由容器给（OpusHead、Xiph lacing），
+     * 声道数从 `Format` 取；这些格式解出来按 16bit 交付即可（本身是有损的）。
+     */
     private fun compressedConfig(format: Format): Pair<Int, ByteArray> {
         channels = format.channelCount.coerceAtLeast(1)
         val extra = format.initializationData.firstOrNull()

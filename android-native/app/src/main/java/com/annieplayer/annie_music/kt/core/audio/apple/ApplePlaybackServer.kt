@@ -6,9 +6,7 @@ import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.network.CacheService
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
-import com.annieplayer.annie_music.kt.data.network.httpGetText
-import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.fetchAppleKeyTemplate
-import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.fetchAppleMasterUrl
+import com.annieplayer.annie_music.kt.data.sources.apple.wrapper.AppleWrapperApi
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.net.InetAddress
@@ -46,9 +44,6 @@ data class ApplePlaybackInfo(
  * 下载链路仍然独立、不碰播放缓存。
  */
 object ApplePlaybackServer {
-
-    /** master m3u8 / media playlist 文本的缓存时长，与 masterUrl 的缓存对齐（30 分钟）。 */
-    private const val PLAYLIST_TTL_MS = 30 * 60 * 1000L
 
     private const val UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -189,27 +184,16 @@ object ApplePlaybackServer {
         private val alacTrack: Boolean
             get() = runCatching { tracks.tracks.values.any { it.codec == "alac" } }.getOrDefault(false)
 
-        /** ALAC cookie 里的 maxBlock / 声道 / 位深，修帧尾时需要 */
-        private val alacMaxBlock: Int?
-            get() = alacCookieField(0, 4)
-        private val alacChannels: Int?
-            get() = alacCookieField(9, 1)
-        private val alacBits: Int?
-            get() = alacCookieField(5, 1)
-
-        /** 从本会话 ALAC magic cookie 里读一个整数（offset/size 针对 24 字节裸配置） */
-        private fun alacCookieField(offset: Int, size: Int): Int? = runCatching {
-            val cookie = findAlacCookie(tracks.moov) ?: return null
-            val base = if (cookie.size >= 8 &&
-                String(cookie, 4, 4, Charsets.US_ASCII) == "alac"
-            ) 12 else 0
-            if (base + offset + size > cookie.size) return null
-            var value = 0
-            for (i in 0 until size) {
-                value = (value shl 8) or (cookie[base + offset + i].toInt() and 0xFF)
-            }
-            value
-        }.getOrNull()
+        /**
+         * ALAC 尾位修正参数，**每个会话只解析一次**。
+         *
+         * 以前是三个独立的 `get()` 属性（maxBlock / 声道 / 位深），每个都会走一遍
+         * [findAlacCookie]（遍历 stsd），而且是在**每个 sample** 上各调一次 ——
+         * 一首 4 分钟的歌等于白跑七千多次 box 遍历。
+         */
+        private val alacParams: AlacTailParams? by lazy {
+            if (alacTrack) alacTailParams(tracks.moov) else null
+        }
 
         /**
          * 播放缓存 key 前缀 `apple:{adamId}:{tier}`；`open()` 里按**实际选中的 variant** 定档
@@ -248,16 +232,12 @@ object ApplePlaybackServer {
         suspend fun open(warmOnly: Boolean = false) {
             val tier = quality.toTier()
                 ?: throw IllegalStateException("Apple 播放不支持音质: ${quality.value}")
-            val masterUrl = fetchAppleMasterUrl(song.id)
+            val masterUrl = AppleWrapperApi.fetchMasterUrl(song.id)
                 ?: throw IllegalStateException("Apple master 获取失败")
             // master m3u8 与 media playlist 都是静态文本（不含一次性签名），
             // 缓存住能把「切到播放过的歌」从 3 次 RTT 降到 0~1 次。
-            // 与 masterUrl 的缓存保持同一 30 分钟生命周期。
-            val masterTextKey = "apple:mastertext:" + song.id.removePrefix("apple:")
-            val masterText = CacheService.get<String>(masterTextKey)?.takeIf { it.isNotEmpty() }
-                ?: httpGetText(masterUrl).also {
-                    CacheService.set(masterTextKey, it, PLAYLIST_TTL_MS)
-                }
+            // 键的构造统一在 [AppleManifest]：下载侧用的是同一套，否则「播放过再下载」不命中。
+            val masterText = AppleManifest.masterText(song.id, masterUrl)
             val variants = parseAppleMaster(masterUrl, masterText)
             // 目标档位缺失时按「超高解析 → 无损 → AAC」降级（与下载共用同一条链）
             val variant = resolveAppleVariantWithFallback(variants, tier)
@@ -265,11 +245,7 @@ object ApplePlaybackServer {
                     "Apple 没有可用档位: tier=${tier.name} variants=${variants.size} " +
                         variants.joinToString { it.groupId }
                 )
-            val mediaTextKey = "apple:mediatext:" + variant.uri
-            val mediaText = CacheService.get<String>(mediaTextKey)?.takeIf { it.isNotEmpty() }
-                ?: httpGetText(variant.uri).also {
-                    CacheService.set(mediaTextKey, it, PLAYLIST_TTL_MS)
-                }
+            val mediaText = AppleManifest.mediaText(song.id, variant)
             media = parseAppleMediaPlaylist(variant.uri, mediaText)
             if (media.segments.isEmpty()) throw IllegalStateException("Apple media playlist 为空")
             info = variant.toAudioInfo()
@@ -292,36 +268,18 @@ object ApplePlaybackServer {
             // 并发后压到 max(0.5s, 2s, 2s) ≈ 2s。
             // init 分片（约 1KB）也缓存：它是每次 open 都要拉的固定头部，
             // 缓存后「切到播放过的歌」只剩 key 请求（key 另有 6 小时缓存）。
-            val initCacheKey = "apple:init:" + song.id.removePrefix("apple:") + ":" +
-                (variant.tier?.cacheTag ?: variant.kind.name.lowercase())
-            val cachedInit = CacheService.get<String>(initCacheKey)
-                ?.let { raw ->
-                    runCatching {
-                        android.util.Base64.decode(raw, android.util.Base64.NO_WRAP)
-                    }.getOrNull()
-                }
-                ?.takeIf { it.isNotEmpty() }
+            // 先看下载侧有没有留下同一档位的 init（同一个键，见 [AppleManifest.initKey]）。
+            val cachedInit = AppleManifest.cachedInit(song.id, variant)
 
             val keyUris = media.segments.indices.map { media.keyForSegment(it) }.distinct()
             coroutineScope {
                 val initDeferred = async(Dispatchers.IO) {
                     cachedInit ?: fetchRange(media.initUri, media.initStart, media.initLength)
-                        .also { bytes ->
-                            runCatching {
-                                CacheService.set(
-                                    initCacheKey,
-                                    android.util.Base64.encodeToString(
-                                        bytes,
-                                        android.util.Base64.NO_WRAP,
-                                    ),
-                                    PLAYLIST_TTL_MS,
-                                )
-                            }
-                        }
+                        .also { bytes -> AppleManifest.storeInit(song.id, variant, bytes) }
                 }
                 val keyDeferred = keyUris.map { keyUri ->
                     keyUri to async(Dispatchers.IO) {
-                        fetchAppleKeyTemplate(song.id, keyUri)
+                        AppleWrapperApi.fetchKeyTemplate(song.id, keyUri)
                     }
                 }
 
@@ -467,14 +425,7 @@ object ApplePlaybackServer {
                     // Apple 的未压缩 ALAC element 尾部 3 个保留位可能不是 111，
                     // ffmpeg 会整帧拒绝（ERROR_CODE_DECODING_FAILED）。只按帧头精确修，
                     // 压缩帧一律不动。
-                    if (alacTrack) {
-                        fixAlacTail(
-                            plain,
-                            alacMaxBlock ?: 4096,
-                            alacChannels ?: 2,
-                            alacBits ?: 24,
-                        )
-                    }
+                    alacParams?.let { fixAlacTail(plain, it.maxBlock, it.channels, it.bits) }
                     System.arraycopy(plain, 0, clear, start, plain.size)
                 }
                 offset = fragment.nextOffset
@@ -531,7 +482,7 @@ object ApplePlaybackServer {
  * 压缩帧的尾部是压缩数据本身，动它等于破坏音频 —— 所以这里严格按帧头判定，
  * 判不出来就原样返回（对照 am-hook 的 `am_alac::Config::repair_in_place`）。
  */
-private fun fixAlacTail(sample: ByteArray, maxBlock: Int, channels: Int, bits: Int) {
+internal fun fixAlacTail(sample: ByteArray, maxBlock: Int, channels: Int, bits: Int) {
     if (sample.size < 7 || channels !in 1..2 || bits !in listOf(16, 20, 24, 32)) return
     val header = ((sample[0].toInt() and 0xFF) shl 16) or
         ((sample[1].toInt() and 0xFF) shl 8) or

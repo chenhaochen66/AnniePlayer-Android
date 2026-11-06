@@ -1,6 +1,5 @@
 package com.annieplayer.annie_music.kt.features.player
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -30,6 +29,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.annieplayer.annie_music.kt.core.state.PlaybackProgress
 import com.annieplayer.annie_music.kt.core.util.LyricLine
 import com.annieplayer.annie_music.kt.core.util.LyricWord
 import com.annieplayer.annie_music.kt.core.util.findCurrentLineIndex
@@ -82,6 +84,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.StateFlow
 
 /** 当前行左上角定位系数（Flutter：顶部留白 18% 屏高、当前行停在 -2% 屏高处） */
 private const val PlayerLyricTopInsetFraction = 0.18f
@@ -115,10 +118,10 @@ fun PlayerLyricsView(
     tlyric: String?,
     wordLyric: String? = null,
     isPlaying: Boolean = true,
-    currentTime: Double,
+    /** 播放进度流（见 `PlaybackProgress` 的 KDoc：这里传流不传值，只有本组件订阅） */
+    progress: StateFlow<PlaybackProgress>,
     isDragging: Boolean,
     seekRatio: Double,
-    duration: Double,
     showTranslation: Boolean,
     /** 可用译文语言（接口给的 translation_langs；为空则不显示语言箭头） */
     translateLangs: List<String> = emptyList(),
@@ -164,6 +167,9 @@ fun PlayerLyricsView(
     val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
 
     // 拖动进度条时用 seekRatio 对应的时间定位（对齐 Flutter `_updateIndex`）
+    val playback by progress.collectAsState()
+    val currentTime = playback.currentTime
+    val duration = playback.duration
     val effectiveTime = if (isDragging) seekRatio * duration else currentTime
     val targetIndex = remember(lines, effectiveTime) {
         findCurrentLineIndex(lines, effectiveTime)
@@ -255,20 +261,26 @@ fun PlayerLyricsView(
         )
     }
 
-    // 逐帧时钟：进度事件约 100ms 才来一次，直接用它上色会「一跳一跳」；
-    // 以最新进度为锚点逐帧外推，重新来事件时再对齐，动画才丝滑。
-    var frameTimeMs by remember { mutableIntStateOf(0) }
+    // 逐帧时钟：**故意传 State 对象，不传值**。
+    //
+    // 它以 60 Hz 变。原来用 `var frameTimeMs by remember { mutableIntStateOf(0) }` 并把它
+    // 当 `Int` 参数往下传 —— 组合期一读 `.value`，本组件每秒重组 60 次，LazyColumn 里
+    // **每一行**重组一次（参数变了就跳不过），而真正用到它的只有 active 那一行。
+    //
+    // 现在把 `State<Int>` 本身传下去，行内只在 `drawWithContent` 里读 `.value`：
+    // 读发生在 Draw 阶段 → 失效范围止于绘制，不触发 composition / layout。
+    val frameClock = remember { mutableIntStateOf(0) }
     LaunchedEffect(effectiveTime, isDragging, duration, isPlaying) {
         val anchorWall = System.nanoTime()
         val anchorMs = (effectiveTime * 1000).toLong()
         // 暂停时只对齐、不外推：否则逐帧时钟会一路跑到最后一个字
         if (!isPlaying) {
-            frameTimeMs = anchorMs.toInt()
+            frameClock.intValue = anchorMs.toInt()
             return@LaunchedEffect
         }
         while (true) {
             withFrameNanos { now ->
-                frameTimeMs = (anchorMs + (now - anchorWall) / 1_000_000L).toInt()
+                frameClock.intValue = (anchorMs + (now - anchorWall) / 1_000_000L).toInt()
             }
         }
     }
@@ -289,7 +301,7 @@ fun PlayerLyricsView(
                     primary = primary,
                     showTranslation = showTranslation,
                     showWordByWord = showWordByWord,
-                    currentTimeMs = frameTimeMs,
+                    currentTimeMs = frameClock,
                     fontScale = fontScale,
                     glowBlurPx = glowBlurPx,
                     onSeek = onSeek,
@@ -380,7 +392,8 @@ private fun PlayerLyricLine(
     primary: Color,
     showTranslation: Boolean,
     showWordByWord: Boolean,
-    currentTimeMs: Int,
+    /** 逐帧时钟（State 而非 Int：读点在 drawn 阶段，见 [KaraokeRowText]） */
+    currentTimeMs: State<Int>,
     fontScale: Float,
     glowBlurPx: Float,
     onSeek: (Double) -> Unit,
@@ -489,13 +502,13 @@ private fun PlayerLyricLine(
 private fun KaraokeText(
     text: String,
     words: List<LyricWord>,
-    currentTimeMs: Int,
+    /** 逐帧时钟。**是 State 而不是 Int**：读点在 [KaraokeRowText] 的 draw 里，见那里的注释 */
+    currentTimeMs: State<Int>,
     style: TextStyle,
     dimColor: Color,
     modifier: Modifier = Modifier,
 ) {
     var fullLayout by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
-    val sungIndex = karaokeSungIndex(words, currentTimeMs)
     val layout = fullLayout
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -514,10 +527,11 @@ private fun KaraokeText(
                 // layout 与当前 text 可能短暂不同步（复用/换行变化），越界一律跳过或裁剪
                 if (start >= text.length || end <= start) continue
                 val slice = text.substring(start, end.coerceAtMost(text.length))
-                val localSung = (sungIndex - start).coerceIn(0f, slice.length.toFloat())
                 KaraokeRowText(
                     text = slice,
-                    sungIndex = localSung,
+                    words = words,
+                    rowStart = start,
+                    currentTimeMs = currentTimeMs,
                     style = style,
                     dimColor = dimColor,
                 )
@@ -526,68 +540,93 @@ private fun KaraokeText(
     }
 }
 
-/** 单个视觉行的卡拉OK：单行文本 → 扫过位置就是本行内的 x，绝不会串行 */
+/**
+ * 单个视觉行的卡拉OK：单行文本 → 扫过位置就是本行内的 x，绝不会串行。
+ *
+ * ## 为什么扫过位置在 `draw` 里算，而不是当成 composable 参数
+ *
+ * 扫过位置跟着 60 Hz 的逐帧时钟走。若把它算在组合期（原实现：`karaokeSungIndex()` 在
+ * [KaraokeText] 里调、结果当 `Float` 参数传进来），这一行就会**每帧重组一次**；
+ * 更糟的是 [PlayerLyricsView] 把时钟传给了 `LazyColumn` 的每一行，于是**所有可见行
+ * 每帧都重组**（参数变了，Compose 跳不过），而真正需要的只有 active 那一行。
+ *
+ * 现在：
+ * - 组合期只依赖 `text` / `style` / `dimColor`（切行、字号变化才重来）；
+ * - 每帧只让 `drawWithContent` 失效 → 失效范围止于**绘制**，不触发布局与组合；
+ * - 顺带省掉了原来那段 `if (sungIndex > 0f)` 的分支判断：没唱到就直接不画覆盖层。
+ */
 @Composable
 private fun KaraokeRowText(
     text: String,
-    sungIndex: Float,
+    /** 整句的逐词时间轴（本行是它的一个换行片段） */
+    words: List<LyricWord>,
+    /** 本行在整句文本里的起始字符下标（`TextLayoutResult.getLineStart`） */
+    rowStart: Int,
+    currentTimeMs: State<Int>,
     style: TextStyle,
     dimColor: Color,
 ) {
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     Box(modifier = Modifier.fillMaxWidth()) {
+        // 底层：整行未唱色。**组合期唯一的一次文本测量**就在这。
         Text(
             text = text,
             style = style.copy(color = dimColor),
             onTextLayout = { layout = it },
             modifier = Modifier.fillMaxWidth(),
         )
-        if (sungIndex > 0f) {
-            Text(
-                text = text,
-                style = style,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // DstIn 的作用目标是「当前图层」：不隔离会把整行背景也擦成黑块
-                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                    .drawWithContent {
-                        val l = layout ?: return@drawWithContent drawContent()
-                        drawContent()
-                        val width = l.size.width.toFloat()
-                        if (width <= 0f || text.isEmpty()) return@drawWithContent
-                        val i = sungIndex.toInt().coerceIn(0, text.length - 1)
-                        val right = if (sungIndex >= text.length) {
-                            width
+        // 覆盖层：白字，再用 DstIn 按「已唱到哪」擦出一条软边。
+        // 这一层始终存在（不再由 sungIndex 决定要不要组合），位置在绘制期算。
+        Text(
+            text = text,
+            style = style,
+            modifier = Modifier
+                .fillMaxWidth()
+                // DstIn 的作用目标是「当前图层」：不隔离会把整行背景也擦成黑块
+                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                .drawWithContent {
+                    // ⚠️ 这里读时钟是刻意的：Draw 阶段读 State 只会让绘制失效，
+                    // 不会让这个 composable 重组。别把它提到函数参数或组合期变量里。
+                    val localSung = (karaokeSungIndex(words, currentTimeMs.value) - rowStart)
+                        .coerceIn(0f, text.length.toFloat())
+                    // 一个字都还没唱：整层不画，直接露出下层未唱色（省掉一次全行绘制）
+                    if (localSung <= 0f) return@drawWithContent
+                    val l = layout ?: return@drawWithContent drawContent()
+                    drawContent()
+                    val width = l.size.width.toFloat()
+                    if (width <= 0f || text.isEmpty()) return@drawWithContent
+                    val i = localSung.toInt().coerceIn(0, text.length - 1)
+                    val right = if (localSung >= text.length) {
+                        width
+                    } else {
+                        val x0 = l.getHorizontalPosition(i, true).toFloat()
+                        val x1 = if (i + 1 <= text.length) {
+                            l.getHorizontalPosition(i + 1, true).toFloat()
                         } else {
-                            val x0 = l.getHorizontalPosition(i, true).toFloat()
-                            val x1 = if (i + 1 <= text.length) {
-                                l.getHorizontalPosition(i + 1, true).toFloat()
-                            } else {
-                                x0
-                            }
-                            x0 + (x1 - x0) * (sungIndex - i)
+                            x0
                         }
-                        val e = (right / width).coerceIn(0f, 1f)
-                        val fade = (SoftEdgePx / width).coerceIn(0f, 1f)
-                        val brush = when {
-                            e <= 0f -> SolidColor(Color.Transparent)
-                            e >= 1f -> SolidColor(Color.White)
-                            else -> Brush.horizontalGradient(
-                                0f to Color.White,
-                                (e - fade).coerceIn(0f, 1f) to Color.White,
-                                e to Color.Transparent,
-                                1f to Color.Transparent,
-                            )
-                        }
-                        drawRect(
-                            brush = brush,
-                            topLeft = Offset.Zero,
-                            size = Size(width, size.height),
-                            blendMode = BlendMode.DstIn,
+                        x0 + (x1 - x0) * (localSung - i)
+                    }
+                    val e = (right / width).coerceIn(0f, 1f)
+                    val fade = (SoftEdgePx / width).coerceIn(0f, 1f)
+                    val brush = when {
+                        e <= 0f -> SolidColor(Color.Transparent)
+                        e >= 1f -> SolidColor(Color.White)
+                        else -> Brush.horizontalGradient(
+                            0f to Color.White,
+                            (e - fade).coerceIn(0f, 1f) to Color.White,
+                            e to Color.Transparent,
+                            1f to Color.Transparent,
                         )
-                    },
-            )
-        }
+                    }
+                    drawRect(
+                        brush = brush,
+                        topLeft = Offset.Zero,
+                        size = Size(width, size.height),
+                        blendMode = BlendMode.DstIn,
+                    )
+                },
+        )
     }
 }
 

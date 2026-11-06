@@ -2,10 +2,10 @@ package com.annieplayer.annie_music.kt.data
 
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Song
-import com.annieplayer.annie_music.kt.data.sources.getKugouPlaylist
-import com.annieplayer.annie_music.kt.data.sources.getKuwoPlaylist
-import com.annieplayer.annie_music.kt.data.sources.getNeteasePlaylist
-import com.annieplayer.annie_music.kt.data.sources.getQQPlaylist
+import com.annieplayer.annie_music.kt.data.sources.kugou.getKugouPlaylist
+import com.annieplayer.annie_music.kt.data.sources.kuwo.getKuwoPlaylist
+import com.annieplayer.annie_music.kt.data.sources.netease.getNeteasePlaylist
+import com.annieplayer.annie_music.kt.data.sources.qq.getQQPlaylist
 
 /**
  * 歌单链接解析与分发（1:1 移植 Flutter 数据层 playlist_service.dart，对齐 RN 版 services/playlistService.ts）。
@@ -128,10 +128,11 @@ object PlaylistService {
                 songs = result.songs,
             )
         }
-        // 对齐 Dart `default: return null`（kkbox / qobuz 不支持歌单链接）
+        // 对齐 Dart `default: return null`（kkbox / qobuz / 本地不支持歌单链接）
         MusicPlatform.kkbox,
         MusicPlatform.qobuz,
         MusicPlatform.apple,
+        MusicPlatform.local,
         -> null
     }
 }

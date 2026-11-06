@@ -10,6 +10,7 @@ import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.TranslatePicker
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.util.consumeCancelledSong
+import com.annieplayer.annie_music.kt.core.util.downloadQualityFor
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.enrichSong
@@ -19,8 +20,9 @@ import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.playQualityTiersOf
 import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
-import com.annieplayer.annie_music.kt.data.sources.enrichAppleSong
+import com.annieplayer.annie_music.kt.data.sources.apple.enrichAppleSong
 import com.annieplayer.annie_music.kt.data.sources.apple.AppleDownloader
+import com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxDownloader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -97,36 +99,43 @@ suspend fun downloadOneAndRegister(
             writeTranslation = MoreSettings.writeQobuzDownloadTranslation.value,
             pickTranslate = { it.firstOrNull() },
         )
-        val filePath = if (song.platform == MusicPlatform.apple) {
-            AppleDownloader.download(
+        val filePath = when (song.platform) {
+            MusicPlatform.apple -> AppleDownloader.download(
                 song = song,
                 quality = quality,
                 lyric = DownloadService.mergeLyrics(lyric.lrc, lyric.tlyric, lyric.wordLyric),
                 onProgress = onProgress,
             )
-        } else {
-            val url = fetchDownloadUrlBySong(song, quality)
-            val extra = enrichSong(song)
-            DownloadService.downloadSong(
-                songId = song.id,
-                title = song.title,
-                artist = song.artist,
-                coverUrl = meta.coverUrl ?: song.cover,
-                album = meta.album ?: song.album,
-                downloadUrl = url,
-                quality = quality,
-                onProgress = onProgress,
-                lyric = lyric.lrc,
-                tlyric = lyric.tlyric,
-                wordLyric = lyric.wordLyric,
-                albumArtist = extra["albumArtist"]?.toString() ?: meta.albumArtist ?: song.albumArtist,
-                trackNumber = meta.trackNumber ?: song.trackNumber ?: extra["trackNumber"]?.toString(),
-                discNumber = meta.discNumber ?: song.discNumber ?: extra["discNumber"]?.toString(),
-                releaseDate = meta.releaseDate ?: song.releaseDate ?: extra["releaseDate"]?.toString(),
-                composer = meta.composer ?: song.composer ?: extra["composer"]?.toString(),
-                genre = meta.genre ?: song.genre ?: extra["genre"]?.toString(),
-                isrc = meta.isrc ?: song.isrc ?: extra["isrc"]?.toString(),
-            )
+            // KKBOX 的高音质全是 DRM，必须走官方票据 + 解密，不能把直链丢给通用下载器
+            MusicPlatform.kkbox -> KkboxDownloader.download(song = song, onProgress = onProgress)
+            else -> {
+                val url = fetchDownloadUrlBySong(song, quality)
+                val extra = enrichSong(song)
+                DownloadService.downloadSong(
+                    songId = song.id,
+                    title = song.title,
+                    artist = song.artist,
+                    coverUrl = meta.coverUrl ?: song.cover,
+                    album = meta.album ?: song.album,
+                    downloadUrl = url,
+                    quality = quality,
+                    onProgress = onProgress,
+                    lyric = lyric.lrc,
+                    tlyric = lyric.tlyric,
+                    wordLyric = lyric.wordLyric,
+                    albumArtist = extra["albumArtist"]?.toString() ?: meta.albumArtist ?: song.albumArtist,
+                    trackNumber = meta.trackNumber ?: song.trackNumber ?: extra["trackNumber"]?.toString(),
+                    discNumber = meta.discNumber ?: song.discNumber ?: extra["discNumber"]?.toString(),
+                    releaseDate = meta.releaseDate ?: song.releaseDate ?: extra["releaseDate"]?.toString(),
+                    composer = meta.composer ?: song.composer ?: extra["composer"]?.toString(),
+                    genre = meta.genre ?: song.genre ?: extra["genre"]?.toString(),
+                    isrc = meta.isrc ?: song.isrc ?: extra["isrc"]?.toString(),
+                    copyright = song.copyright,
+                    version = song.version,
+                    // 多歌手统一写成 `A / B`（结构化列表优先，见 TagMapper.artistOf）
+                    artistNames = song.artistNames,
+                )
+            }
         }
         downloadViewModel.completeTask(song.id, filePath)
         playerViewModel.addDownloadedId(song.id)
@@ -180,15 +189,24 @@ class DownloadOrchestrator(
         batchPickerVisible = false
     }
 
-    /** 打开 ⋮ 歌曲操作面板 */
+    /**
+     * 打开 ⋮ 歌曲操作面板。
+     *
+     * **先弹，再补**：Apple 的多歌手信息（`relationships.artists`）要额外一次 `/songs/{id}`，
+     * 以前是等它回来才弹面板 —— 首页/搜索第一次点 ⋮ 就卡一个 RTT。现在立刻弹，
+     * 歌手的细分列表随后填进去（面板里 `remember(song)` 会自动重算）。
+     */
     fun openActions(song: Song) {
-        if (song.platform != MusicPlatform.apple) {
-            uiViewModel.setSongActionsVisible(true, song)
-            return
-        }
+        uiViewModel.setSongActionsVisible(true, song)
+        if (song.platform != MusicPlatform.apple) return
+        // 已经带结构化歌手了（搜索/专辑接口现在都会带），就一次网络都不用发
+        if (song.artistNames.isNotEmpty() || song.artistIds.isNotEmpty()) return
         scope.launch {
             val enriched = runCatching { enrichAppleSong(song) }.getOrDefault(song)
-            uiViewModel.setSongActionsVisible(true, enriched)
+            val changed = enriched.artistNames != song.artistNames ||
+                enriched.artistIds != song.artistIds ||
+                enriched.albumId != song.albumId
+            if (changed) uiViewModel.updateSongActionsSong(song.id, enriched)
         }
     }
 
@@ -221,6 +239,12 @@ class DownloadOrchestrator(
                             ),
                             onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
                         )
+                    } else if (song.platform == MusicPlatform.kkbox) {
+                        // KKBOX 高音质全是 DRM：官方票据 + 解密，不经通用直链下载
+                        KkboxDownloader.download(
+                            song = song,
+                            onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
+                        )
                     } else {
                         val url = fetchDownloadUrlBySong(song, quality)
                         val extra = enrichSong(song)
@@ -243,6 +267,10 @@ class DownloadOrchestrator(
                             composer = song.composer ?: extra["composer"]?.toString(),
                             genre = song.genre ?: extra["genre"]?.toString(),
                             isrc = song.isrc ?: extra["isrc"]?.toString(),
+                            copyright = song.copyright,
+                            version = song.version,
+                            // 多歌手统一写成 `A / B`（结构化列表优先，见 TagMapper.artistOf）
+                            artistNames = song.artistNames,
                         )
                     }
                     downloadViewModel.completeTask(songId)
@@ -262,13 +290,18 @@ class DownloadOrchestrator(
      * [songs] 由宿主传入（搜索页传当前多选），整个批次只跑一次翻译决策：
      * 按既定规则写入**接口返回的第一个可用译文语言**（不弹选择器）。
      * [onFinished] 在整批跑完后回调（宿主用来清空多选）。
+     *
+     * **每首歌的档位在这里夹到它真实可用的最高档**（[downloadQualityFor]）：面板给的是整批
+     * 并集，用户点了无损之后，这批里「只有 320k」的歌必须降到 320k —— 否则会把 `flac`
+     * 原样发出去换回加密包（酷我 `mgg`）或跨源直链（QQ 回到酷我 `.mflac`）。
+     * `addTask` 与真正的下载用同一个值，下载列表显示的就是实际请求的档位。
      */
     fun downloadBatch(songs: List<Song>, quality: Quality, onFinished: () -> Unit = {}) {
         batchPickerVisible = false
         if (songs.isEmpty()) return
         batchDownloading = true
         for (song in songs) {
-            downloadViewModel.addTask(song, quality)
+            downloadViewModel.addTask(song, downloadQualityFor(song, quality))
         }
         val batchId = "search_batch_" + System.currentTimeMillis()
         enqueueDownload(batchId) {
@@ -278,7 +311,7 @@ class DownloadOrchestrator(
                     downloadViewModel = downloadViewModel,
                     playerViewModel = playerViewModel,
                     song = song,
-                    quality = quality,
+                    quality = downloadQualityFor(song, quality),
                     onProgress = { p -> downloadViewModel.updateProgress(song.id, p * 100) },
                 )
             }

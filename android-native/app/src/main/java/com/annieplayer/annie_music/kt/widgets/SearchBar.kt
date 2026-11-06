@@ -36,7 +36,7 @@ private val FieldBg = Color(0x0DFFFFFF)
 private val ClearIconColor = Color(0x26FFFFFF)
 
 /** rgba(255,255,255,0.5)（搜索图标） —— 对齐 Flutter `_searchIconColor` */
-private val SearchIconColor = Color(0x80FFFFFF)
+internal val SearchIconColor = Color(0x80FFFFFF)
 
 /**
  * 搜索栏（1:1 移植 Flutter `lib/widgets/search_bar.dart`）。
@@ -118,7 +118,7 @@ fun SearchBarField(
                 .clickableRipple(onSubmit),
             contentAlignment = Alignment.Center,
         ) {
-            // 放大镜改为自绘线条家族（与底栏 SearchGlyph 同形；笔重 2dp 等效、圆头端点），
+            // 放大镜改为自绘线条家族（与主页搜索入口同形；笔重 2dp 等效、圆头端点），
             // 替换原 Material 实心 Search（粗实心、平头，与同屏自绘图标笔重不一致）
             SearchBarMagnifierGlyph(
                 modifier = Modifier.size(17.dp),
@@ -162,14 +162,19 @@ private fun ClearCircleIcon(modifier: Modifier = Modifier, color: Color = ClearI
 }
 
 /**
- * 放大镜（搜索按钮图标，自绘线条家族，仅搜索页）。
+ * 放大镜（搜索图标，自绘线条家族）。
  *
- * 与底栏 `SearchGlyph` 同形（镜圈 + 45° 手柄，比例坐标），笔重 `w * 0.118f`
+ * 与主页的搜索入口同形（镜圈 + 45° 手柄，比例坐标），笔重 `w * 0.118f`
  * 在 17dp 栅格上 ≈ 2dp（2dp 等效），圆头端点；替换原 `Icons.Default.Search`
  * （Material 实心、平头，与同屏自绘图标笔重不一致）。
+ *
+ * **两个使用点、同一个图形**：
+ * 1. `SearchBarField` 内部右端的提交按钮；
+ * 2. 主页态的独立搜索入口（位置与 1 完全重合，见 `HomeScreen` 的 `HomeSearchEntryRow`）。
+ * 所以这里是 `internal` 而不是 `private`。
  */
 @Composable
-private fun SearchBarMagnifierGlyph(modifier: Modifier = Modifier, color: Color = SearchIconColor) {
+internal fun SearchBarMagnifierGlyph(modifier: Modifier = Modifier, color: Color = SearchIconColor) {
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height

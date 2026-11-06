@@ -130,15 +130,16 @@ fun QualityPickerSheet(
             .fillMaxSize()
             .graphicsLayer { alpha = fade },
     ) {
-        // ── 遮罩：点击取消（隐藏时整条 clickable 都不挂 → 不吃触摸也不挡下层） ──
+        // ── 遮罩：只吞点击，**不取消**（退出只走返回手势 / 「取消」按钮） ──
         // 注意不能用 clickable(enabled = false)：Compose 里 disabled 的 clickable
         // 依然占据命中测试，会把下层（顶栏/搜索框/迷你条）的点击全部挡掉。
+        // 注意 `onClick = {}` 不能删：它是吃掉触摸、阻止点击穿透到下层页面的唯一手段。
         val scrimInteraction = remember { MutableInteractionSource() }
         val scrimClickModifier = if (visible) {
             Modifier.clickable(
                 interactionSource = scrimInteraction,
                 indication = null,
-                onClick = onCancel,
+                onClick = {},
             )
         } else {
             Modifier
@@ -305,7 +306,7 @@ private fun QualityPickerOptionRow(
         }
         DownloadIconPlaceholder(
             modifier = Modifier.size(AppIconSize.icon18),
-            tint = AppColors.whiteA25,
+            tint = AppColors.glyphDim,
         )
     }
 }

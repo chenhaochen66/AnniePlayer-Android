@@ -37,7 +37,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import com.annieplayer.annie_music.kt.data.sources.AppleStorefront
+import com.annieplayer.annie_music.kt.data.sources.apple.AppleStorefront
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
@@ -52,7 +52,12 @@ fun AppleCountryButton(
     code: String,
     storefronts: List<AppleStorefront>,
     loading: Boolean,
+    /** 非空 = 上次加载失败（面板里给「重试」，而不是假装「没有匹配的地区」） */
+    error: String?,
     onSelect: (String) -> Unit,
+    /** 面板打开时回调：宿主据此补拉（冷启动时没人触发过加载） */
+    onOpen: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -74,7 +79,10 @@ fun AppleCountryButton(
             modifier = Modifier
                 .height(36.dp)
                 .background(AppColors.whiteA05, RoundedCornerShape(AppRadius.r10))
-                .clickable { expanded = true }
+                .clickable {
+                    expanded = true
+                    onOpen()
+                }
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -142,6 +150,25 @@ fun AppleCountryButton(
                             fontSize = AppFontSize.base,
                             modifier = Modifier.padding(10.dp),
                         )
+                    } else if (storefronts.isEmpty() && error != null) {
+                        // 失败要说清楚，并且**当场可重试** —— 以前这里吞成空列表，
+                        // 用户只看到「没有匹配的地区」，只能靠切换平台碰运气
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "地区表加载失败：$error",
+                                color = AppColors.danger,
+                                fontSize = AppFontSize.base,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "重试",
+                                color = AppColors.primary,
+                                fontSize = AppFontSize.base,
+                                modifier = Modifier
+                                    .clickable { onRetry() }
+                                    .padding(vertical = 4.dp),
+                            )
+                        }
                     } else if (filtered.isEmpty()) {
                         Text(
                             text = "没有匹配的地区",

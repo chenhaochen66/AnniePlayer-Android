@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -149,7 +148,7 @@ internal fun HomePendingDownloadBar(
  *
  * 样式：`glassPanel` + [AppRadius.pill]（白 5% 底、无描边无投影），高 44dp
  * （[AppSize.detailDownloadBarHeight]）、左右内边距 16dp、⇄ 图标 18dp + 当前源文案。
- * 位置仍在右下角：右 16 / 底 [AppSpacing.sheetBottomInset]（避开迷你播放条）；
+ * 位置仍在右下角：右 16 / 底 = 面板底 inset + 1.5 个按钮身位（44 × 1.5 = 66 → 合计 134）。
  * 原圆形按钮需让出半个身位（end = 40）才与列表右缘对齐，改成 pill 后改回 16。
  *
  * @param label 当前生效的搜索源 / 平台文案（宿主按 `pickerOptions[pickerIndex]` 注入）。
@@ -159,12 +158,20 @@ internal fun BoxScope.HomeSourceSwitchButton(label: String, onTap: () -> Unit) {
     Row(
         modifier = Modifier
             .align(Alignment.BottomEnd)
-            .padding(end = AppSpacing.sp16, bottom = AppSpacing.sheetBottomInset)
+            .padding(
+                end = AppSpacing.sp16,
+                // 直接用 sheetBottomInset 会贴着底栏；再抬 1.5 个自身高度（66dp）让它是
+                // 浮在列表右下角的按钮、而不是压在底栏上的一条边。
+                // 列表底部留白（searchListBottomInset = 200）必须 ≥ 本值 + 按钮高 44。
+                bottom = AppSpacing.sheetBottomInset + AppSize.detailDownloadBarHeight * 1.5f,
+            )
             .height(AppSize.detailDownloadBarHeight)
-            // 玻璃底加深到 surfaceLight @50%（默认白 5% 浮在列表上太透），与底栏同一口径
+            // 底色按用户要求提到 50%：主页现在有一整排 168dp 封面卡从按钮底下滚过，
+            // 5% 白玻璃在彩色封面上几乎看不见、白字也压不住。这里用固定的深色
+            // surfaceLight @50%（半实心），任何封面下都读得清，也不再依赖背景取色。
             .glassPanel(
                 shape = RoundedCornerShape(AppRadius.pill),
-                tint = AppColors.surfaceLight.copy(alpha = 0.50f),
+                tint = AppColors.surfaceLight.copy(alpha = 0.5f),
             )
             .clickableRipple(onTap)
             .padding(horizontal = AppSpacing.sp16),

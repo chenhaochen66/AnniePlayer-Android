@@ -1,6 +1,7 @@
 package com.annieplayer.annie_music.kt.data
 
 import com.annieplayer.annie_music.kt.core.state.MoreSettings
+import com.annieplayer.annie_music.kt.core.util.effectivePlayQuality
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
 import com.annieplayer.annie_music.kt.data.model.Artist
@@ -11,70 +12,63 @@ import com.annieplayer.annie_music.kt.data.network.anyToJsonElement
 import com.annieplayer.annie_music.kt.data.network.cacheService
 import com.annieplayer.annie_music.kt.data.network.json
 import com.annieplayer.annie_music.kt.data.network.jsonElementToAny
-import com.annieplayer.annie_music.kt.data.sources.enrichKuGouSong
-import com.annieplayer.annie_music.kt.data.sources.enrichKuwoSong
-import com.annieplayer.annie_music.kt.data.sources.enrichKkboxSong
-import com.annieplayer.annie_music.kt.data.sources.enrichNeteaseSong
-import com.annieplayer.annie_music.kt.data.sources.enrichQQSong
-import com.annieplayer.annie_music.kt.data.sources.fetchAppleArtistAvatar
-import com.annieplayer.annie_music.kt.data.sources.fetchAppleArtistBio
-import com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.fetchAppleLyric
-import com.annieplayer.annie_music.kt.data.sources.fetchKugouArtistInfo
-import com.annieplayer.annie_music.kt.data.sources.getAppleAlbumSongs
-import com.annieplayer.annie_music.kt.data.sources.getAppleArtistAlbums
-import com.annieplayer.annie_music.kt.data.sources.getAppleArtistSongs
-import com.annieplayer.annie_music.kt.data.sources.searchAppleAlbums
-import com.annieplayer.annie_music.kt.data.sources.searchAppleArtists
-import com.annieplayer.annie_music.kt.data.sources.searchAppleMusic
-import com.annieplayer.annie_music.kt.data.sources.fetchKugouLyric
-import com.annieplayer.annie_music.kt.data.sources.fetchKugouMusicUrl
-import com.annieplayer.annie_music.kt.data.sources.fetchKuwoArtistAvatar
-import com.annieplayer.annie_music.kt.data.sources.fetchKuwoArtistBio
-import com.annieplayer.annie_music.kt.data.sources.fetchKuwoDownloadUrl
-import com.annieplayer.annie_music.kt.data.sources.fetchKuwoLyric
-import com.annieplayer.annie_music.kt.data.sources.fetchKuwoPlayUrl
-import com.annieplayer.annie_music.kt.data.sources.fetchNeteaseArtistAvatar
-import com.annieplayer.annie_music.kt.data.sources.fetchNeteaseArtistBio
-import com.annieplayer.annie_music.kt.data.sources.fetchNeteaseDownloadUrl
-import com.annieplayer.annie_music.kt.data.sources.fetchNeteaseLyric
-import com.annieplayer.annie_music.kt.data.sources.fetchNeteasePlayUrl
-import com.annieplayer.annie_music.kt.data.sources.fetchQQArtistBio
-import com.annieplayer.annie_music.kt.data.sources.fetchQQLyric
-import com.annieplayer.annie_music.kt.data.sources.fetchQQMusicUrl
-import com.annieplayer.annie_music.kt.data.sources.getAlbumSongs
-import com.annieplayer.annie_music.kt.data.sources.getArtistAlbums
-import com.annieplayer.annie_music.kt.data.sources.getArtistSongs
-import com.annieplayer.annie_music.kt.data.sources.getKugouAlbumSongs
-import com.annieplayer.annie_music.kt.data.sources.getKugouArtistAlbums
-import com.annieplayer.annie_music.kt.data.sources.getKugouArtistSongs
-import com.annieplayer.annie_music.kt.data.sources.getNeteaseAlbumSongs
-import com.annieplayer.annie_music.kt.data.sources.getNeteaseArtistAlbums
-import com.annieplayer.annie_music.kt.data.sources.getNeteaseArtistSongs
-import com.annieplayer.annie_music.kt.data.sources.getQQAlbumSongs
-import com.annieplayer.annie_music.kt.data.sources.getQQArtistAlbums
-import com.annieplayer.annie_music.kt.data.sources.getQQArtistSongs
-import com.annieplayer.annie_music.kt.data.sources.getQobuzAlbum
-import com.annieplayer.annie_music.kt.data.sources.getQobuzArtistPage
-import com.annieplayer.annie_music.kt.data.sources.getTrack
-import com.annieplayer.annie_music.kt.data.sources.fetchQobuzArtistPicture
-import com.annieplayer.annie_music.kt.data.sources.fetchQobuzLyrics
-import com.annieplayer.annie_music.kt.data.sources.getFileUrl
-import com.annieplayer.annie_music.kt.data.sources.qobuzHiresFormatId
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualityLabel
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualityFormatId
-import com.annieplayer.annie_music.kt.data.sources.qobuzQualitySpec
-import com.annieplayer.annie_music.kt.data.sources.qobuzTokenProvider
-import com.annieplayer.annie_music.kt.data.sources.searchQobuzAlbums
-import com.annieplayer.annie_music.kt.data.sources.searchQobuzArtists
-import com.annieplayer.annie_music.kt.data.sources.getSongLyrics
-import com.annieplayer.annie_music.kt.data.sources.searchAlbum
-import com.annieplayer.annie_music.kt.data.sources.searchArtist
-import com.annieplayer.annie_music.kt.data.sources.searchKugouAlbum
-import com.annieplayer.annie_music.kt.data.sources.searchKugouArtist
-import com.annieplayer.annie_music.kt.data.sources.searchNeteaseAlbum
-import com.annieplayer.annie_music.kt.data.sources.searchNeteaseArtist
-import com.annieplayer.annie_music.kt.data.sources.searchQQAlbum
-import com.annieplayer.annie_music.kt.data.sources.searchQQArtist
+import com.annieplayer.annie_music.kt.data.sources.apple.fetchAppleArtistAvatar
+import com.annieplayer.annie_music.kt.data.sources.apple.fetchAppleArtistBio
+import com.annieplayer.annie_music.kt.data.sources.apple.getAppleAlbumSongs
+import com.annieplayer.annie_music.kt.data.sources.apple.getAppleArtistAlbums
+import com.annieplayer.annie_music.kt.data.sources.apple.getAppleArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.apple.searchAppleAlbums
+import com.annieplayer.annie_music.kt.data.sources.apple.searchAppleArtists
+import com.annieplayer.annie_music.kt.data.sources.apple.searchAppleMusic
+import com.annieplayer.annie_music.kt.data.sources.kkbox.enrichKkboxSong
+import com.annieplayer.annie_music.kt.data.sources.kkbox.fetchKkboxPlayUrl
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getSongLyrics
+import com.annieplayer.annie_music.kt.data.sources.kugou.enrichKuGouSong
+import com.annieplayer.annie_music.kt.data.sources.kugou.fetchKugouArtistInfo
+import com.annieplayer.annie_music.kt.data.sources.kugou.getKugouAlbumSongs
+import com.annieplayer.annie_music.kt.data.sources.kugou.getKugouArtistAlbums
+import com.annieplayer.annie_music.kt.data.sources.kugou.getKugouArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.kugou.searchKugouAlbum
+import com.annieplayer.annie_music.kt.data.sources.kugou.searchKugouArtist
+import com.annieplayer.annie_music.kt.data.sources.kuwo.enrichKuwoSong
+import com.annieplayer.annie_music.kt.data.sources.kuwo.fetchKuwoArtistAvatar
+import com.annieplayer.annie_music.kt.data.sources.kuwo.fetchKuwoArtistBio
+import com.annieplayer.annie_music.kt.data.sources.kuwo.getAlbumSongs
+import com.annieplayer.annie_music.kt.data.sources.kuwo.getArtistAlbums
+import com.annieplayer.annie_music.kt.data.sources.kuwo.getArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.kuwo.searchAlbum
+import com.annieplayer.annie_music.kt.data.sources.kuwo.searchArtist
+import com.annieplayer.annie_music.kt.data.sources.lyric.LyricRequest
+import com.annieplayer.annie_music.kt.data.sources.lyric.LyricSources
+import com.annieplayer.annie_music.kt.data.sources.lyric.NO_LYRIC
+import com.annieplayer.annie_music.kt.data.sources.netease.enrichNeteaseSong
+import com.annieplayer.annie_music.kt.data.sources.netease.fetchNeteaseArtistAvatar
+import com.annieplayer.annie_music.kt.data.sources.netease.fetchNeteaseArtistBio
+import com.annieplayer.annie_music.kt.data.sources.netease.getNeteaseAlbumSongs
+import com.annieplayer.annie_music.kt.data.sources.netease.getNeteaseArtistAlbums
+import com.annieplayer.annie_music.kt.data.sources.netease.getNeteaseArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.netease.searchNeteaseAlbum
+import com.annieplayer.annie_music.kt.data.sources.netease.searchNeteaseArtist
+import com.annieplayer.annie_music.kt.data.sources.qq.enrichQQSong
+import com.annieplayer.annie_music.kt.data.sources.qq.fetchQQArtistBio
+import com.annieplayer.annie_music.kt.data.sources.qq.getQQAlbumSongs
+import com.annieplayer.annie_music.kt.data.sources.qq.getQQArtistAlbums
+import com.annieplayer.annie_music.kt.data.sources.qq.getQQArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.qq.searchQQAlbum
+import com.annieplayer.annie_music.kt.data.sources.qq.searchQQArtist
+import com.annieplayer.annie_music.kt.data.sources.qobuz.fetchQobuzArtistPicture
+import com.annieplayer.annie_music.kt.data.sources.qobuz.fetchQobuzLyrics
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getFileUrl
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getQobuzAlbum
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getQobuzArtistPage
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getTrack
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzHiresFormatId
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzQualityFormatId
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzQualityLabel
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzQualitySpec
+import com.annieplayer.annie_music.kt.data.sources.qobuz.qobuzTokenProvider
+import com.annieplayer.annie_music.kt.data.sources.qobuz.searchQobuzAlbums
+import com.annieplayer.annie_music.kt.data.sources.qobuz.searchQobuzArtists
 import com.annieplayer.annie_music.kt.data.source.BuiltinSourceProvider
 import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
 import com.annieplayer.annie_music.kt.data.source.LxPluginSourceProvider
@@ -91,6 +85,15 @@ import kotlinx.coroutines.CancellationException
 
 /** 歌词缓存 TTL（对齐 RN `LYRIC_CACHE_TTL` = 60 分钟） */
 private const val _lyricCacheTtl: Long = 60 * 60 * 1000L
+
+/**
+ * 「这次没拿到歌词」的短 TTL。
+ *
+ * 空结果也缓存，但只存 10 分钟：连续切歌/重播同一首不会每次都打接口，
+ * 而瞬时失败（网络抖动、Apple 本机服务刚被拉起）也能在 10 分钟后自愈 ——
+ * 不用 60 分钟那么久，也不像「完全不缓存」那样每播一次都发一次请求。
+ */
+private const val _lyricEmptyCacheTtl: Long = 10 * 60 * 1000L
 
 /** 歌词结果（对齐 Dart `LyricResult`，另带逐字与可用译文语言） */
 data class LyricResult(
@@ -121,7 +124,12 @@ data class RepoArtistSongs(
 private val _builtinProvider by lazy { BuiltinSourceProvider() }
 private val _lxProvider by lazy { LxPluginSourceProvider() }
 
-/** 落雪插件能接管的国内四平台；开关打开后这些平台**不再使用内置音源** */
+/**
+ * 落雪插件接管的国内四平台。
+ *
+ * 这两家的播放与下载**都只有插件这一条路**：内置直链接口（网易 `song/url`、酷我
+ * `convert_url_with_sign`、QQ/酷狗的解析接口）已全部删除，也没有任何降级/回退。
+ */
 private val _lxPlatforms = setOf(
     MusicPlatform.netease,
     MusicPlatform.kuwo,
@@ -132,94 +140,72 @@ private val _lxPlatforms = setOf(
 /**
  * 播放 URL —— **音源路由**。
  *
- * 开关开且是落雪可接管的四平台：**只用插件**（无插件/插件失败 → 直接失败并提示，不回退内置）。
- * 其余情况（开关关、或 Qobuz/KKBOX 这类插件覆盖不到的平台）走内置。
+ * | 平台 | 取链方 |
+ * |---|---|
+ * | 网易 / QQ / 酷狗 / 酷我 | 落雪插件（没插件 = 直接失败，不降级、不回退内置） |
+ * | KKBOX | KKBOX 官方票据接口（会话缺失 = 失败，不借别家） |
+ * | Qobuz | 官方 token 接口 |
+ * | 本地 | `playUrl` 本身就是 `file://` 绝对路径 |
+ * | Apple | 不走直链，由 `ApplePlaybackServer` 起本机 HLS 代理解密 |
  */
-suspend fun fetchPlayUrlBySong(song: Song): String = resolveUrlByProvider(song, null)
+suspend fun fetchPlayUrlBySong(song: Song): String = resolvePlayUrl(song)
 
-/** 下载 URL —— 路由同上 */
+/**
+ * 下载 URL —— **音源路由**。
+ *
+ * 四平台只有落雪插件；KKBOX 与 Apple 的下载带解密环节（DRM / FairPlay），
+ * 由各自的专用下载器实现，不经这里取直链。
+ */
 suspend fun fetchDownloadUrlBySong(song: Song, quality: Quality): String =
-    resolveUrlByProvider(song, quality)
+    resolveDownloadUrl(song, quality)
 
-private suspend fun resolveUrlByProvider(song: Song, quality: Quality?): String {
-    val pluginMode = LxPluginRegistry.enabled.value && song.platform in _lxPlatforms
-    if (pluginMode) requireLxPlugin(song)
-
-    // 下载：显式档位，只请求一次（下载侧有字节嗅探等自身兜底）
-    if (quality != null) {
-        return if (pluginMode) {
-            _lxProvider.resolveDownloadUrl(song, quality)
-        } else {
-            _builtinProvider.resolveDownloadUrl(song, quality)
-        }
+private suspend fun resolveDownloadUrl(song: Song, quality: Quality): String = when (song.platform) {
+    MusicPlatform.netease, MusicPlatform.qq, MusicPlatform.kugou, MusicPlatform.kuwo -> {
+        requireLxPlugin(song)
+        _lxProvider.resolveDownloadUrl(song, quality)
     }
-
-    // 播放：先按「歌实际有的最高档」起跳 —— 选了无损但歌只有 320k 时**直接要 320k**，
-    // 不发注定失败的请求（否则拿到坏链 → 播放器报错 → 自动跳下一首）；再逐级往下兜底。
-    val configured = MoreSettings.qualityFor(song.platform)
-    val tiers: List<Quality?> = if (configured == null) {
-        listOf(null)
-    } else {
-        val start = if (degradesGracefully(song.platform)) {
-            configured
-        } else {
-            bestAvailableAtOrBelow(song, configured) ?: configured
-        }
-        val from = _playQualityLadder.indexOf(start).takeIf { it >= 0 }
-            ?: _playQualityLadder.lastIndex
-        _playQualityLadder.subList(from, _playQualityLadder.size)
-    }
-    var lastError: Throwable? = null
-    for (tier in tiers) {
-        try {
-            return playOnce(song, pluginMode, tier)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            lastError = e
-        }
-    }
-    // 配置档位全失败 → 退回自动（自动几乎不会失败）
-    if (configured != null) {
-        try {
-            return playOnce(song, pluginMode, null)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            lastError = e
-        }
-    }
-    val err = lastError ?: IllegalStateException("解析失败")
-    if (pluginMode) LxPluginRegistry.postNotice("落雪插件解析失败：${err.message ?: "未知错误"}")
-    throw err
+    MusicPlatform.kkbox -> error("KKBOX 下载走 KkboxDownloader（官方票据 + DRM 解密）")
+    MusicPlatform.apple -> error("Apple Music 下载走 AppleDownloader")
+    MusicPlatform.local -> error("本地文件无需下载")
+    MusicPlatform.qobuz -> _builtinProvider.resolveDownloadUrl(song, quality)
 }
 
-/** 插件模式但该平台没有可用插件：直接失败并提示（配置问题，不参与降级重试） */
+private suspend fun resolvePlayUrl(song: Song): String = when (song.platform) {
+    MusicPlatform.netease, MusicPlatform.qq, MusicPlatform.kugou, MusicPlatform.kuwo -> {
+        requireLxPlugin(song)
+        _lxProvider.resolvePlayUrl(song, MoreSettings.qualityFor(song.platform))
+    }
+    MusicPlatform.kkbox -> fetchKkboxPlayUrl(song.id)
+    MusicPlatform.qobuz -> _builtinProvider.resolvePlayUrl(song, MoreSettings.qualityFor(song.platform))
+    MusicPlatform.local -> song.playUrl
+    MusicPlatform.apple -> error("Apple Music 播放走 ApplePlaybackServer，不经直链解析")
+}
+
+/**
+ * 「该平台没有可用插件」——**直接失败**。
+ *
+ * 内置直链已删除，没有可回退的东西：文案必须指向「去插件管理导入」这个唯一解法。
+ */
 private fun requireLxPlugin(song: Song) {
     if (LxPluginRegistry.pluginFor(song.platform) != null) return
     val active = LxPluginRegistry.activePlugin()
     val message = if (active != null) {
-        "「${active.name}」不支持${song.platform.label}，内置音源已停用"
+        "「${active.name}」不支持${song.platform.label}：请在「插件管理」里换一个支持它的插件"
     } else {
-        "未添加可用的插件，内置音源已停用"
+        "${song.platform.label}的音源由落雪插件提供：请先在「插件管理」里导入并启用一个插件"
     }
     LxPluginRegistry.postNotice(message)
     throw IllegalStateException(message)
 }
 
-/** 单次播放取链（插件或内置；[quality] 为 null = 自动） */
-private suspend fun playOnce(song: Song, pluginMode: Boolean, quality: Quality?): String =
-    if (pluginMode) {
-        _lxProvider.resolvePlayUrl(song, quality)
-    } else {
-        _builtinProvider.resolvePlayUrl(song, quality)
-    }
-
 /**
- * 引擎侧预取入口：把 Media3 队列项还原成 [Song] 后走同一条音源路由（插件/内置）。
+ * 引擎侧预取入口：把 Media3 队列项还原成 [Song] 后走同一条音源路由。
  *
- * 队列项现在带 `qualities`（该歌真实可用档位），用于把「选了无损但歌只有 320k」直接选成 320k；
- * 老队列项没有该字段时退回「假装有 320k」的旧行为。
+ * 队列项带 `qualities`（该歌真实可用档位），`LxPluginSourceProvider.pickQuality` 据此把
+ * 「选了无损但这首歌只有 320k」的请求夹到它真实有的档位。
+ *
+ * **档位缺失时不要伪造 `[320k]`**：伪造会让夹档把「未知」当成「只有 320k」，
+ * 于是无损歌被平白降到 320k。空表交给 `pickQuality` 判「未知」（自动档仍按 320k 请求）。
  */
 suspend fun fetchPlayUrlForBackend(item: Map<String, String>): String {
     val platform = MusicPlatform.entries.firstOrNull { it.name == item["platform"] } ?: MusicPlatform.kuwo
@@ -236,17 +222,35 @@ suspend fun fetchPlayUrlForBackend(item: Map<String, String>): String {
             album = item["album"],
             duration = 0,
             platform = platform,
-            qualities = qualities.ifEmpty { listOf(Quality.k320k) },
+            qualities = qualities,
             mediaMid = item["mediaMid"]?.takeIf { it.isNotEmpty() },
         ),
     )
 }
 
-/** 该平台播放请求档位 = 设置里该平台的「默认播放音质」；未配置（自动）当 320k。缓存 key 随之一致变化 */
-internal fun playRequestQuality(platformName: String): Quality =
-    MusicPlatform.entries.firstOrNull { it.name == platformName }
-        ?.let { MoreSettings.qualityFor(it) }
-        ?: Quality.k320k
+/**
+ * 队列项 → **本次实际会请求的档位**（播放缓存分区 + 「自动」文案都用它）。
+ *
+ * 规则与 `LxPluginSourceProvider.pickQuality` 逐条相同（同一个 `effectivePlayQuality`）：
+ * 配了档位就按歌夹档，选「自动」就取这首歌的最高档，未知才退 320k。
+ *
+ * 只有国内四平台走这套；Apple / KKBOX / Qobuz 的档位另有来源（Apple 是 `alac/hires/...`），
+ * 保持改造前的 `配置档 ?: 320k`，避免无谓地把它们的缓存 key 改掉。
+ */
+internal fun effectivePlayQualityOf(item: Map<String, String>): Quality {
+    val platform = MusicPlatform.entries.firstOrNull { it.name == item["platform"] } ?: MusicPlatform.kuwo
+    val configured = MoreSettings.qualityFor(platform)
+    return when (platform) {
+        MusicPlatform.netease, MusicPlatform.qq, MusicPlatform.kugou, MusicPlatform.kuwo -> {
+            val qualities = item["qualities"].orEmpty()
+                .split(',')
+                .mapNotNull { Quality.fromValue(it.trim().ifEmpty { null }) }
+                .distinct()
+            effectivePlayQuality(platform, qualities, configured)
+        }
+        else -> configured ?: Quality.k320k
+    }
+}
 
 /**
  * 该平台「默认播放音质」可选档位（高→低，不含「自动」；**KKBOX 暂不提供**）。
@@ -261,7 +265,8 @@ fun playQualityTiersOf(platform: MusicPlatform): List<Quality> = when (platform)
     MusicPlatform.qq, MusicPlatform.kuwo ->
         listOf(Quality.flac, Quality.k320k, Quality.k128k)
     MusicPlatform.apple -> listOf(Quality.atmos, Quality.hires, Quality.alac, Quality.aac256)
-    MusicPlatform.kkbox -> emptyList()
+    // 本地文件没有「音质档位」可选：文件本身就是最终档，选档界面不出现
+    MusicPlatform.kkbox, MusicPlatform.local -> emptyList()
 }
 
 /** 档位显示名：Qobuz / Apple 用自己的档位命名，其余用通用 [Quality.label] */
@@ -273,88 +278,52 @@ fun playQualityLabelOf(platform: MusicPlatform, quality: Quality): String = when
 }
 
 /**
- * 「自动」档显示名 —— 顺带写出它实际取到的档，避免看着像"没档位"。
+ * 「自动」档显示名 —— 括号里写**该平台可选的最高档位名**，避免看着像"没档位"。
  *
- * 国内四平台自动 = 320k（`builtinPlayUrl` 既有规则）；**Qobuz 自动 = FLAC Hires Max**（`qobuzHiresFormatId`）。
+ * 国内四平台的「自动」= 这首歌自己的最高档（逐曲不同，所以这里只能写平台天花板，
+ * 例如网易/酷狗 `自动（HiRes）`、QQ/酷我 `自动（无损音质）`）；实际逐曲夹档见
+ * `effectivePlayQuality`。**Qobuz 自动 = FLAC Hires Max**（`qobuzHiresFormatId`）。
  */
 fun playQualityAutoLabelOf(platform: MusicPlatform): String = when (platform) {
     MusicPlatform.qobuz -> "自动（FLAC Hires Max）"
     // Apple 的「自动」= ALAC 超高解析，曲目没有该档时按 ALAC 无损 → AAC 256 降级
     MusicPlatform.apple -> "自动（ALAC 超高解析）"
+    MusicPlatform.netease, MusicPlatform.qq, MusicPlatform.kugou, MusicPlatform.kuwo ->
+        playQualityTiersOf(platform).firstOrNull()
+            ?.let { "自动（${playQualityLabelOf(platform, it)}）" }
+            ?: "自动（320k）"
     else -> "自动（320k）"
 }
 
 /**
- * 内置播放直链（netease 走 c.wwwweb.top，qq/kugou 走长青解析，其余走 kuwo）。
+ * 内置音源取链 —— **只剩 Qobuz**。
  *
- * [quality] 为 null = 自动（各平台既有取档规则，旧行为）；指定档位只请求该档一次 ——
- * **降级统一由仓库层做**（见 [resolveUrlByProvider]），插件/内置同一套，避免双重降级。
+ * 国内四平台（网易 / QQ / 酷狗 / 酷我）的内置直链、KKBOX 的酷我兜底、以及它们各自
+ * 的档位降级梯子已全部删除：四平台走落雪插件、KKBOX 走自己的官方票据接口。
+ * 这里对别的平台一律抛错，避免"漏走路由还能碰巧出链"。
  */
-internal suspend fun builtinPlayUrl(song: Song, quality: Quality? = null): String {
-    if (quality != null) return _builtinPlayUrlAt(song, quality)
-    return when (song.platform) {
-        MusicPlatform.netease -> fetchNeteasePlayUrl(song.id)
-        MusicPlatform.qq -> fetchQQMusicUrl(
-            song.id.replaceFirst(Regex("^qq:"), ""),
-            if (song.qualities.contains(Quality.k320k)) "320k" else "128k",
-        )
-        MusicPlatform.kugou -> fetchKugouMusicUrl(
-            song.id.replaceFirst(Regex("^kugou:"), ""),
-            if (song.qualities.contains(Quality.k320k)) "320k" else "128k",
-        )
-        MusicPlatform.qobuz -> fetchQobuzUrl(song)
-        MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoPlayUrl(song.id)
-        MusicPlatform.apple -> error("Apple Music 播放暂未接入")
-    }
+internal suspend fun builtinPlayUrl(song: Song, quality: Quality? = null): String = when (song.platform) {
+    MusicPlatform.qobuz -> fetchQobuzUrl(song, quality)
+    MusicPlatform.netease, MusicPlatform.qq, MusicPlatform.kugou, MusicPlatform.kuwo ->
+        error("${song.platform.label}的音源由落雪插件提供，内置直链已移除")
+    MusicPlatform.kkbox -> error("KKBOX 播放走官方票据接口（fetchKkboxPlayUrl）")
+    MusicPlatform.apple -> error("Apple Music 播放走 ApplePlaybackServer，不经直链解析")
+    // 本地文件：playUrl 已经是 file:// 绝对路径，没有任何「解析」步骤
+    MusicPlatform.local -> if (quality == null) song.playUrl else error("本地文件不支持按档位取链")
 }
-
-/** 播放档位由高到低（降级梯子；仓库层插件/内置共用） */
-private val _playQualityLadder =
-    listOf(Quality.hires, Quality.flac, Quality.k320k, Quality.k128k)
 
 /**
- * 该平台内置取链在「要的档位不可用」时是否**优雅降级**（返回它能给的最高档、不报错）。
+ * 内置下载直链 —— **只剩 Qobuz**。
  *
- * 酷狗实测如此：`level=hires` 遇到无 Hi-Res 的歌给 `quflac`。这类平台**不该用列表元数据预先夹档** ——
- * 否则歌单链路拿不到 `hash_high` 的酷狗歌永远用不上 Hi-Res。其余平台会报错/给坏链，必须靠夹档 + 降级梯子。
+ * 带解密环节的两家（KKBOX 的 DRM、Apple 的 FairPlay）各有专用下载器，不经这里取直链。
  */
-private fun degradesGracefully(platform: MusicPlatform): Boolean =
-    platform == MusicPlatform.kugou
-
-/** 歌曲已知档位里「不超过 [want] 的最高档」；qualities 为空（未知）返回 null */
-private fun bestAvailableAtOrBelow(song: Song, want: Quality): Quality? {    val wantRank = _playQualityLadder.indexOf(want)
-    if (wantRank < 0) return null
-    return song.qualities
-        .mapNotNull { q -> _playQualityLadder.indexOf(q).takeIf { it >= 0 }?.let { it to q } }
-        .filter { it.first >= wantRank }
-        .minByOrNull { it.first }
-        ?.second
-}
-
-/** 按指定档位请求（各平台各自的接口） */
-private suspend fun _builtinPlayUrlAt(song: Song, quality: Quality): String = when (song.platform) {
-    MusicPlatform.netease -> fetchNeteasePlayUrl(song.id, quality)
-    MusicPlatform.qq -> fetchQQMusicUrl(song.id.replaceFirst(Regex("^qq:"), ""), quality.value)
-    MusicPlatform.kugou -> fetchKugouMusicUrl(song.id.replaceFirst(Regex("^kugou:"), ""), quality.value)
-    MusicPlatform.qobuz -> fetchQobuzUrl(song, quality)
-    MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoPlayUrl(song.id, quality)
-    MusicPlatform.apple -> error("Apple Music 播放暂未接入")
-}
-
-/** 内置下载直链 */
 internal suspend fun builtinDownloadUrl(song: Song, quality: Quality): String = when (song.platform) {
-    MusicPlatform.netease -> fetchNeteaseDownloadUrl(song.id, quality)
-    MusicPlatform.qq -> fetchQQMusicUrl(
-        song.id.replaceFirst(Regex("^qq:"), ""),
-        quality.value,
-    )
-    MusicPlatform.kugou -> fetchKugouMusicUrl(
-        song.id.replaceFirst(Regex("^kugou:"), ""),
-        quality.value,
-    )
     MusicPlatform.qobuz -> fetchQobuzUrl(song, quality)
-    MusicPlatform.kuwo, MusicPlatform.kkbox -> fetchKuwoDownloadUrl(song.id, quality)
-    MusicPlatform.apple -> error("Apple Music 下载暂未接入")
+    MusicPlatform.netease, MusicPlatform.qq, MusicPlatform.kugou, MusicPlatform.kuwo ->
+        error("${song.platform.label}的内置下载接口已移除，下载统一走落雪插件")
+    MusicPlatform.kkbox -> error("KKBOX 下载走 KkboxDownloader（官方票据 + DRM 解密）")
+    MusicPlatform.apple -> error("Apple Music 下载走 AppleDownloader")
+    MusicPlatform.local -> error("本地文件无需下载")
 }
 
 /** Qobuz 直链（需 token；[quality] 为空表示播放，取最高档） */
@@ -383,6 +352,8 @@ suspend fun searchAlbumByPlatform(
     MusicPlatform.apple -> searchAppleAlbums(query, page = page, limit = pageSize)
     MusicPlatform.kuwo, MusicPlatform.kkbox ->
         searchAlbum(query, page = page, pageSize = pageSize)
+    // 本地曲库不做云端专辑搜索
+    MusicPlatform.local -> emptyList()
 }
 
 /** 专辑曲目（按平台分发） */
@@ -424,6 +395,7 @@ suspend fun fetchAlbumSongsByPlatform(
     MusicPlatform.apple -> getAppleAlbumSongs(albumId).let {
         RepoAlbumSongs(it.songs, it.pub)
     }
+    MusicPlatform.local -> RepoAlbumSongs(emptyList(), "")
 }
 
 /**
@@ -451,6 +423,7 @@ suspend fun fetchArtistAvatarByPlatform(
     MusicPlatform.qobuz -> fetchQobuzArtistPicture(artistId)
     MusicPlatform.apple -> fetchAppleArtistAvatar(artistId, name)
     MusicPlatform.kkbox -> ""
+    MusicPlatform.local -> ""
 }
 
 /**
@@ -470,6 +443,7 @@ suspend fun fetchArtistBioByPlatform(
     MusicPlatform.kuwo -> fetchKuwoArtistBio(name)
     MusicPlatform.apple -> fetchAppleArtistBio(artistId, name)
     MusicPlatform.qobuz, MusicPlatform.kkbox -> ""
+    MusicPlatform.local -> ""
 }
 
 /**
@@ -511,6 +485,7 @@ suspend fun searchArtistByPlatform(
     MusicPlatform.qobuz -> searchQobuzArtists(query)
     MusicPlatform.apple -> searchAppleArtists(query)
     MusicPlatform.kuwo, MusicPlatform.kkbox -> searchArtist(query)
+    MusicPlatform.local -> emptyList()
 }
 
 /** 歌手单曲（按平台分发） */
@@ -543,6 +518,7 @@ suspend fun fetchArtistSongsByPlatform(
         val r = getAppleArtistSongs(artistId)
         RepoArtistSongs(r.songs, r.total, pageable = false)
     }
+    MusicPlatform.local -> RepoArtistSongs(emptyList(), 0, pageable = false)
 }
 
 /**
@@ -561,10 +537,11 @@ suspend fun fetchArtistAlbumsByPlatform(
     MusicPlatform.qobuz -> getQobuzArtistPage(artistId).albums
     MusicPlatform.apple -> getAppleArtistAlbums(artistId)
     MusicPlatform.kuwo, MusicPlatform.kkbox -> getArtistAlbums(artistId)
+    MusicPlatform.local -> emptyList()
 }
 
 /**
- * 歌词（按 id 前缀分发）。
+ * 歌词（按 `platform` 分发，**没有兜底平台**）。
  *
  * [kkboxSid] 为 KKBOX 活跃账号会话 sid：仅当 platform 为 kkbox 时使用，
  * 有 sid 调 `getSongLyrics` 拉真实歌词，无则返回占位。
@@ -574,6 +551,36 @@ suspend fun fetchLyric(
     kkboxSid: String? = null,
     autoPickTranslate: Boolean = false,
 ): LyricResult {
+    // 本地文件：歌词就在文件旁边（同名 .lrc）或文件内嵌（`lyrics` tag），
+    // 不联网、不进歌词缓存 —— 用户改了 .lrc 应该立刻生效。
+    if (song.platform == MusicPlatform.local) {
+        return runCatching {
+            val path = song.id.removePrefix("local:")
+            val raw = com.annieplayer.annie_music.kt.data.local.LocalLibraryStore.readLyric(path)
+            if (raw.isNullOrBlank()) {
+                LyricResult(lrc = "[00:00.00]暂无歌词", tlyric = null)
+            } else {
+                val (lrc, tlyric, word) = com.annieplayer.annie_music.kt.core.util.splitEmbeddedLyric(raw)
+                LyricResult(lrc = lrc.ifEmpty { raw }, tlyric = tlyric, wordLyric = word)
+            }
+        }.getOrElse { LyricResult(lrc = "[00:00.00]暂无歌词", tlyric = null) }
+    }
+
+    // 已下载的歌（platform 还是云端平台，但本地有文件）：**歌词本地优先** ——
+    // 下载时把歌词写进了文件 tag，同目录也可能有 .lrc。命中就直接用，不联网；
+    // 没命中再照常走各平台接口（右边这一整段就是 API 兜底）。
+    if (!song.lyric.isNullOrBlank() && !song.lyric.contains("暂无歌词")) {
+        // 队列里已经带了歌词（本地曲库播放时填过），不必再查
+        return LyricResult(lrc = song.lyric, tlyric = song.tlyric, wordLyric = song.wordLyric)
+    }
+    runCatching {
+        com.annieplayer.annie_music.kt.data.local.LocalLibraryStore
+            .lyricForDownloadedSong(song.title, song.artist)
+    }.getOrNull()?.let { local ->
+        val (lrc, tlyric, word) = com.annieplayer.annie_music.kt.core.util.splitEmbeddedLyric(local)
+        return LyricResult(lrc = lrc.ifEmpty { local }, tlyric = tlyric, wordLyric = word)
+    }
+
     // KKBOX 歌词依赖会话，不进入通用歌词缓存（对齐 RN AudioContext 单独处理）
     if (song.platform == MusicPlatform.kkbox) {
         if (kkboxSid.isNullOrEmpty()) {
@@ -586,26 +593,21 @@ suspend fun fetchLyric(
 
     // 译文语言要进 key：同一首歌换语言是不同结果，共用 key 会一直命中旧译文；
     // autoPickTranslate 也进 key，否则「自动取第一个译文」的缓存会被「只要原文」的下载分支命中。
-    // Apple 还要带上数据源标记：ak1ra 与本机 wrapper-lite 给出的歌词可能一个空一个有，
-    // 不带源标识时切源后会一直命中另一边的旧缓存（表现为「切了源歌词还是不出来」）。
-    val appleSrcTag = if (song.platform == MusicPlatform.apple) {
-        if (com.annieplayer.annie_music.kt.data.sources.apple.thirdparty.AppleServiceSettings.useLocal) {
-            ":local"
-        } else {
-            ":remote"
-        }
-    } else {
-        ""
-    }
-    val cacheKey = "lyric:v6:${song.id}$appleSrcTag:${song.lyricTranslateLang.orEmpty()}:" +
+    // （以前 Apple 还要多带一个 `:local`/`:remote` 源标记 —— 非官方源已收敛成用户配的
+    //  wrapper 地址这一条，源分叉不存在了，标记随之删除。）
+    // v7：v6 及以前会把「拉取失败」当成占位文本缓存满 TTL（分不清失败与真空），
+    // 那些坏条目要一次性作废，否则修好了行为也会被旧缓存挡着。
+    val cacheKey = "lyric:v7:${song.id}:${song.lyricTranslateLang.orEmpty()}:" +
         (if (autoPickTranslate) "auto" else "raw")
     val cached = cacheService.get<String>(cacheKey)
     if (cached != null) {
         try {
             val parsed = jsonElementToAny(json.parseToJsonElement(cached))
             if (parsed is Map<*, *> && parsed["lrc"] is String) {
+                val cachedLrc = parsed["lrc"] as String
                 return LyricResult(
-                    lrc = parsed["lrc"] as String,
+                    // 缓存里存的是「空」表示没取到，对外统一成占位文本
+                    lrc = cachedLrc.ifEmpty { NO_LYRIC },
                     tlyric = parsed["tlyric"] as String?,
                     wordLyric = parsed["wordLyric"] as String?,
                     translateLangs = (parsed["translateLangs"] as? List<*>)
@@ -620,44 +622,28 @@ suspend fun fetchLyric(
     }
 
     return try {
-        val result: LyricResult = if (song.id.startsWith("netease:")) {
-            val r = fetchNeteaseLyric(song.id)
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
-        } else if (song.id.startsWith("qq:")) {
-            val r = fetchQQLyric(song.id)
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
-        } else if (song.id.startsWith("kugou:")) {
-            val r = fetchKugouLyric(song.id, "${song.title} ${song.artist}")
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
-        } else if (song.id.startsWith("qobuz:")) {
-            val token = qobuzTokenProvider().orEmpty()
-            if (token.isEmpty()) {
-                val r = fetchKuwoLyric(song.id, song.title, song.artist)
-                LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
-            } else {
-                val r = fetchQobuzLyrics(
-                    song.id.removePrefix("qobuz:"),
-                    token,
-                    song.lyricTranslateLang,
-                    autoPickTranslate,
-                )
-                LyricResult(
-                    lrc = r.lrc,
-                    tlyric = r.tlyric,
-                    translateLangs = r.translateLangs,
-                    translateLang = r.translateLang,
-                )
-            }
-        } else if (song.platform == MusicPlatform.apple) {
-            val r = fetchAppleLyric(song.id)
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
-        } else {
-            val r = fetchKuwoLyric(song.id, song.title, song.artist)
-            LyricResult(lrc = r.lrc, tlyric = r.tlyric, wordLyric = r.wordLyric)
+        // 平台实现全部在 `data/sources/lyric/`：按 platform 一对一匹配，**没有兜底平台**。
+        // 认不出（含以后新增但忘了注册）就给占位 —— 一眼能发现，不会静默去请求某一家。
+        val source = LyricSources.of(song)
+            ?: return LyricResult(lrc = NO_LYRIC, tlyric = null)
+        val fetched = source.fetch(
+            song,
+            LyricRequest(
+                translateLang = song.lyricTranslateLang,
+                autoPickTranslate = autoPickTranslate,
+            ),
+        )
+        // 各平台实现内部仍会吞异常并返回那个占位串，这里统一归一成「空」——
+        // 门面只认「有词 / 没词」两种，才好决定缓存多久。
+        val result = if (fetched.lrc == NO_LYRIC) fetched.copy(lrc = "") else fetched
+        val ttl = when {
+            result.lrc.isNotEmpty() -> _lyricCacheTtl
+            // Apple 走的是用户配的 wrapper 地址：空结果多半是「服务刚起来 / 那台实例没有这首歌」，
+            // 把空结果缓存住会让歌词一直不出来 —— 不缓存，下次进页面再问一次。
+            song.platform == MusicPlatform.apple -> null
+            else -> _lyricEmptyCacheTtl
         }
-        // 空歌词不落缓存：否则一次瞬时失败（网络抖动 / 服务未起）会在 TTL 内一直返回空，
-        // 表现为「明明服务好了歌词还是不出来」。
-        if (result.lrc.isNotEmpty()) {
+        if (ttl != null) {
             cacheService.set(
                 cacheKey,
                 anyToJsonElement(
@@ -669,24 +655,21 @@ suspend fun fetchLyric(
                         "translateLang" to result.translateLang,
                     ),
                 ).toString(),
-                _lyricCacheTtl,
+                ttl,
             )
         }
-        result
+        if (result.lrc.isEmpty()) result.copy(lrc = NO_LYRIC) else result
     } catch (_: Throwable) {
-        // 拉取失败：Apple 走的是本机服务，一次失败不该锁死 60 分钟（服务可能刚被拉起），
-        // 所以 Apple 不缓存占位；其它平台沿用原行为，避免反复请求。
-        val fallback = LyricResult(lrc = "[00:00.00]暂无歌词", tlyric = null)
+        // 抛异常 = 明确的失败。存 10 分钟的空结果：下次播放/切歌能自愈，
+        // 又不像以前那样把失败当结果锁满 60 分钟。Apple 不存（本机服务随时可能就绪）。
         if (song.platform != MusicPlatform.apple) {
             cacheService.set(
                 cacheKey,
-                anyToJsonElement(
-                    mapOf<String, Any?>("lrc" to fallback.lrc, "tlyric" to fallback.tlyric),
-                ).toString(),
-                _lyricCacheTtl,
+                anyToJsonElement(mapOf<String, Any?>("lrc" to "", "tlyric" to null)).toString(),
+                _lyricEmptyCacheTtl,
             )
         }
-        fallback
+        LyricResult(lrc = NO_LYRIC, tlyric = null)
     }
 }
 
@@ -769,4 +752,6 @@ suspend fun enrichSong(song: Song): Map<String, Any?> = when (song.platform) {
         )
     }
     MusicPlatform.apple -> emptyMap()
+    // 本地文件的元信息已经由 ffprobe 读全（tag 就在文件里），不需要再联网补
+    MusicPlatform.local -> emptyMap()
 }

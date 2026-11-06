@@ -25,6 +25,16 @@ enum class MusicPlatform(val label: String) {
     kugou("酷狗"),
     qobuz("Qobuz"),
     apple("Apple Music"),
+
+    /**
+     * **本地文件**（本地曲库）。
+     *
+     * 与云端平台的区别：没有 id/直链解析，`Song.playUrl` 直接是 `file://` 绝对路径，
+     * 歌词来自同名 `.lrc` / 内嵌 tag，音质档位不由接口决定（由文件本身决定，不参与请求）。
+     * 所有按平台分发的 when 分支都必须显式处理它：播放/歌词走本地路径，搜索/下载/歌手
+     * 等云端能力一律返回空 —— 不能让本地的歌泄漏进云端请求。
+     */
+    local("本地"),
     ;
 
     companion object {
@@ -119,6 +129,19 @@ data class Song(
     val genre: String? = null,
     /** ISRC（有则写 tag） */
     val isrc: String? = null,
+    /**
+     * 版权声明（写标签时进 `cprt` / `TCOP` / `COPYRIGHT`）。
+     *
+     * 只有部分平台在**歌曲级**接口给这个字段；Apple 的是**专辑级**的
+     * （`albums/{id}.attributes.copyright`），下载时按专辑缓存取一次
+     * （见 `fetchAppleAlbumCopyright`）。
+     */
+    val copyright: String? = null,
+    /**
+     * 版本说明（Qobuz 的 `version`，如 "Remastered 2011"；其它平台为 null）。
+     * 写标签时进 comment —— 本地库扫描把 `COMMENT` 读回 `LocalTrackMeta.version`。
+     */
+    val version: String? = null,
     /**
      * QQ 的 `file.media_mid`（**媒体 mid，与 songmid 不是一回事**，例如《晴天》是
      * `songmid=0039MnYb0qxYhV` / `media_mid=003Qui1q2u1Zho`）。
@@ -458,6 +481,29 @@ data class KkboxAccount(
         isActive = isActive ?: this.isActive,
     )
 }
+
+/**
+ * Apple Music Wrapper 地址（用户自填）。
+ *
+ * 服务是 WorldObservationLog/wrapper 那一族（本机 wrapper-lite 同构），接口形状固定：
+ *
+ * ```
+ * GET /status                                → data.ready / data.regions
+ * GET /m3u8?adamId=                          → data.m3u8
+ * GET /key?adamId=&uri=                      → data.{contentKey,ctx,state,rcx,…}
+ * GET /lyrics?adamId=&language=&syllable=1   → data.lyrics（TTML）
+ * ```
+ *
+ * [url] 原样保存用户输入（可带 userinfo，如 `https://<token>@wm.wol.moe`）——
+ * 认证按 HTTP Basic 发，解析与请求头构造见 `AppleWrapperUrl` / `AppleWrapperApi`。
+ */
+@Serializable
+data class AppleWrapper(
+    val id: String,
+    val url: String,
+    /** 唯一「使用中」；同一时刻只有一条 active */
+    val isActive: Boolean = false,
+)
 
 /**
  * 正在播放音频的格式信息（播放页胶囊展示，由引擎 ffprobe 探测后经事件流下发）。

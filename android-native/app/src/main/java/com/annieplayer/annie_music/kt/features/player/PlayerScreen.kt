@@ -8,29 +8,37 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,6 +59,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -64,9 +73,13 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.annieplayer.annie_music.kt.core.audio.AnnieAudioHolder
 import com.annieplayer.annie_music.kt.core.audio.AudioOutputController
+import com.annieplayer.annie_music.kt.core.audio.AudioOutputMode
 import com.annieplayer.annie_music.kt.core.audio.AudioOutputStatus
 import com.annieplayer.annie_music.kt.core.audio.AudioRoute
 import com.annieplayer.annie_music.kt.core.audio.AudioTone
+import com.annieplayer.annie_music.kt.core.audio.khzText
+import com.annieplayer.annie_music.kt.core.audio.outputPillText
+import com.annieplayer.annie_music.kt.core.state.PlaybackProgress
 import com.annieplayer.annie_music.kt.core.state.PlayerState
 import com.annieplayer.annie_music.kt.core.state.UiState
 import com.annieplayer.annie_music.kt.data.model.AudioInfo
@@ -84,6 +97,7 @@ import com.annieplayer.annie_music.kt.widgets.MovingText
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import kotlin.math.max
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /** 顶栏按钮命中区（Flutter `SizedBox(width: 34, height: 34)`） */
@@ -98,11 +112,21 @@ private val PlayerBackdropBlur = 60.dp
 /** 封面色块背景的高斯模糊半径（软化色块边界） */
 private val PlayerGridBlur = 48.dp
 
-/** 音频信息胶囊槽位高度（恒定占位，避免探测结果到达前后封面跳动） */
-private val PlayerAudioInfoSlotHeight = 30.dp
-
 /** 音频信息胶囊内圆盘图标盒边长 */
 private val PlayerAudioInfoIconBox = 22.dp
+
+/**
+ * 三段之间的弹性间隔：正常档吃掉剩余高度（三等分）；滚动档没有可分配高度，
+ * 退化成固定间距（`weight` 在无限高约束下不成立）。
+ */
+@Composable
+private fun ColumnScope.PlayerElasticSpacer(elastic: Boolean) {
+    if (elastic) {
+        Spacer(modifier = Modifier.weight(1f))
+    } else {
+        Spacer(modifier = Modifier.height(AppSpacing.sp12))
+    }
+}
 
 /**
  * 全屏播放页（1:1 移植 Flutter `lib/features/player/player_screen.dart`）。
@@ -122,6 +146,12 @@ private val PlayerAudioInfoIconBox = 22.dp
 fun PlayerScreen(
     player: PlayerState,
     ui: UiState,
+    /**
+     * 播放进度流。**刻意不在这里 `.value`**：本组件不直接渲染进度，进度只由
+     * [PlayerProgressBarHost]（进度条）和歌词页两个叶子订阅，避免 5 Hz 的重组
+     * 蔓延到整个播放页（封面 pager / 控制栏 / 音量条）。
+     */
+    progress: StateFlow<PlaybackProgress>,
     palette: ColorPalette,
     onClose: () -> Unit,
     onSeek: (Double) -> Unit,
@@ -190,11 +220,37 @@ fun PlayerScreen(
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(palette.background)) {
         val screenW = maxWidth
         val screenH = maxHeight
-        val coverSize = minOf(screenW * 0.78f, screenH * 0.5f)
-        // 0.51 → 0.48：给控制栏（图标放大）和音量条下移腾出高度
-        val pagerHeight = screenH * 0.48f
+        val density = LocalDensity.current
+        // 固定块高度运行期实测（字号放大后文本行会变高），首帧用估值顶上
+        val fixedFallback = remember(density.fontScale) { PlayerFixedHeights.estimate(density.fontScale) }
+        val blockHeights = remember { mutableStateMapOf<String, Int>() }
+        // 系统栏内边距：statusBarsPadding + navigationBarsPadding 两条修饰符的实际耗用
+        val barsHeight = with(density) {
+            (WindowInsets.statusBars.getTop(this) + WindowInsets.navigationBars.getBottom(this)).toDp()
+        }
+        fun block(tag: String, fallback: Dp): Dp =
+            blockHeights[tag]?.let { with(density) { it.toDp() } } ?: fallback
+
+        val fixed = PlayerFixedHeights(
+            top = barsHeight + block("top", fixedFallback.top),
+            title = block("title", fixedFallback.title),
+            artist = block("artist", fixedFallback.artist),
+            progress = block("progress", fixedFallback.progress),
+            controls = block("controls", fixedFallback.controls),
+            volume = block("volume", fixedFallback.volume),
+        )
+        // 封面尺寸与分页区高度由 (W,H,固定块) 求解，见 PlayerPageGeometry：
+        // 正常机型结果与旧公式一致，只有短屏才压缩分页区 / 收小封面 / 转紧凑档
+        val geometry = playerPageGeometry(screenW, screenH, fixed)
+        val coverSize = geometry.coverSize
+        val pagerHeight = geometry.pagerHeight
+        val scrollState = rememberScrollState()
 
         // ── 封面取色块背景：N×N 平铺，色块位置与封面各区域一一对应；切歌淡入变色 ──
+        //
+        // 注：播放页刻意**不用**其它页面那套 Aurora Field。
+        // 这里要的是「封面的空间结构能被认出来」（大封面 + 满屏氛围 + 网格铺色是
+        // 播放页自己的视觉语言），而 Aurora 是刻意抹掉结构的。
         if (palette.coverGridDim > 0 &&
             palette.coverGrid.size >= palette.coverGridDim * palette.coverGridDim
         ) {
@@ -208,7 +264,22 @@ fun PlayerScreen(
         }
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.42f)))
 
-        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        // 窗口小到固定块都排不下时整页改为可滚动：这是「任意尺寸都不叠」的最后一道兜底。
+        // 非滚动档保持原来那条 modifier 链（fillMaxSize → padding），改顺序会挪动底部栈的取整位置。
+        val columnModifier = if (geometry.scroll) {
+            Modifier.fillMaxWidth().verticalScroll(scrollState)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        } else {
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+        }
+        Column(modifier = columnModifier) {
+            // 拖拽条 + 顶栏 + 待下载条整块实测：待下载条会临时增高，预算必须跟着它走
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { blockHeights["top"] = it.height },
+            ) {
             // ── 拖拽条（对齐 RN FullPlayer dragBar） ──
             Spacer(modifier = Modifier.height(AppSpacing.sp4))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -250,6 +321,7 @@ fun PlayerScreen(
                     onBatch = onPendingBatch,
                 )
             }
+            }
 
             // ── 封面 / 歌词翻页 ──
             HorizontalPager(
@@ -278,20 +350,22 @@ fun PlayerScreen(
                                 onFailed = { coverFailed = true },
                             )
                         }
-                        PlayerAudioInfoChip(
-                            info = player.audioInfo,
-                            status = player.audioStatus,
-                            maxWidth = screenW - AppSpacing.screenPaddingH * 2,
-                            resetKey = song.id to ui.playerOverlayVisible,
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .fillMaxWidth()
-                                .padding(
-                                    start = AppSpacing.screenPaddingH,
-                                    end = AppSpacing.screenPaddingH,
-                                    bottom = AppSpacing.sp10,
-                                ),
-                        )
+                        if (geometry.tier != PlayerPageTier.noChip) {
+                            PlayerAudioInfoChip(
+                                info = player.audioInfo,
+                                status = player.audioStatus,
+                                maxWidth = screenW - AppSpacing.screenPaddingH * 2,
+                                resetKey = song.id to ui.playerOverlayVisible,
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = AppSpacing.screenPaddingH,
+                                        end = AppSpacing.screenPaddingH,
+                                        bottom = geometry.chipBottomInset,
+                                    ),
+                            )
+                        }
                     }
                 } else {
                     PlayerLyricsView(
@@ -300,10 +374,9 @@ fun PlayerScreen(
                         tlyric = song.tlyric,
                         wordLyric = song.wordLyric,
                         isPlaying = player.isPlaying,
-                        currentTime = player.currentTime,
+                        progress = progress,
                         isDragging = ui.isDragging,
                         seekRatio = ui.seekRatio,
-                        duration = player.duration,
                         showTranslation = ui.showLyricsTranslation,
                         translateLangs = song.lyricTranslateLangs,
                         translateLang = song.lyricTranslateLang,
@@ -325,7 +398,10 @@ fun PlayerScreen(
 
             // ── 信息行：标题（跑马灯）+ ⋮ ──
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.screenPaddingH),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = AppSpacing.screenPaddingH)
+                    .onSizeChanged { blockHeights["title"] = it.height },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(modifier = Modifier.weight(1f)) {
@@ -350,14 +426,19 @@ fun PlayerScreen(
                 ) {
                     PlayerDotsGlyph(
                         modifier = Modifier.size(AppIconSize.icon26),
-                        tint = AppColors.white60,
+                        tint = AppColors.glyphStrong,
                     )
                 }
             }
 
-            // ── 歌手名 ──
-            if (song.artist.isNotEmpty()) {
-                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.screenPaddingH)) {
+            // ── 歌手名（紧凑档省掉：分屏 / 极小窗时优先保封面与控制栏） ──
+            if (song.artist.isNotEmpty() && !geometry.compact) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = AppSpacing.screenPaddingH)
+                        .onSizeChanged { blockHeights["artist"] = it.height },
+                ) {
                     Text(
                         text = song.artist,
                         color = AppColors.white54,
@@ -366,45 +447,68 @@ fun PlayerScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(modifier = Modifier.height(AppSpacing.sp4))
             }
 
-            Spacer(modifier = Modifier.height(AppSpacing.sp4))
-
             // ── 进度条 ──
-            PlayerProgressBar(
-                position = player.currentTime,
-                duration = player.duration,
-                isPlaying = player.isPlaying,
-                isDragging = ui.isDragging,
-                seekRatio = ui.seekRatio,
-                onDragging = onDragging,
-                onSeekEnd = onSeekEnd,
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { blockHeights["progress"] = it.height },
+            ) {
+                PlayerProgressBarHost(
+                    progress = progress,
+                    isPlaying = player.isPlaying,
+                    isDragging = ui.isDragging,
+                    seekRatio = ui.seekRatio,
+                    onDragging = onDragging,
+                    onSeekEnd = onSeekEnd,
+                )
+            }
 
             // 进度条 → 控制栏 → 音量条：三段之间和底部各留一份「最小间距 + 弹性余量」，
             // 余量三等分，所以底部留白和上面两道空隙一样宽，既填掉了空、也不会把音量条贴到底。
             Spacer(modifier = Modifier.height(AppSpacing.sp12))
-            Spacer(modifier = Modifier.weight(1f))
+            PlayerElasticSpacer(elastic = !geometry.scroll)
 
             // ── 控制按钮 ──
-            PlayerControlsBar(
-                isPlaying = player.isPlaying,
-                loopMode = player.loopMode,
-                onTogglePlay = onTogglePlay,
-                onPrevious = onPrevious,
-                onNext = onNext,
-                onLoopMode = onCycleLoopMode,
-                onQueue = onOpenQueue,
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { blockHeights["controls"] = it.height },
+            ) {
+                PlayerControlsBar(
+                    isPlaying = player.isPlaying,
+                    loopMode = player.loopMode,
+                    onTogglePlay = onTogglePlay,
+                    onPrevious = onPrevious,
+                    onNext = onNext,
+                    onLoopMode = onCycleLoopMode,
+                    onQueue = onOpenQueue,
+                )
+            }
+            PlayerElasticSpacer(elastic = !geometry.scroll)
 
-            Spacer(modifier = Modifier.height(AppSpacing.sp16))
-            Spacer(modifier = Modifier.weight(1f))
-
-            // ── 音量条 ──
-            PlayerVolumeSlider(volume = player.volume, onVolume = onSetVolume)
+            // ── 音量条（紧凑档省掉） ──
+            // 透明模式：音量由绝对音量（蓝牙 AVRCP / 系统媒体音量）决定，我方不衰减，
+            // 所以这里只保留外观、不接交互（详情见 `PlayerVolumeSlider` 的注释）。
+            if (!geometry.compact) {
+                Spacer(modifier = Modifier.height(AppSpacing.sp16))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { blockHeights["volume"] = it.height },
+                ) {
+                    PlayerVolumeSlider(
+                        volume = player.volume,
+                        onVolume = onSetVolume,
+                        enabled = player.audioStatus?.mode != AudioOutputMode.transparent,
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(AppSpacing.sp18))
-            Spacer(modifier = Modifier.weight(1f))
+            PlayerElasticSpacer(elastic = !geometry.scroll)
         }
 
         // ── 歌词字号面板（底部浮层） ──
@@ -586,7 +690,7 @@ private fun PlayerCoverImage(
         ) {
             MusicNoteGlyph(
                 modifier = Modifier.size(AppSpacing.sp60),
-                tint = AppColors.white24,
+                tint = AppColors.glyphDim,
             )
         }
         return
@@ -611,7 +715,8 @@ private fun PlayerCoverImage(
 
 /**
  * 音频信息胶囊（仅封面页）：左侧是**源格式**（`编码 · 位深 Bit / 采样率 kHz`），
- * 右侧是**输出链路**（模式，开了重采样时补上重采样后的位深/采样率）。两个胶囊样式一致。
+ * 右侧是**输出链路**（`身份 · 位深 / 采样率`，两级不同时才出现箭头）。两个胶囊同一套样式，
+ * 也同一套单位与配对规则 —— 左边和右边一比，就是这一首到底被改了多少。
  *
  * 无有效信息时槽位仍占位，避免探测结果到达前后封面位置跳动。
  */
@@ -624,18 +729,20 @@ private fun PlayerAudioInfoChip(
     modifier: Modifier = Modifier,
 ) {
     val formatLabel = audioInfoLabel(info)
-    val outputLabel = audioOutputLabel(status)
+    val outputLabel = status?.let { outputPillText(it) }.orEmpty()
+    // 输出胶囊**图标**的颜色（不是文字颜色）：金=原样直出 / 红=我方重采样 /
+    // 灰=我方没转（系统转或谁都没转）/ 蓝=调音。判据全在 `AudioOutputStatus.tone`。
     val toneColor = when (status?.tone) {
-        AudioTone.good -> Color(0xFF4ADE80)
-        AudioTone.warn -> Color(0xFFFBBF24)
+        AudioTone.bitPerfect -> Color(0xFFF5C451)
+        AudioTone.ownSrc -> Color(0xFFF87171)
         AudioTone.tuned -> Color(0xFF60A5FA)
-        else -> AppColors.white
+        else -> Color(0xFF9CA3AF)
     }
     val gap = AppSpacing.sp8
     val pillMaxWidth = ((maxWidth - gap) / 2).coerceAtLeast(0.dp)
 
     Box(
-        modifier = modifier.height(PlayerAudioInfoSlotHeight),
+        modifier = modifier.height(PlayerChipSlotHeight),
         contentAlignment = Alignment.CenterStart,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -645,6 +752,7 @@ private fun PlayerAudioInfoChip(
                     tone = AppColors.white,
                     maxWidth = pillMaxWidth,
                     resetKey = resetKey to "format",
+                    glyph = AudioPillGlyph.source,
                 )
             }
             if (formatLabel.isNotEmpty() && outputLabel.isNotEmpty()) {
@@ -656,19 +764,29 @@ private fun PlayerAudioInfoChip(
                     tone = toneColor,
                     maxWidth = pillMaxWidth,
                     resetKey = resetKey to "output",
+                    glyph = AudioPillGlyph.output,
                 )
             }
         }
     }
 }
 
-/** 单个信息胶囊：圆盘图标 + 跑马灯文本（源格式与输出链路共用同一套样式） */
+/**
+ * 胶囊左侧的「这是哪一侧」标记。
+ *
+ * 两个胶囊文字结构一样（都是 `身份 · 位深 / 采样率`），只有图标能一眼分开：
+ * 圆盘 = 素材（源），喇叭 = 从这儿出去（输出）。以前两边都是圆盘，读起来像同一个东西写了两遍。
+ */
+private enum class AudioPillGlyph { source, output }
+
+/** 单个信息胶囊：标记图标 + 跑马灯文本（源格式与输出链路共用同一套样式） */
 @Composable
 private fun AudioInfoPill(
     label: String,
     tone: Color,
     maxWidth: Dp,
     resetKey: Any,
+    glyph: AudioPillGlyph,
 ) {
     val labelStyle = TextStyle(
         color = AppColors.white,
@@ -693,10 +811,16 @@ private fun AudioInfoPill(
                 .background(tone.copy(alpha = 0.22f)),
             contentAlignment = Alignment.Center,
         ) {
-            AudioDiscGlyph(
-                modifier = Modifier.size(AppIconSize.icon15),
-                tint = tone,
-            )
+            when (glyph) {
+                AudioPillGlyph.source -> AudioDiscGlyph(
+                    modifier = Modifier.size(AppIconSize.icon15),
+                    tint = tone,
+                )
+                AudioPillGlyph.output -> AudioSpeakerGlyph(
+                    modifier = Modifier.size(AppIconSize.icon15),
+                    tint = tone,
+                )
+            }
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp8))
         key(resetKey) {
@@ -712,7 +836,7 @@ private fun AudioInfoPill(
     }
 }
 
-/** 圆盘图标：外圈 + 中心点（对齐样式图里的「唱片」标记） */
+/** 圆盘图标：外圈 + 中心点（对齐样式图里的「唱片」标记）→ 表示**素材** */
 @Composable
 private fun AudioDiscGlyph(modifier: Modifier = Modifier, tint: Color) {
     Canvas(modifier = modifier) {
@@ -728,62 +852,63 @@ private fun AudioDiscGlyph(modifier: Modifier = Modifier, tint: Color) {
 }
 
 /**
- * 胶囊文案：`编码 · 位深 Bit / 采样率 kHz`；有损格式没有位深时改用比特率
- * （`编码 · 320 kbps / 44.1 kHz`）。采样率整数 kHz 不带小数，带小数最多两位。
+ * 输出图标：喇叭 + 两道声波 → 表示**从这儿出去**。
+ *
+ * 为什么不是耳机：输出不一定是耳机（扬声器 / 有线 / USB / 蓝牙都是出口），
+ * 画耳机只在蓝牙时对，其余路由就成了假信息。喇叭是「声音从这一侧离开设备」的通用记号，
+ * 而且与「源」的圆盘正好构成一对（素材 → 出口）。
+ *
+ * 声波用两道圆弧而不是三道：图标只有 15dp，三道在低密度屏上会糊成一块。
  */
-private fun audioInfoLabel(info: AudioInfo): String {
-    val rateText = formatRateKhz(info.sampleRate)
-    val headText = when {
-        info.bitDepth > 0 -> "${info.bitDepth} Bit"
-        info.bitrate > 0 -> "${info.bitrate / 1000} kbps"
-        else -> ""
+@Composable
+private fun AudioSpeakerGlyph(modifier: Modifier = Modifier, tint: Color) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = size.minDimension * 0.085f
+        val line = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        // 箱子 + 锥面，一条闭合路径：底边在左、开口朝右
+        val cone = Path().apply {
+            moveTo(w * 0.07f, h * 0.37f)
+            lineTo(w * 0.20f, h * 0.37f)
+            lineTo(w * 0.44f, h * 0.19f)
+            lineTo(w * 0.44f, h * 0.81f)
+            lineTo(w * 0.20f, h * 0.63f)
+            lineTo(w * 0.07f, h * 0.63f)
+            close()
+        }
+        drawPath(cone, color = tint, style = line)
+        for (r in floatArrayOf(0.15f, 0.29f)) {
+            val radius = w * r
+            drawArc(
+                color = tint,
+                startAngle = -52f,
+                sweepAngle = 104f,
+                useCenter = false,
+                topLeft = Offset(w * 0.44f - radius, h * 0.5f - radius),
+                size = Size(radius * 2f, radius * 2f),
+                style = line,
+            )
+        }
     }
-    val quality = when {
-        headText.isEmpty() -> rateText
-        rateText.isEmpty() -> headText
-        else -> "$headText / $rateText"
-    }
-    return listOf(info.codec, quality).filter { it.isNotEmpty() }.joinToString(" · ")
 }
 
 /**
- * 输出链路胶囊文案：模式（`系统混音` / `重采样` / `Bit-Perfect` / `调音`），
- * 若开了重采样则补上**重采样后的位深与采样率**（位深来自源，重采样只改采样率）。
+ * 胶囊文案：`编码 · 位深 Bit / 采样率 kHz`；有损格式没有位深时改用比特率
+ * （`编码 · 320 kbps / 44.1 kHz`）。
+ *
+ * 位深与采样率成对、单位统一（`Bit` / `kHz` / `kbps`）的规则全部由
+ * [com.annieplayer.annie_music.kt.core.audio.specText] 与 [khzText] 提供 ——
+ * 这里只负责决定「用位深还是用码率」，不再自己拼数字。
  */
-private fun audioOutputLabel(status: AudioOutputStatus?): String {
-    if (status == null) return ""
-    // 蓝牙：优先显示蓝牙链路自己的位深/采样率；开了重采样则显示重采样后的输出
-    if (status.route == AudioRoute.bluetooth) {
-        val resampled = status.resampledTo > 0
-        val rate = if (resampled) status.resampledTo else status.bluetoothRate
-        val depth = when {
-            status.outputDepth > 0 -> status.outputDepth
-            resampled -> status.sourceDepth
-            else -> status.bluetoothDepth
-        }
-        val rateText = formatRateKhz(rate)
-        val depthText = if (depth > 0) "$depth Bit / " else ""
-        val prefix = if (resampled) "重采样" else "蓝牙旁路"
-        return if (rateText.isEmpty()) prefix else "$prefix · $depthText$rateText"
-    }
-    val badge = status.badge
-    if (badge.isEmpty()) return ""
-    val rate = if (status.resampledTo > 0) status.resampledTo else status.sourceRate
-    if (rate <= 0) return badge
-    val depthValue = if (status.outputDepth > 0) status.outputDepth else status.sourceDepth
-    val depth = if (depthValue > 0) "$depthValue Bit / " else ""
-    return "$badge · $depth${formatRateKhz(rate)}"
-}
-
-/** 采样率文案：整数 kHz 不带小数，带小数最多两位 */
-private fun formatRateKhz(rate: Int): String {
-    if (rate <= 0) return ""
-    return when {
-        rate % 1000 == 0 -> "${rate / 1000} kHz"
-        rate % 100 == 0 -> "${rate / 1000}.${(rate % 1000) / 100} kHz"
-        else -> "${rate / 1000}." +
-            (rate % 1000).toString().padStart(3, '0').trimEnd('0') + " kHz"
-    }
+private fun audioInfoLabel(info: AudioInfo): String {
+    val rateText = khzText(info.sampleRate)
+    val quality = when {
+        info.bitDepth > 0 -> listOf("${info.bitDepth} Bit", rateText)
+        info.bitrate > 0 -> listOf("${info.bitrate / 1000} kbps", rateText)
+        else -> listOf(rateText)
+    }.filter { it.isNotEmpty() }.joinToString(" / ")
+    return listOf(info.codec, quality).filter { it.isNotEmpty() }.joinToString(" · ")
 }
 
 /** 「⋮」：MoreVert 的可用性在核心图标集中不确定，自绘三个圆点（对齐 26dp white60） */
@@ -847,7 +972,7 @@ private fun PlayerCoverGridBackdrop(
 @Composable
 private fun PlayerGridCanvas(grid: List<Color>, dim: Int, alpha: Float = 1f) {
     if (dim <= 0 || grid.size < dim * dim) return
-    // 6×6 小位图 → 双线性放大铺满：色块间平滑插值，无硬边
+    // N×N 小位图 → 双线性放大铺满：色块间平滑插值，无硬边
     val bmp = remember(grid, dim) {
         val b = android.graphics.Bitmap.createBitmap(dim, dim, android.graphics.Bitmap.Config.ARGB_8888)
         val px = IntArray(dim * dim) { i -> grid[i].toArgb() }
@@ -861,4 +986,35 @@ private fun PlayerGridCanvas(grid: List<Color>, dim: Int, alpha: Float = 1f) {
             filterQuality = FilterQuality.Low,
         )
     }
+}
+
+/**
+ * 进度条的**唯一**订阅者。
+ *
+ * `PlayerScreen` 是个大组件（封面 pager + 控制栏 + 音量条 + 信息胶囊），而进度 5 Hz 变一次。
+ * 若在 `PlayerScreen` 体内 `collectAsState()`，整页每秒重组 5 次 —— 包括 `HorizontalPager`
+ * 的页内容、`PlayerCoverImage` 的 Coil 请求与封面进入动画。让这个小函数单独订阅，
+ * 重组就只落在进度条本身。
+ *
+ * 纪律：**别把 `collectAsState()` 挪回 `PlayerScreen` 体内**。
+ */
+@Composable
+private fun PlayerProgressBarHost(
+    progress: StateFlow<PlaybackProgress>,
+    isPlaying: Boolean,
+    isDragging: Boolean,
+    seekRatio: Double,
+    onDragging: (Double) -> Unit,
+    onSeekEnd: (Double) -> Unit,
+) {
+    val p by progress.collectAsState()
+    PlayerProgressBar(
+        position = p.currentTime,
+        duration = p.duration,
+        isPlaying = isPlaying,
+        isDragging = isDragging,
+        seekRatio = seekRatio,
+        onDragging = onDragging,
+        onSeekEnd = onSeekEnd,
+    )
 }

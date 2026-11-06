@@ -25,9 +25,34 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!--
+        系统级 bit-perfect：`setPreferredMixerAttributes` + `MIXER_BEHAVIOR_BIT_PERFECT`
+        需要它。保护级是 `signature|privileged|role`（本机实测），**普通安装授不下来**，
+        所以在普通安装上这一级的代码路径会自己跳过（`hasAudioRoutingPermission()`）。
+
+        声明它的意义：少数魔改的国砖播放器 ROM 会放开该权限；把本应用装成 priv-app
+        （`/system/priv-app`）时也会生效。届时降级链的第二级自动可用，不需要改代码。
+    -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_ROUTING" />
+
+    <!--
+        **必须显式关掉 predictive back。**
+
+        targetSdk 36（Android 16）下 `enableOnBackInvokedCallback` 默认是 **true**，
+        而本项目的返回全部走 `androidx.activity.compose.BackHandler`
+        （`MoreSettingsScreen` / `AppShell` 的 PAGE 处理器 / 各浮层）。
+        实测（PLQ110 / Android 16 / targetSdk 36）：**开启时 BackHandler 一个都不触发** ——
+        侧滑手势直接关页面、连按键也不例外，所有"先关浮层 / 先收下拉"的逻辑全部失效。
+
+        关掉之后返回重新走 `onBackPressed` → `OnBackPressedDispatcher`，
+        `handleBack(overlayFlags)` 那套裁决（`OverlayStack.BACK_RULES`）才真正生效。
+        代价是没有系统的手势预览动画 —— 本项目页面转场是自定义的
+        （`LocalOverlayFrame` 的 150ms 滑入/滑出），本来也不吃那一套。
+    -->
     <application
         android:name=".AnnieApp"
         android:allowBackup="true"
+        android:enableOnBackInvokedCallback="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -46,6 +71,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- 插上 USB DAC 时让系统把本应用列进「为 USB 设备选择一个应用」 -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_device_filter" />
         </activity>
 
         <!-- 播放引擎的媒体会话服务（通知 / 锁屏 / 耳机线控）；与 UI 同进程 -->

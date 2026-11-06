@@ -58,14 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
@@ -78,25 +71,28 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.audio.apple.ApplePrefetch
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import com.annieplayer.annie_music.kt.core.routing.BackTarget
-import com.annieplayer.annie_music.kt.core.routing.OverlayVisibilityFlags
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
-import com.annieplayer.annie_music.kt.core.state.AlbumDetailEntry
+import com.annieplayer.annie_music.kt.core.state.AlbumRoute
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.MoreSettings
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
+import com.annieplayer.annie_music.kt.core.util.downloadQualityFor
 import com.annieplayer.annie_music.kt.features.downloads.DownloadMeta
 import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
 import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
+import com.annieplayer.annie_music.kt.core.state.toOverlayFlags
 import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.enrichSong
 import com.annieplayer.annie_music.kt.data.fetchArtistAlbumsByPlatform
@@ -108,7 +104,7 @@ import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
 import com.annieplayer.annie_music.kt.data.playQualityLabelOf
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
-import com.annieplayer.annie_music.kt.data.sources.getAppleArtistReleases
+import com.annieplayer.annie_music.kt.data.sources.apple.getAppleArtistReleases
 import com.annieplayer.annie_music.kt.data.model.Album
 import com.annieplayer.annie_music.kt.data.model.ArtistSongsPageSize
 import com.annieplayer.annie_music.kt.data.model.DownloadStatus
@@ -116,7 +112,7 @@ import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
-import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
+import com.annieplayer.annie_music.kt.data.sources.kuwo.buildAlbumCoverUrl
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
@@ -377,8 +373,8 @@ private fun SingerDetailContent(
     fun openAlbum(album: Album) {
         // 从歌手页跳专辑：把专辑详情**压栈**（歌手页留在下层、返回可逐层退回），
         // 而不再先关掉自己（旧行为会收起歌手页）。
-        uiViewModel.pushDetail(
-            AlbumDetailEntry(
+        uiViewModel.pushRoute(
+            AlbumRoute(
                 AlbumDetailData(
                     id = album.albumid,
                     cover = buildAlbumCoverUrl(album),
@@ -395,15 +391,18 @@ private fun SingerDetailContent(
         // 不再置 batchDownloading：详情页不展示下载进度，也不把「下载全部」按钮变灰/禁用。
         // （字段保留只为兼容既有引用；按钮任何时候都可点，同一首也可反复下载。）
         val songs = st.selectedSongs.toList()
-        for (s in songs) downloadViewModel.addTask(s, quality)
+        // 面板给的是整批并集：逐首夹到它真实可用的最高档
+        for (s in songs) downloadViewModel.addTask(s, downloadQualityFor(s, quality))
         for ((i, song) in songs.withIndex()) {
             // 只补 UI 进度文案（下载流程本身与原来一致）
             st.batchProgress = "${i + 1}/${songs.size} ${song.title}"
+            // 前置预备：把后面两首的清单请求提前打掉（Apple session 串行，只能靠重叠）
+            ApplePrefetch.ahead(songs.drop(i + 1), quality)
             downloadOneAndRegister(
                 downloadViewModel = downloadViewModel,
                 playerViewModel = playerViewModel,
                 song = song,
-                quality = quality,
+                quality = downloadQualityFor(song, quality),
                 meta = DownloadMeta(
                     albumArtist = song.albumArtist ?: artistName,
                     composer = song.composer,
@@ -413,6 +412,7 @@ private fun SingerDetailContent(
                 onProgress = { p -> downloadViewModel.updateProgress(song.id, (p * 100).coerceIn(0.0, 100.0)) },
             )
         }
+        ApplePrefetch.drain()
         st.batchDownloading = false
         st.batchProgress = ""
         st.selectedSongs.clear()
@@ -437,20 +437,16 @@ private fun SingerDetailContent(
         }
     }
 
-    // 返回手势：本页音质选择器优先；更高层浮层可见时让位（见 OverlayStack.kt）
-    val higherFlags = OverlayVisibilityFlags(
-        songActions = uiState.songActionsVisible,
-        artistPicker = uiState.artistPickerVisible,
-        qualityPicker = uiState.pickerVisible || st.batchPickerVisible,
-        queue = uiState.queueVisible,
-        playerOverlay = uiState.playerOverlayVisible,
-        detail = true,
-        downloadQueue = uiState.downloadQueueVisible,
-        menuDrawer = uiState.drawerVisible,
-    )
-    val detailIsTop = isTop &&
-        !uiState.downloadQueueVisible &&
-        handleBack(higherFlags) == BackTarget.DETAIL
+    // 返回手势：本页**只管页内状态**（子 tab 回退 / 多选退出）。出栈由 `AppShell` 的全局
+    // PAGE 处理器统一做；更高层浮层（音质 / 队列 / 播放页 / ⋮）由更上层的 BackHandler 优先消费。
+    //
+    // **必须带 `isTop`**，否则会出现「站在『全部歌曲』里再压进一张专辑，返回键毫无反应」：
+    //   - `tab != "overview"` 让本 handler 常驻启用；
+    //   - 而 `AlbumDetailSheet` 平时没有启用的 BackHandler（只在多选模式注册）；
+    //   - OnBackPressedDispatcher 按注册逆序派发，唯一启用的就是本 handler；
+    //   - 于是它吃掉返回，把**下层**的 tab 悄悄切回 overview，上层页面纹丝不动。
+    //
+    // 加上 `isTop` 后，被压在下面时本 handler 自动禁用，返回交给栈顶页面 / 全局 PAGE 处理器。
 
     // 进出场：150ms + 线性（AppDuration.sheet + AppEasing.linear，与其它浮层同规格）
     val slide = remember { Animatable(1f) }
@@ -489,7 +485,9 @@ private fun SingerDetailContent(
         }
     }
 
-    BackHandler(enabled = detailIsTop) { goBack() }
+    // 把「带动画出栈」注册给返回裁决（AppShell 收到返回时优先走这里，而不是直接 popRoute）
+    com.annieplayer.annie_music.kt.core.routing.RememberPageClose { requestClose() }
+    BackHandler(enabled = isTop && (st.tab != "overview" || st.selectMode)) { goBack() }
 
     val totalPages = (st.songTotal + PageSize - 1) / PageSize
     val pageRange = singerDetailPageRange(st.songPage, totalPages)
@@ -510,12 +508,12 @@ private fun SingerDetailContent(
                 .clickableNoRipple { }
                 .graphicsLayer { translationY = slide.value * size.height },
         ) {
-            // ── 背景：液态玻璃质感保留，但底色**不跟随当前播放封面**（用户要求）
-            // —— 固定品牌色板 + sheen 高光，coverUrl = null。
+            // ── 背景：跟随**歌手自己的封面**的氛围色（LunaBeat 规则），不跟正在播放的歌曲。
+            //    头像优先用已解析的 avatarUrl，回落到后端给的 data.picture。
+            val singerCoverUrl = st.avatarUrl.ifEmpty { data.picture }
             CoverPaletteBackdrop(
-                sheen = true,
-                coverUrl = null,
-                palette = ColorPalette.fallback,
+                coverUrl = singerCoverUrl,
+                palette = rememberCoverPalette(singerCoverUrl),
                 modifier = Modifier.fillMaxSize(),
             )
             Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
@@ -696,9 +694,14 @@ private fun SingerDetailContent(
         if (pickerHost == null) {
             pickerPanel()
         } else {
+            // **可见性必须在组合期读一次**。`SideEffect` 块里的读取不建立组合依赖：
+            // 只在块里读的话，`batchPickerVisible` 从 false 变 true 不会让本页重组 →
+            // `SideEffect` 不重跑 → 槽位永远不写 → 第一次点下载什么都不弹，
+            // 要等下一次无关重组（例如退出多选）才把面板「迟到」地挂上去。
+            val pickerOpen = st.batchPickerVisible
             // 只在面板打开时抢占槽位；关闭时不写，保留内容让面板自带淡出动画播完。
             SideEffect {
-                if (st.batchPickerVisible) {
+                if (pickerOpen) {
                     pickerHost.show(pickerOwner, pickerPanel)
                 }
             }
@@ -898,47 +901,54 @@ private fun SingerDetailOverview(
                 playEnabled = st.songs.isNotEmpty(),
             )
         }
-        item { SingerDetailSectionHeader(title = "最热门", onSeeAll = onSeeAllSongs) }
+        // 「全部」只在预览装不下时出现（歌数超过一页 / 专辑数超过预览上限）
+        val showSeeAllSongs = st.songTotal > ArtistSongsPageSize
+        item {
+            SingerDetailSectionHeader(
+                title = "最热门",
+                onSeeAll = if (showSeeAllSongs) onSeeAllSongs else null,
+            )
+        }
         item {
             // 只展示第 1 页的歌曲（st.songs 就是当前页，进 overview 时固定在第 1 页）；
             // 每页 [SingerDetailPageRows] 行，左右滑动翻页。
-            val overviewSongs = st.songs.take(ArtistSongsPageSize)
-            val pageCount = (overviewSongs.size + SingerDetailPageRows - 1) / SingerDetailPageRows
-            if (pageCount > 0) {
-                val pagerState = rememberPagerState(pageCount = { pageCount })
-                HorizontalPager(
-                    state = pagerState,
-                    pageSpacing = AppSpacing.sp8,
-                    contentPadding = PaddingValues(horizontal = AppSpacing.sp4),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(AppSize.detailRowHeight * SingerDetailPageRows),
-                ) { page ->
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        for (row in 0 until SingerDetailPageRows) {
-                            val index = page * SingerDetailPageRows + row
-                            if (index >= overviewSongs.size) break
-                            val song = overviewSongs[index]
-                            SingerDetailSongRow(
-                                song = song,
-                                index = index,
-                                isActive = song.id == activeSongId,
-                                isDownloading = false,
-                                selected = false,
-                                selectionMode = false,
-                                onPlay = onPlay,
-                                onDownload = onDownload,
-                                onToggle = {},
-                                onLongSelect = {},
-                            )
-                        }
-                    }
-                }
+            // 容器几何（固定高度 / 页间距 / 左右留白）抽到 [SongRowPager]，主页歌曲区块共用同一份。
+            SongRowPager(
+                items = st.songs.take(ArtistSongsPageSize),
+                rowsPerPage = SingerDetailPageRows,
+                // 本页 hero 是 24dp，列表跟着对齐（容器 12 + 行内 12）
+                startInset = 12.dp,
+            ) { song, index ->
+                SingerDetailSongRow(
+                    song = song,
+                    index = index,
+                    isActive = song.id == activeSongId,
+                    isDownloading = false,
+                    selected = false,
+                    selectionMode = false,
+                    onPlay = onPlay,
+                    onDownload = onDownload,
+                    onToggle = {},
+                    onLongSelect = {},
+                    // 「最热门」是横滑分页、每页 5 行 —— 序号在这里是噪声
+                    showIndex = false,
+                    // 下载按钮贴到页右边界：页宽已比屏幕窄，再留 16dp 会显得缩在中间
+                    trailingSpace = 0.dp,
+                )
             }
         }
         if (apple) {
             if (appleSingles.isNotEmpty()) {
-                item { SingerDetailSectionHeader(title = "单曲 / EP", onSeeAll = onSeeAllSingles) }
+                item {
+                    SingerDetailSectionHeader(
+                        title = "单曲 / EP",
+                        onSeeAll = if (st.appleSingles.size > SingerDetailOverviewAlbumCount) {
+                            onSeeAllSingles
+                        } else {
+                            null
+                        },
+                    )
+                }
                 item {
                     SingerDetailReleaseShelf(
                         albums = appleSingles,
@@ -948,7 +958,16 @@ private fun SingerDetailOverview(
                 }
             }
             if (appleAlbums.isNotEmpty()) {
-                item { SingerDetailSectionHeader(title = "专辑", onSeeAll = onSeeAllAlbums) }
+                item {
+                    SingerDetailSectionHeader(
+                        title = "专辑",
+                        onSeeAll = if (st.appleAlbums.size > SingerDetailOverviewAlbumCount) {
+                            onSeeAllAlbums
+                        } else {
+                            null
+                        },
+                    )
+                }
                 item {
                     SingerDetailReleaseShelf(
                         albums = appleAlbums,
@@ -958,7 +977,12 @@ private fun SingerDetailOverview(
                 }
             }
         } else {
-            item { SingerDetailSectionHeader(title = "专辑", onSeeAll = onSeeAllAlbums) }
+            item {
+                SingerDetailSectionHeader(
+                    title = "专辑",
+                    onSeeAll = if (st.albums.size > SingerDetailOverviewAlbumCount) onSeeAllAlbums else null,
+                )
+            }
             item {
                 if (st.albumLoading && recentAlbums.isEmpty()) {
                     Box(
@@ -1117,9 +1141,14 @@ private fun SingerDetailHero(
     }
 }
 
-/** section 标题行：左侧标题 + 右侧「全部 ›」玻璃 pill */
+/**
+ * section 标题行：左侧标题 + 右侧「全部 ›」玻璃 pill。
+ *
+ * [onSeeAll] 传 `null` 时**不渲染「全部」** —— 与本地曲库歌手详情同一规则：
+ * 预览段已经装下了全部内容时，那个按钮点了也是同一个列表，纯噪声。
+ */
 @Composable
-private fun SingerDetailSectionHeader(title: String, onSeeAll: () -> Unit) {
+private fun SingerDetailSectionHeader(title: String, onSeeAll: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1135,20 +1164,22 @@ private fun SingerDetailSectionHeader(title: String, onSeeAll: () -> Unit) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(percent = 50))
-                .background(AppColors.whiteA06)
-                .clickableRipple(onSeeAll)
-                .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp6),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text = "全部", color = AppColors.white70, fontSize = AppFontSize.xs)
-            Spacer(modifier = Modifier.width(AppSpacing.sp2))
-            SingerDetailChevronRight(
-                modifier = Modifier.size(AppIconSize.icon13),
-                tint = AppColors.white54,
-            )
+        if (onSeeAll != null) {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(percent = 50))
+                    .background(AppColors.whiteA06)
+                    .clickableRipple(onSeeAll)
+                    .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp6),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(text = "全部", color = AppColors.white70, fontSize = AppFontSize.xs)
+                Spacer(modifier = Modifier.width(AppSpacing.sp2))
+                SingerDetailChevronRight(
+                    modifier = Modifier.size(AppIconSize.icon13),
+                    tint = AppColors.glyphStrong,
+                )
+            }
         }
     }
 }
@@ -1299,27 +1330,55 @@ private fun SingerDetailSongRow(
     onDownload: (Song) -> Unit,
     onToggle: (Song) -> Unit,
     onLongSelect: (Song) -> Unit,
+    /**
+     * 行首序号列是否显示。
+     *
+     * **只有「最热门」那一段（`SongRowPager` 里）传 false** —— 横向分页、每页 5 行，
+     * 序号在那里只是噪声。全部歌曲页（长列表）照旧显示。
+     *
+     * 传 false 时，正在播放的等化器叠到封面中心（46% 黑罩）；否则仍在序号列原位。
+     */
+    showIndex: Boolean = true,
+    /**
+     * 行尾留白（下载按钮右侧到行右边界）。
+     *
+     * 长列表保持 16dp；`SongRowPager`（「最热门」分页）里传 0 —— 页宽本身比屏幕窄，
+     * 再叠 16dp 会让按钮缩在中间、显得不够靠右。
+     */
+    trailingSpace: Dp = AppSpacing.sp16,
+    /**
+     * 行内左侧留白（封面到行左边界）。
+     *
+     * 长列表保持 12dp；`SongRowPager`（「最热门」分页）里传 16dp —— 分页容器
+     * 的 contentPadding 是 0（为了不侵占右侧露出），不补这 4dp 封面会偏左。
+     */
+    leadingSpace: Dp = AppSpacing.sp12,
 ) {
     val haptic = LocalHapticFeedback.current
-    val rowBg = when {
-        selected -> AppColors.primaryA08
-        isActive -> AppColors.primaryA06
-        else -> Color.Transparent
-    }
+    // 与专辑详情 / 歌单详情 / 本地曲库对齐：单栏长列表的「正在播放」用中性灰，
+    // 动效统一是序号列的等化器（PlayingIndicator），不再用封面上的白色三角。
+    val playingTint = AppColors.playingGray
 
     // 以专辑详情行为基准对齐：右侧预留 sp16（与专辑行 padding 一致），
     // 并让下载按钮在整个行高内垂直居中（原先默认顶对齐，视觉偏上）。
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(end = AppSpacing.sp16),
+            .padding(end = trailingSpace),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
                 .weight(1f)
                 .height(AppSize.detailRowHeight)
-                .background(rowBg)
+                .then(
+                    when {
+                        // 竖条贴行左边界（内缩 2dp），与封面之间留出 10dp 空隙
+                        isActive -> Modifier.playingRowBackground(tint = playingTint, startInset = 2.dp)
+                        selected -> Modifier.background(AppColors.primaryA08)
+                        else -> Modifier
+                    },
+                )
                 .combinedClickableNoRipple(
                     onTap = { if (selectionMode) onToggle(song) else onPlay(song) },
                     onLongClick = {
@@ -1330,23 +1389,47 @@ private fun SingerDetailSongRow(
                         }
                     },
                 )
-                .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp8),
+                .padding(
+                    start = leadingSpace,
+                    end = AppSpacing.sp12,
+                    top = AppSpacing.sp8,
+                    bottom = AppSpacing.sp8,
+                ),
         ) {
             Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.width(AppSpacing.sp28),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "${index + 1}",
-                        color = if (selected) AppColors.primary else AppColors.white60,
-                        fontSize = AppFontSize.size15,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                    )
+                if (showIndex) {
+                    Box(
+                        modifier = Modifier.width(AppSpacing.sp28),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        // 播放中：序号换成等化器（与 AlbumDetailSongRow / LocalSongRow 一致）
+                        if (isActive) {
+                            PlayingIndicator(tint = playingTint)
+                        } else {
+                            Text(
+                                text = "${index + 1}",
+                                color = if (selected) AppColors.primary else AppColors.white60,
+                                fontSize = AppFontSize.size15,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(AppSpacing.sp8))
                 }
-                Spacer(modifier = Modifier.width(AppSpacing.sp8))
-                SingerDetailCover(song = song, isActive = isActive)
+                Box(contentAlignment = Alignment.Center) {
+                    SingerDetailCover(song = song)
+                    if (isActive && !showIndex) {
+                        // 序号列不显示时，等化器叠在封面中心（46% 黑罩保证看得清）
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clip(RoundedCornerShape(AppRadius.r6))
+                                .background(Color.Black.copy(alpha = 0.46f)),
+                        )
+                        PlayingIndicator(tint = playingTint)
+                    }
+                }
                 Spacer(modifier = Modifier.width(AppSpacing.sp10))
                 Column(
                     modifier = Modifier.weight(1f),
@@ -1355,7 +1438,7 @@ private fun SingerDetailSongRow(
                 ) {
                     Text(
                         text = song.title,
-                        color = if (isActive) AppColors.primary else AppColors.textPrimary,
+                        color = if (isActive) playingTint else AppColors.textPrimary,
                         fontSize = AppFontSize.lg,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
@@ -1408,9 +1491,14 @@ private fun SingerDetailSongRow(
     }
 }
 
-/** 40dp 封面（圆角 6；播放中压暗 0.6 且叠加白色播放三角） */
+/**
+ * 40dp 封面（圆角 6）。
+ *
+ * 「正在播放」的提示统一由序号列的等化器承担（与 `AlbumDetailSongRow` / `LocalSongRow`
+ * 同一套），封面本身**不再压暗、不再叠三角** —— 之前那一套是本页独有的旧样式。
+ */
 @Composable
-private fun SingerDetailCover(song: Song, isActive: Boolean) {
+private fun SingerDetailCover(song: Song) {
     Box(
         modifier = Modifier
             .size(AppSpacing.sp40)
@@ -1426,13 +1514,9 @@ private fun SingerDetailCover(song: Song, isActive: Boolean) {
                 model = song.cover,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                alpha = if (isActive) 0.6f else 1f,
                 onError = { coverFailed = true },
                 modifier = Modifier.fillMaxSize(),
             )
-        }
-        if (isActive) {
-            PlayTriangle(modifier = Modifier.size(AppIconSize.icon15), tint = AppColors.white)
         }
     }
 }
@@ -1456,7 +1540,7 @@ private fun SingerDetailPagination(
             enabled = current > 1,
             onTap = { onGoTo(current - 1) },
         ) {
-            SingerDetailChevronLeft(modifier = Modifier.size(14.dp), tint = AppColors.whiteA50)
+            SingerDetailChevronLeft(modifier = Modifier.size(14.dp), tint = AppColors.glyphMid)
         }
         for (p in range) {
             Spacer(modifier = Modifier.width(AppSpacing.sp4))
@@ -1487,7 +1571,7 @@ private fun SingerDetailPagination(
             enabled = current < totalPages,
             onTap = { onGoTo(current + 1) },
         ) {
-            SingerDetailChevronRight(modifier = Modifier.size(14.dp), tint = AppColors.whiteA50)
+            SingerDetailChevronRight(modifier = Modifier.size(14.dp), tint = AppColors.glyphMid)
         }
     }
 }
@@ -1580,9 +1664,9 @@ private fun SingerDetailAlbums(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (st.albumSortAsc) {
-                SingerDetailArrowUp(modifier = Modifier.size(AppIconSize.icon13), tint = AppColors.whiteA45)
+                SingerDetailArrowUp(modifier = Modifier.size(AppIconSize.icon13), tint = AppColors.glyphMid)
             } else {
-                SingerDetailArrowDown(modifier = Modifier.size(AppIconSize.icon13), tint = AppColors.whiteA45)
+                SingerDetailArrowDown(modifier = Modifier.size(AppIconSize.icon13), tint = AppColors.glyphMid)
             }
             Spacer(modifier = Modifier.width(AppSpacing.sp4))
             Text(
@@ -1728,7 +1812,7 @@ private fun SingerDetailAlbumCard(
                 )
                 Spacer(modifier = Modifier.height(AppSpacing.sp4))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SingerDetailMusicNote(modifier = Modifier.size(10.dp), tint = AppColors.whiteA20)
+                    SingerDetailMusicNote(modifier = Modifier.size(10.dp), tint = AppColors.glyphDim)
                     Spacer(modifier = Modifier.width(AppSpacing.sp4))
                     Text(
                         text = "${album.musiccnt}首",
@@ -1753,186 +1837,7 @@ private fun SingerDetailAlbumCard(
     }
 }
 
-// ================================================================================================
-// 本页私有自绘图标（统一笔重语言）
-//
-// 为什么在本文件重画：本页原先直接复用 widgets/DetailGlyphs.kt 与 widgets/Icons.kt 的共用图形，
-// 那批图形由各页面按各自场景定的比例描边（0.09f ~ 0.14f），同屏并排时笔重不一致；共用函数又被
-// 其它页面引用、不能改动，因此在本文件内以 private 重画一套，统一：
-//   - 恒定 2dp 等效描边（[SingerDetailIconStroke]，不随图标尺寸缩放）；
-//   - 线稿一律 round cap / round join；
-//   - 比例坐标（w / h 的 0~1 系数，与图标尺寸解耦）。
-// 实心图形（[PlayTriangle]）与 Material 进度环不涉及笔重，维持原样。
-// ================================================================================================
 
-/** 本页图标统一笔重：2dp 等效描边（恒定值，保证同屏所有线稿粗细一致）。 */
-private val SingerDetailIconStroke = 2.dp
 
-/** chevron_left：返回箭头 / 分页上一页（本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailChevronLeft(modifier: Modifier = Modifier, tint: Color = AppColors.textSecondary) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        drawLine(tint, Offset(w * 0.62f, h * 0.16f), Offset(w * 0.30f, h * 0.5f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.30f, h * 0.5f), Offset(w * 0.62f, h * 0.84f), stroke, StrokeCap.Round)
-    }
-}
 
-/** chevron_right：分页下一页（本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailChevronRight(modifier: Modifier = Modifier, tint: Color = AppColors.textSecondary) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        drawLine(tint, Offset(w * 0.38f, h * 0.16f), Offset(w * 0.70f, h * 0.5f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.70f, h * 0.5f), Offset(w * 0.38f, h * 0.84f), stroke, StrokeCap.Round)
-    }
-}
-
-/** arrow_upward：专辑「时间正序」（本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailArrowUp(modifier: Modifier = Modifier, tint: Color = AppColors.whiteA45) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        drawLine(tint, Offset(w * 0.5f, h * 0.86f), Offset(w * 0.5f, h * 0.18f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.18f, h * 0.5f), Offset(w * 0.5f, h * 0.16f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.82f, h * 0.5f), Offset(w * 0.5f, h * 0.16f), stroke, StrokeCap.Round)
-    }
-}
-
-/** arrow_downward：专辑「时间倒序」（本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailArrowDown(modifier: Modifier = Modifier, tint: Color = AppColors.whiteA45) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        drawLine(tint, Offset(w * 0.5f, h * 0.14f), Offset(w * 0.5f, h * 0.82f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.18f, h * 0.5f), Offset(w * 0.5f, h * 0.84f), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(w * 0.82f, h * 0.5f), Offset(w * 0.5f, h * 0.84f), stroke, StrokeCap.Round)
-    }
-}
-
-/** person_outline：头像兜底（头圆 + 肩弧，本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailPersonOutline(modifier: Modifier = Modifier, tint: Color = AppColors.textDisabled) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        drawCircle(
-            color = tint,
-            radius = w * 0.17f,
-            center = Offset(w * 0.5f, h * 0.31f),
-            style = Stroke(width = stroke),
-        )
-        drawArc(
-            color = tint,
-            startAngle = 180f,
-            sweepAngle = 180f,
-            useCenter = false,
-            topLeft = Offset(w * 0.16f, h * 0.50f),
-            size = Size(w * 0.68f, h * 0.62f),
-            style = Stroke(width = stroke, cap = StrokeCap.Round),
-        )
-    }
-}
-
-/** error_outline：加载失败态（描边圆 + 感叹号，本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailErrorOutline(modifier: Modifier = Modifier, tint: Color = AppColors.textDisabled) {
-    Canvas(modifier = modifier) {
-        val min = size.minDimension
-        val stroke = SingerDetailIconStroke.toPx()
-        drawCircle(
-            color = tint,
-            radius = (min - stroke) / 2f,
-            style = Stroke(width = stroke),
-        )
-        drawLine(tint, Offset(min * 0.5f, min * 0.28f), Offset(min * 0.5f, min * 0.55f), stroke, StrokeCap.Round)
-        drawCircle(color = tint, radius = min * 0.055f, center = Offset(min * 0.5f, min * 0.72f))
-    }
-}
-
-/** check：选中态对勾（本页统一 2dp 圆头端点 / 圆角连接） */
-@Composable
-private fun SingerDetailCheckMark(modifier: Modifier = Modifier, tint: Color = AppColors.white) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        val path = Path().apply {
-            moveTo(w * 0.22f, h * 0.52f)
-            lineTo(w * 0.43f, h * 0.73f)
-            lineTo(w * 0.78f, h * 0.28f)
-        }
-        drawPath(
-            path = path,
-            color = tint,
-            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
-        )
-    }
-}
-
-/** album：封面兜底（描边圆 + 圆心实点，本页统一 2dp 圆环） */
-@Composable
-private fun SingerDetailAlbumGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.white10) {
-    Canvas(modifier = modifier) {
-        val min = size.minDimension
-        val stroke = SingerDetailIconStroke.toPx()
-        drawCircle(
-            color = tint,
-            radius = (min - stroke) / 2f,
-            style = Stroke(width = stroke),
-        )
-        drawCircle(color = tint, radius = min * 0.14f)
-    }
-}
-
-/** download：行尾下载（箭身 + 描边箭头 + 托盘，本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailDownloadGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.whiteA25) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        // 箭身
-        drawLine(tint, Offset(w * 0.5f, h * 0.10f), Offset(w * 0.5f, h * 0.44f), stroke, StrokeCap.Round)
-        // 空心箭头（描边三角形）
-        val head = Path().apply {
-            moveTo(w * 0.20f, h * 0.44f)
-            lineTo(w * 0.80f, h * 0.44f)
-            lineTo(w * 0.50f, h * 0.74f)
-            close()
-        }
-        drawPath(
-            path = head,
-            color = tint,
-            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
-        )
-        // 托盘
-        drawLine(tint, Offset(w * 0.22f, h * 0.90f), Offset(w * 0.78f, h * 0.90f), stroke, StrokeCap.Round)
-    }
-}
-
-/** music_note：封面 / 专辑行音乐占位（本页统一 2dp 圆头笔画） */
-@Composable
-private fun SingerDetailMusicNote(modifier: Modifier = Modifier, tint: Color = AppColors.whiteA15) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        // 符干
-        drawLine(tint, Offset(w * 0.64f, h * 0.12f), Offset(w * 0.64f, h * 0.68f), stroke, StrokeCap.Round)
-        // 符头
-        drawCircle(color = tint, radius = w * 0.20f, center = Offset(w * 0.44f, h * 0.70f))
-        // 符尾
-        drawLine(tint, Offset(w * 0.64f, h * 0.12f), Offset(w * 0.88f, h * 0.26f), stroke, StrokeCap.Round)
-    }
-}
 

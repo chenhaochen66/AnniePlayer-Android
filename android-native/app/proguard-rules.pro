@@ -23,6 +23,14 @@
     native <methods>;
 }
 
+# ── TagLib（libtaglib.so，纯靠符号名绑定） ──
+# so 里导出的是 Java_com_lonx_audiotag_TagLib_*，且 native 侧用 FindClass/GetMethodID
+# 按全限定名构造 model 对象 —— 类名、方法名、字段名一个都不能被 R8 改。
+-keep class com.lonx.audiotag.TagLib { *; }
+-keep class com.lonx.audiotag.model.AudioProperties { *; }
+-keep class com.lonx.audiotag.model.Picture { *; }
+-keep class com.lonx.audiotag.model.Metadata { *; }
+
 # ── 常见可选依赖缺失导致的告警（OkHttp/Conscrypt/BouncyCastle 等） ──
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**

@@ -24,28 +24,23 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * 落雪插件注册表：持有插件清单与全局开关，负责导入 / 删除 / 启停与落盘。
+ * 落雪插件注册表：持有插件清单，负责导入 / 删除 / 启停与落盘。
  *
  * - 元信息（含声明的音源）存 `annie_shared_prefs` 的 `lx-plugins`（JSON 数组）；
  * - 插件脚本存 App 私有目录 `filesDir/lx-plugins/<id>.js`（**不放外部存储**）；
- * - 全局开关 `lx-plugin-enabled` 默认 **关**，与内置音源路由链配合：插件优先、内置兜底。
+ * - **没有全局开关**：国内四平台的播放与下载**都只有插件这一条路**（内置直链接口已删除，
+ *   也没有任何降级/回退）。以前那个 `lx-plugin-enabled` 开关已移除，旧的持久化值不再读取。
  */
 object LxPluginRegistry {
 
     private const val TAG = "LxPlugin"
     private const val PREFS_NAME = "annie_shared_prefs"
-    private const val KEY_ENABLED = "lx-plugin-enabled"
     private const val KEY_PLUGINS = "lx-plugins"
     private const val DIR_NAME = "lx-plugins"
     private const val MAX_SCRIPT_BYTES = 2 * 1024 * 1024
 
     private var prefs: SharedPreferences? = null
     private var appContext: Context? = null
-
-    private val _enabled = MutableStateFlow(true)
-
-    /** 全局「启用落雪插件」开关（默认开；没有可用插件时仍走内置） */
-    val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
 
     private val _plugins = MutableStateFlow<List<LxPlugin>>(emptyList())
 
@@ -63,17 +58,11 @@ object LxPluginRegistry {
         val ctx = context.applicationContext
         appContext = ctx
         prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        _enabled.value = prefs?.getBoolean(KEY_ENABLED, true) ?: true
         runCatching { pluginDir(ctx).mkdirs() }
         _plugins.value = loadPlugins()
     }
 
-    // ── 开关 ──
-
-    fun setGlobalEnabled(value: Boolean) {
-        _enabled.value = value
-        prefs?.edit()?.putBoolean(KEY_ENABLED, value)?.apply()
-    }
+    // ── 启停 ──
 
     /** 选中某个插件为**唯一启用**的音源（与 Qobuz Token 管理同款单选语义） */
     fun setActive(id: String) {
@@ -83,9 +72,8 @@ object LxPluginRegistry {
 
     // ── 查询 ──
 
-    /** 该平台是否应由插件解析（开关开 + 有已启用且声明了 `musicUrl` 的插件） */
+    /** 该平台是否应由插件解析（有已启用且声明了 `musicUrl` 的插件） */
     fun pluginFor(platform: MusicPlatform): LxPlugin? {
-        if (!_enabled.value) return null
         val code = LxSourceMapper.lxCodeOf(platform) ?: return null
         return _plugins.value.firstOrNull { plugin ->
             plugin.enabled && plugin.error == null &&
@@ -99,7 +87,7 @@ object LxPluginRegistry {
     /** 当前启用且可用的插件（不看平台）—— 用于提示"是它不支持这个平台" */
     fun activePlugin(): LxPlugin? = _plugins.value.firstOrNull { it.enabled && it.error == null }
 
-    /** 开关开着、却没有任何"启用且声明了 musicUrl"的插件 —— 即"想用插件但没加" */
+    /** 没有任何"启用且声明了 musicUrl"的插件 —— 此时四平台的播放/下载都会直接失败 */
     fun noUsablePlugin(): Boolean = _plugins.value.none { plugin ->
         plugin.enabled && plugin.error == null && plugin.sources.any { it.supportsMusicUrl }
     }

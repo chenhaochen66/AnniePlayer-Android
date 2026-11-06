@@ -1,7 +1,6 @@
 package com.annieplayer.annie_music.kt.widgets
 
 import android.content.Context
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -60,7 +59,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.annieplayer.annie_music.kt.core.routing.BackTarget
-import com.annieplayer.annie_music.kt.core.routing.OverlayVisibilityFlags
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
@@ -83,7 +81,7 @@ import com.annieplayer.annie_music.kt.data.model.DownloadTask
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.network.globalOkHttp
-import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
+import com.annieplayer.annie_music.kt.data.sources.kuwo.buildAlbumCoverUrl
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppEasing

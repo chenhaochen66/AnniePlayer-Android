@@ -20,11 +20,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
@@ -60,7 +60,8 @@ fun SkeletonLoader(
     largeRows: Boolean = false,
 ) {
     val transition = rememberInfiniteTransition(label = "skeleton")
-    val opacity by transition.animateFloat(
+    // 透明度只在 `graphicsLayer` 里读（绘制阶段）：组合期读它会让整片骨架每帧重组。
+    val opacity = transition.animateFloat(
         initialValue = 0.3f,
         targetValue = 0.7f,
         animationSpec = infiniteRepeatable(
@@ -96,15 +97,16 @@ fun SkeletonLoader(
 
 /** 单列骨架：标题条 + 若干行（封面块 + 文本条 + 尾部圆点） */
 @Composable
-private fun SkeletonColumn(opacity: Float, largeRows: Boolean) {
+private fun SkeletonColumn(opacity: State<Float>, largeRows: Boolean) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        // 整列一次性给 alpha：块之间不重叠，与「每块各自 alpha」等价，但只出一个离屏层
+        modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = opacity.value },
         verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalAlignment = Alignment.Start,
     ) {
         // 标题条
         Box(modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)) {
-            SkeletonBlock(fixedWidth = 60.dp, height = 14.dp, opacity = opacity)
+            SkeletonBlock(fixedWidth = 60.dp, height = 14.dp)
         }
         repeat(if (largeRows) 5 else 4) {
             Row(
@@ -122,7 +124,6 @@ private fun SkeletonColumn(opacity: Float, largeRows: Boolean) {
                     fixedWidth = if (largeRows) 44.dp else 36.dp,
                     height = if (largeRows) 44.dp else 36.dp,
                     radius = if (largeRows) 8.dp else 6.dp,
-                    opacity = opacity,
                 )
                 Spacer(modifier = Modifier.width(if (largeRows) 14.dp else 8.dp))
                 Column(
@@ -133,22 +134,19 @@ private fun SkeletonColumn(opacity: Float, largeRows: Boolean) {
                     SkeletonBlock(
                         widthFactor = 0.8f,
                         height = if (largeRows) 17.dp else 12.dp,
-                        opacity = opacity,
                     )
                     SkeletonBlock(
                         widthFactor = 0.5f,
                         height = if (largeRows) 13.dp else 10.dp,
-                        opacity = opacity,
                     )
                     if (largeRows) {
-                        SkeletonBlock(widthFactor = 0.35f, height = 11.dp, opacity = opacity)
+                        SkeletonBlock(widthFactor = 0.35f, height = 11.dp)
                     }
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 SkeletonBlock(
                     fixedWidth = if (largeRows) 20.dp else 16.dp,
                     height = if (largeRows) 20.dp else 16.dp,
-                    opacity = opacity,
                 )
             }
         }
@@ -164,7 +162,6 @@ private fun SkeletonColumn(opacity: Float, largeRows: Boolean) {
 @Composable
 private fun SkeletonBlock(
     height: Dp,
-    opacity: Float,
     modifier: Modifier = Modifier,
     fixedWidth: Dp? = null,
     widthFactor: Float? = null,
@@ -177,7 +174,6 @@ private fun SkeletonBlock(
                 modifier = Modifier
                     .fillMaxWidth(widthFactor)
                     .height(height)
-                    .alpha(opacity)
                     .background(BlockColor, shape),
             )
         }
@@ -186,7 +182,6 @@ private fun SkeletonBlock(
             modifier = modifier
                 .width(fixedWidth ?: 0.dp)
                 .height(height)
-                .alpha(opacity)
                 .background(BlockColor, shape),
         )
     }

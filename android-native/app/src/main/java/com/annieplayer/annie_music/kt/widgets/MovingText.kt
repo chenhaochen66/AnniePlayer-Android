@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.LocalTextStyle
@@ -31,8 +30,31 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlin.math.max
 import kotlin.math.roundToInt
+
+/**
+ * 按帧推进一次线性平移：从 [from] 走到 [to] 用 [moveMs]，每帧把插值交给 [setOffset]。
+ *
+ * 写成顶层函数是因为两个跑马灯都要用；节奏本身（hold 用 `delay`、move 用帧时钟）
+ * 由调用方决定，这里只管一段匀速位移。
+ */
+private suspend fun slideFrames(
+    moveMs: Float,
+    from: Float,
+    to: Float,
+    setOffset: (Float) -> Unit,
+) {
+    val startNs = withFrameNanos { it }
+    while (true) {
+        val nowNs = withFrameNanos { it }
+        val f = (nowNs - startNs) / 1_000_000f / moveMs
+        if (f >= 1f) break
+        setOffset(from + (to - from) * f)
+    }
+    setOffset(to)
+}
 
 /**
  * 滚动标题（1:1 移植 Flutter `lib/widgets/moving_text.dart`）。
@@ -93,26 +115,21 @@ fun MovingText(
     val distance = textWidthPx.toFloat() + gap
     val holdMs = 1200f
     val moveMs = max(600, (distance / speed * 1000f).roundToInt()).toFloat()
-    val totalMs = holdMs + moveMs + holdMs
 
-    var elapsedMs by remember { mutableFloatStateOf(0f) }
+    // 位移只被 `graphicsLayer` 的 block 读取（绘制阶段），组合期一次都不读 ——
+    // 否则每帧重组整个节点，且整屏（极光那十几层全屏混合）会跟着重画一遍。
+    val offsetPx = remember(distance, moveMs) { mutableFloatStateOf(0f) }
     LaunchedEffect(text, distance, moveMs) {
-        elapsedMs = 0f
-        var lastNs = 0L
-        while (true) {
-            withFrameNanos { nowNs ->
-                if (lastNs != 0L) {
-                    elapsedMs = (elapsedMs + (nowNs - lastNs) / 1_000_000f) % totalMs
-                }
-                lastNs = nowNs
-            }
+        val setOffset: (Float) -> Unit = { v ->
+            if (offsetPx.floatValue != v) offsetPx.floatValue = v
         }
-    }
-
-    val offsetX: Float = when {
-        elapsedMs < holdMs -> 0f
-        elapsedMs < holdMs + moveMs -> -distance * ((elapsedMs - holdMs) / moveMs)
-        else -> -distance
+        while (true) {
+            setOffset(0f)
+            // 两段 hold 用 delay 而不是帧时钟：静止期间不产出任何一帧
+            delay(holdMs.toLong())
+            slideFrames(moveMs, 0f, -distance, setOffset)
+            delay(holdMs.toLong())
+        }
     }
 
     val gapDp = with(density) { gap.toDp() }
@@ -127,7 +144,7 @@ fun MovingText(
         Layout(
             modifier = Modifier
                 .fillMaxWidth()
-                .graphicsLayer { translationX = offsetX },
+                .graphicsLayer { translationX = offsetPx.floatValue },
             content = {
                 Text(text = text, style = style, maxLines = 1, softWrap = false)
                 Box(modifier = Modifier.width(gapDp))
@@ -163,35 +180,30 @@ private fun PingPongText(
     style: TextStyle = LocalTextStyle.current,
     speed: Float = 40f,
 ) {
-    val density = LocalDensity.current
     var textPx by remember(text) { mutableIntStateOf(0) }
     var windowPx by remember { mutableIntStateOf(0) }
     val distancePx = (textPx - windowPx).coerceAtLeast(0)
 
     val holdMs = 1500f
     val moveMs = max(600f, distancePx / speed * 1000f)
-    val totalMs = (holdMs + moveMs) * 2f
 
-    var elapsed by remember { mutableFloatStateOf(0f) }
+    // 与 [MovingText] 同一条原则：位移只在绘制阶段读，两段 hold 用 delay 不产帧。
+    val offsetPx = remember(distancePx, moveMs) { mutableFloatStateOf(0f) }
     LaunchedEffect(text, distancePx, moveMs) {
-        elapsed = 0f
-        var last = 0L
-        while (true) {
-            withFrameNanos { now ->
-                if (last != 0L) elapsed = (elapsed + (now - last) / 1_000_000f) % totalMs
-                last = now
-            }
+        if (distancePx <= 0) {
+            offsetPx.floatValue = 0f
+            return@LaunchedEffect
         }
-    }
-
-    val offsetPx = if (distancePx <= 0) {
-        0f
-    } else {
-        when {
-            elapsed < holdMs -> 0f
-            elapsed < holdMs + moveMs -> -distancePx * ((elapsed - holdMs) / moveMs)
-            elapsed < holdMs + moveMs + holdMs -> -distancePx.toFloat()
-            else -> -distancePx * (1f - (elapsed - holdMs - moveMs - holdMs) / moveMs)
+        val setOffset: (Float) -> Unit = { v ->
+            if (offsetPx.floatValue != v) offsetPx.floatValue = v
+        }
+        val back = -distancePx.toFloat()
+        while (true) {
+            setOffset(0f)
+            delay(holdMs.toLong())
+            slideFrames(moveMs, 0f, back, setOffset)
+            delay(holdMs.toLong())
+            slideFrames(moveMs, back, 0f, setOffset)
         }
     }
 
@@ -210,7 +222,7 @@ private fun PingPongText(
                 modifier = Modifier
                     .wrapContentWidth(unbounded = true, align = Alignment.Start)
                     .onSizeChanged { if (textPx != it.width) textPx = it.width }
-                    .offset(x = with(density) { offsetPx.toDp() }),
+                    .graphicsLayer { translationX = offsetPx.floatValue },
             )
         }
     }

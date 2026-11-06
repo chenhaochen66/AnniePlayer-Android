@@ -1,6 +1,5 @@
 package com.annieplayer.annie_music.kt.features.kkbox
 
-import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -38,7 +37,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -53,24 +51,19 @@ import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
-import com.annieplayer.annie_music.kt.data.DownloadService
 import com.annieplayer.annie_music.kt.data.model.KkboxAccount
 import com.annieplayer.annie_music.kt.data.model.KkboxSession
 import com.annieplayer.annie_music.kt.data.model.KkboxTrack
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Quality
 import com.annieplayer.annie_music.kt.data.model.Song
-import com.annieplayer.annie_music.kt.data.sources.formatNameToQuality
-import com.annieplayer.annie_music.kt.data.sources.getDownloadUrl
-import com.annieplayer.annie_music.kt.data.sources.getKkboxAlbum
-import com.annieplayer.annie_music.kt.data.sources.getPlayUrl
-import com.annieplayer.annie_music.kt.data.sources.getSongLyrics
-import com.annieplayer.annie_music.kt.data.sources.getSongs
-import com.annieplayer.annie_music.kt.data.sources.isDrmFormat
-import com.annieplayer.annie_music.kt.data.sources.mapAlbumToKkboxAlbum
-import com.annieplayer.annie_music.kt.data.sources.mapSongToKkboxTrack
-import com.annieplayer.annie_music.kt.data.sources.qualityExtension
-import com.annieplayer.annie_music.kt.data.sources.streamDecryptKkboxAudio
+import com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxDownloader
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getKkboxAlbum
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getPlayUrl
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getSongLyrics
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getSongs
+import com.annieplayer.annie_music.kt.data.sources.kkbox.mapAlbumToKkboxAlbum
+import com.annieplayer.annie_music.kt.data.sources.kkbox.mapSongToKkboxTrack
 import com.annieplayer.annie_music.kt.ui.theme.AppBorder
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
@@ -88,12 +81,9 @@ import com.annieplayer.annie_music.kt.widgets.MultiSelectDownloadBar
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.PlayingIndicator
 import com.annieplayer.annie_music.kt.widgets.clickableRipple
-import com.annieplayer.annie_music.kt.widgets.detailDownloadSong
-import com.annieplayer.annie_music.kt.widgets.glassPanel
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
 import com.annieplayer.annie_music.kt.widgets.shortScrollbar
 import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -138,7 +128,7 @@ private fun kkboxDetailActiveAccount(accounts: List<KkboxAccount>): KkboxAccount
  * - `_load` 的错误分支：含 session / login 的报错转为「会话已过期…」。
  * - 播放 / 下载过程中会话被续期时，回写 `updateAccountSession`。
  * - 下载：hires 固定音质；批量逐个下载并汇报进度。
- * - 视觉：封面动态取色氛围背景（[CoverPaletteBackdrop]）+ 玻璃列表容器（[glassPanel]）；
+ * - 视觉：封面动态取色氛围背景（[CoverPaletteBackdrop]）+ 列表直接铺在背景上（无玻璃底）；
  *   进入时把本页色板写入全局、离开时恢复（[SnapshotPaletteAndRestore]）；
  *   命中当前曲的行显示「正在播放」动效（[PlayingIndicator]）。
  * - 返回手势：多选模式优先退出（对齐 Dart `PopScope(canPop: !_selectMode)`）。
@@ -149,13 +139,18 @@ fun KkboxDetailScreen(
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     onBack: () -> Unit,
+    /**
+     * 是否可以吃返回键：宿主的 `localTop`（栈顶且没有更高层浮层）。
+     *
+     * 只用于页内多选退出这一层；出栈由 AppShell 的 PAGE 处理器 + `PageCloseRelay` 统一做。
+     */
+    isTop: Boolean = true,
     modifier: Modifier = Modifier,
     type: String = "",
     id: String = "",
 ) {
     val st = remember { KkboxDetailScreenState() }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
     val accounts by kkboxViewModel.state.collectAsState()
     val playerState by playerViewModel.state.collectAsState()
 
@@ -291,12 +286,8 @@ fun KkboxDetailScreen(
         enqueueDownload(songId) {
             try {
                 val filePath = kkboxDetailDownloadTrack(
-                    context = context,
                     track = track,
                     songId = songId,
-                    kkboxViewModel = kkboxViewModel,
-                    accountId = account.id,
-                    session = session,
                     updateProgress = { v ->
                         downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
                     },
@@ -331,12 +322,8 @@ fun KkboxDetailScreen(
                 downloadViewModel.updateProgress(songId, 0.0)
                 try {
                     val filePath = kkboxDetailDownloadTrack(
-                        context = context,
                         track = t,
                         songId = songId,
-                        kkboxViewModel = kkboxViewModel,
-                        accountId = account.id,
-                        session = session,
                         updateProgress = { v ->
                             downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
                         },
@@ -371,13 +358,21 @@ fun KkboxDetailScreen(
         if (sessionSid != null && sessionSid != st.loadedSid && !st.loading) load()
     }
 
-    // 返回手势：多选模式优先退出（对齐 Dart `PopScope(canPop: !_selectMode)`）
-    BackHandler {
-        if (st.selectMode) {
-            st.selectMode = false
-        } else {
-            onBack()
-        }
+    // 返回手势：本页**只管多选退出**这一层，且只在真正「可以吃返回」时才启用。
+    //
+    // 出栈不再由本页直接做：宿主（AppShell）用 `LocalOverlayFrame` 包住本页，
+    // 关闭入口统一走它给的 `requestClose`（先滑出、动画结束才 popRoute），
+    // 返回裁决由 `AppShell` 唯一的 PAGE 处理器 + `PageCloseRelay` 负责。
+    //
+    // 两处都必须保留：
+    // - 删掉这里的 `onBack()`：否则本页多一条独立的出栈路径，和 relay 抢同一件事；
+    // - 但**不能只删不注册**：relay 取「最后挂载的注册者」，本页不注册时尾部会指向
+    //   下面那一页，返回会把下层页面滑出、本页留在原地。注册由 `LocalOverlayFrame` 做。
+    //
+    // `isTop` 必须是宿主的 `localTop`（栈顶且无更高层浮层）：否则被压住的页面会抢返回，
+    // 而它只清掉自己的 selectMode，上层页面纹丝不动 —— 看起来就是「返回键失效」。
+    BackHandler(enabled = isTop && st.selectMode) {
+        st.selectMode = false
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -534,8 +529,6 @@ private fun KkboxDetailBody(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        // 液态玻璃承载列表：半透明底 + 顶部高光 + 高光描边（层叠伪造毛玻璃）
-                        .glassPanel(shape = RoundedCornerShape(AppRadius.panel))
                         .shortScrollbar(listState),
                     // 底部为常驻底栏 / 迷你条 + 手势条预留空间（沿用既有 120dp 值）
                     contentPadding = PaddingValues(bottom = AppSpacing.listBottomInset),
@@ -595,7 +588,7 @@ private fun KkboxDetailListHeader(st: KkboxDetailScreenState) {
         ) {
             var coverFailed by remember(st.cover) { mutableStateOf(false) }
             if (st.cover.isEmpty() || coverFailed) {
-                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.white24)
+                MusicNoteGlyph(modifier = Modifier.size(AppIconSize.icon28), tint = AppColors.glyphDim)
             } else {
                 AsyncImage(
                     model = st.cover,
@@ -750,110 +743,36 @@ private fun KkboxDetailTrackRow(
 }
 
 // ================================================================================================
-// 下载助手：DRM 走 RC4 流式解密（Kotlin 无 ffmpeg，跳过元数据打标），非 DRM 走 detailDownloadSong
+// 下载助手
 // ================================================================================================
 
 /**
- * 下载单曲（DRM 解密；非 DRM 走 [detailDownloadSong]），返回最终文件路径。
+ * 下载单曲 —— **委托给 [KkboxDownloader]**。
  *
- * 对齐 Dart `_downloadKkboxTrack`；差异：解密后经 [DownloadService.tagAudioFile] 走纯 Kotlin
- * 打标（MP3/FLAC 可写，其余格式保留原文件），DRM 文件固定落盘到 `cacheDir/downloads`。
+ * 以前这里自带一整套「取票 → RC4 解密 → 写 cacheDir/downloads → 打标」，与仓库层要用的
+ * 同一套逻辑各写一遍；现在那份实现只在 `KkboxDownloader` 里留一份，页面只负责把进度
+ * 换算成百分比。副产物：DRM 成品不再落在看不见的私有 `cacheDir/downloads`，
+ * 而是按设置进自定义目录 / 系统媒体库。
  */
 private suspend fun kkboxDetailDownloadTrack(
-    context: Context,
     track: KkboxTrack,
     songId: String,
-    kkboxViewModel: KkboxViewModel,
-    accountId: String,
-    session: KkboxSession,
     updateProgress: (Double) -> Unit,
-): String {
-    val dl = getDownloadUrl(session.sid, track.id, session.kkid, "hires")
-    if (dl.sid != session.sid) {
-        kkboxViewModel.updateAccountSession(
-            accountId,
-            KkboxSession(
-                sid = dl.sid,
-                licContentKey = session.licContentKey,
-                highQuality = session.highQuality,
-                kkid = session.kkid,
-                email = session.email,
-                loggedIn = true,
-            ),
-        )
-    }
-    val qualityKey = formatNameToQuality(dl.formatName)
-    val lyricResult = getSongLyrics(dl.sid, track.id)
-
-    if (isDrmFormat(dl.formatName)) {
-        val safeId = songId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
-        val tmpFile = File(context.cacheDir, "kkbox_drm_$safeId${qualityExtension(qualityKey)}")
-        streamDecryptKkboxAudio(dl.url, session.licContentKey, tmpFile.absolutePath) { p ->
-            updateProgress(p * 90.0)
-        }
-        updateProgress(92.0)
-        val safeName = "${track.title} - ${track.artist}${qualityExtension(qualityKey)}"
-            .replace(Regex("""[/\\?%*:|"<>]"""), "_")
-        // 对齐 Flutter：DRM 文件固定写入应用私有 cacheDir/downloads/，忽略自定义下载目录
-        val downloadsDir = File(context.cacheDir, "downloads")
-        if (!downloadsDir.exists()) downloadsDir.mkdirs()
-        val finalFile = File(downloadsDir, safeName)
-        if (finalFile.exists()) finalFile.delete()
-        val renamed = tmpFile.renameTo(finalFile)
-        val out = if (renamed) {
-            finalFile
-        } else {
-            tmpFile.copyTo(finalFile, overwrite = true)
-            tmpFile.delete()
-            finalFile
-        }
-        // 元数据打标（对齐 Flutter `_tagDrmAudio`；复用 DownloadService 的纯 Kotlin 写入器）
-        try {
-            DownloadService.tagAudioFile(
-                inputPath = out.absolutePath,
-                title = track.title,
-                artist = track.artist,
-                album = track.album,
-                coverUrl = track.cover,
-                // 对齐 Flutter：DRM 打标只写原始歌词（不合并翻译）
-                lyric = lyricResult.lrc,
-                albumArtist = track.albumArtist,
-                trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
-                releaseDate = track.releaseDate,
-                coverCacheKey = songId,
-            )
-        } catch (_: Throwable) {
-            // 打标失败保留原文件（对齐 Dart：失败则直接用原始文件）
-        }
-        updateProgress(100.0)
-        return out.absolutePath
-    }
-
-    return detailDownloadSong(
-        context = context,
-        songId = songId,
+): String = KkboxDownloader.download(
+    song = Song(
+        id = songId,
         title = track.title,
         artist = track.artist,
-        coverUrl = track.cover,
+        cover = track.cover,
         album = track.album,
-        downloadUrl = dl.url,
-        quality = kkboxDetailQualityFromKey(qualityKey),
-        onProgress = { p -> updateProgress(p * 100.0) },
-        lyric = lyricResult.lrc,
-        tlyric = lyricResult.tlyric,
+        duration = track.duration,
+        platform = MusicPlatform.kkbox,
         albumArtist = track.albumArtist,
         trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
         releaseDate = track.releaseDate,
-    )
-}
-
-/** KKBOX 平台音质 key -> [Quality]（对齐 Dart `_qualityFromKey`） */
-private fun kkboxDetailQualityFromKey(key: String): Quality = when (key) {
-    "hires" -> Quality.hires
-    "hifi" -> Quality.flac
-    "320k", "192k" -> Quality.k320k
-    else -> Quality.k128k
-}
+    ),
+    onProgress = { p -> updateProgress(p * 100.0) },
+)
 
 /** 去掉 `Exception: ` 前缀的错误文案（对齐 Dart `_errText`） */
 private fun kkboxDetailErrText(e: Throwable): String =

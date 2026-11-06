@@ -149,44 +149,60 @@ fun ModeDropdown(
         // 锚点 Box 恰好包住触发器：Popup 相对它定位，等价 Flutter 的 trigger 全局坐标
         Box {
             ModeDropdownTrigger(label = mode.label, open = open, onToggle = onToggle)
-            if (mounted) {
-                val topOffset = with(LocalDensity.current) {
-                    (AppSize.detailDownloadBarHeight + ModeDropdownPanelGap).roundToPx()
-                }
-                Popup(
-                    alignment = Alignment.TopStart,
-                    offset = IntOffset(0, topOffset),
-                    // 关闭动画期间不再吃返回/外部点击（focusable 跟随 open）
-                    onDismissRequest = { if (open) onToggle() },
-                    properties = PopupProperties(focusable = open),
+            // 浮层容器是**共用**的（`DropdownPopup`）：设置页那些下拉也走它。
+            // 这里只负责"面板里装什么"—— 错峰进场 + 选中高亮仍留在本文件，
+            // 那两样是搜索页专属的视觉，别往通用层塞。
+            if (open) {
+                DropdownPopup(
+                    expanded = open,
+                    onDismiss = onToggle,
+                    anchorHeightPx = with(LocalDensity.current) {
+                        AppSize.detailDownloadBarHeight.roundToPx()
+                    },
+                    panelWidth = AppSize.dropdownPanelWidth,
                 ) {
-                    AnimatedVisibility(
-                        visible = open,
-                        enter = fadeIn(
-                            tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
-                        ) + scaleIn(
-                            initialScale = ModeDropdownEnterScale,
-                            transformOrigin = TransformOrigin(0f, 0f),
-                            animationSpec = tween(
-                                durationMillis = AppDuration.sheet,
-                                easing = AppEasing.easeInOutQuad,
-                            ),
-                        ),
-                        exit = fadeOut(
-                            tween(durationMillis = ModeDropdownExitMillis, easing = AppEasing.easeInOutQuad),
-                        ) + scaleOut(
-                            targetScale = ModeDropdownExitScale,
-                            transformOrigin = TransformOrigin(0f, 0f),
-                            animationSpec = tween(
-                                durationMillis = ModeDropdownExitMillis,
-                                easing = AppEasing.easeInOutQuad,
-                            ),
-                        ),
-                    ) {
-                        ModeDropdownPanel(mode = mode, onSelect = onSelect)
-                    }
+                    ModeDropdownPanelItems(mode = mode, onSelect = onSelect)
                 }
             }
+        }
+    }
+}
+
+/**
+ * 面板内容（错峰进场 + 选中高亮），装在外层的 [DropdownPopup] 里。
+ *
+ * 原来这里自带 `Surface` / 边框 / 内边距，抽掉 `DropdownPopup` 后那三样由它提供，
+ * 本函数只留下"每个选项怎么进场"这一段。
+ */
+@Composable
+private fun ModeDropdownPanelItems(mode: ModeDropdownMode, onSelect: (ModeDropdownMode) -> Unit) {
+    // 进场开关：组合完成后的下一帧置 true → 触发每项自己的错峰进入动画
+    var itemsShown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { itemsShown = true }
+
+    for ((index, option) in ModeDropdownMode.entries.withIndex()) {
+        AnimatedVisibility(
+            visible = itemsShown,
+            enter = fadeIn(
+                tween(
+                    durationMillis = AppDuration.sheet,
+                    delayMillis = index * ModeDropdownItemStaggerMillis,
+                    easing = AppEasing.easeInOutQuad,
+                ),
+            ) + slideInVertically(
+                animationSpec = tween(
+                    durationMillis = AppDuration.sheet,
+                    delayMillis = index * ModeDropdownItemStaggerMillis,
+                    easing = AppEasing.easeInOutQuad,
+                ),
+            ) { fullHeight -> -fullHeight / 6 },
+            exit = ExitTransition.None,
+        ) {
+            ModeDropdownPanelItem(
+                option = option,
+                active = option == mode,
+                onTap = { onSelect(option) },
+            )
         }
     }
 }
@@ -203,11 +219,12 @@ private fun ModeDropdownTrigger(label: String, open: Boolean, onToggle: () -> Un
     Row(
         modifier = Modifier
             .height(AppSize.detailDownloadBarHeight)
-            // 玻璃底与 ⇄ 按钮同一口径（surfaceLight @50%）
-            .glassPanel(
-                shape = RoundedCornerShape(AppRadius.pill),
-                tint = AppColors.surfaceLight.copy(alpha = 0.50f),
-            )
+            // 玻璃底用 glassPanel 默认值（白 5.1%），与本地曲库的按钮、搜索框同一档。
+            //
+            // 原来是 `surfaceLight @50%`：那是 #1C1C3A 的固定紫，50% 的权重压上去，
+            // 透出来的永远是紫、不是下面的背景，pill 变成一块实心色块 —— 和底栏当初
+            // 犯的是同一个错（见 `AppBottomBar.BottomBarGlass` 的文件头）。
+            .glassPanel(shape = RoundedCornerShape(AppRadius.pill))
             .clickableRipple(onToggle)
             .padding(horizontal = AppSpacing.sp16),
         verticalAlignment = Alignment.CenterVertically,
@@ -248,61 +265,6 @@ private fun ModeDropdownChevronDown(
         val bottomY = h * 0.62f
         drawLine(tint, Offset(w * 0.25f, topY), Offset(w * 0.50f, bottomY), stroke, StrokeCap.Round)
         drawLine(tint, Offset(w * 0.75f, topY), Offset(w * 0.50f, bottomY), stroke, StrokeCap.Round)
-    }
-}
-
-/**
- * 下拉面板（对齐 Flutter `_ModePanel`）：
- * 宽 140、内边距 4、圆角 12、`surface` 底色 + `white @0.06` 边框，选项单列**错峰进场**
- * （每项 +[ModeDropdownItemStaggerMillis]；整体退场由外层 [AnimatedVisibility] 接管，故此处 exit 置空）。
- */
-@Composable
-private fun ModeDropdownPanel(mode: ModeDropdownMode, onSelect: (ModeDropdownMode) -> Unit) {
-    // 进场开关：组合完成后的下一帧置 true → 触发每项自己的错峰进入动画
-    var itemsShown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { itemsShown = true }
-
-    Surface(
-        color = AppColors.surface,
-        shape = RoundedCornerShape(AppRadius.card),
-        modifier = Modifier.width(AppSize.dropdownPanelWidth),
-    ) {
-        Column(
-            modifier = Modifier
-                .border(
-                    width = AppBorder.thin,
-                    color = AppColors.whiteA06,
-                    shape = RoundedCornerShape(AppRadius.card),
-                )
-                .padding(vertical = AppSpacing.sp4, horizontal = AppSpacing.sp4),
-            // Flutter Column(mainAxisSize: MainAxisSize.min)：面板高度随内容收紧
-            ) {
-            for ((index, option) in ModeDropdownMode.entries.withIndex()) {
-                AnimatedVisibility(
-                    visible = itemsShown,
-                    enter = fadeIn(
-                        tween(
-                            durationMillis = AppDuration.sheet,
-                            delayMillis = index * ModeDropdownItemStaggerMillis,
-                            easing = AppEasing.easeInOutQuad,
-                        ),
-                    ) + slideInVertically(
-                        animationSpec = tween(
-                            durationMillis = AppDuration.sheet,
-                            delayMillis = index * ModeDropdownItemStaggerMillis,
-                            easing = AppEasing.easeInOutQuad,
-                        ),
-                    ) { fullHeight -> -fullHeight / 6 },
-                    exit = ExitTransition.None,
-                ) {
-                    ModeDropdownPanelItem(
-                        option = option,
-                        active = option == mode,
-                        onTap = { onSelect(option) },
-                    )
-                }
-            }
-        }
     }
 }
 

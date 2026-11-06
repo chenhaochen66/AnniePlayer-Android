@@ -83,7 +83,8 @@ object LxIdentity {
 object AnnieHandshake {
 
     private const val TAG = "LxPlugin"
-    const val PATH = "/annie-source-handshake"
+    /** 唯一握手路径（以「章鱼音源特供版」为准）：POST /heartbeat */
+    const val PATH = "/heartbeat"
     const val IDENTITY_TAG = "安妮音源"
 
     /** 本次进程的握手密钥（16 字节随机 → 32 位小写 hex） */
@@ -96,7 +97,7 @@ object AnnieHandshake {
     /** 端口只用于插件拼 URL（端点按路径拦截），取随机值避免看起来像固定后门 */
     val port: Int by lazy { 20000 + SecureRandom().nextInt(40000) }
 
-    /** 该 URL 是否为握手端点（只认回环地址 + 精确路径） */
+    /** 该 URL 是否为握手端点（只认回环地址 + `/heartbeat`） */
     fun matches(url: String): Boolean {
         val u = url.trim()
         if (!u.startsWith("http://127.0.0.1:", ignoreCase = true) &&
@@ -106,20 +107,19 @@ object AnnieHandshake {
         return "/" + path.substringBefore('?') == PATH
     }
 
-    /** 校验插件回带的凭据：密钥必须一致；声明了 tag 就必须是安妮音源 */
+    /** 唯一判定：密钥一致；声明了 tag 就必须是安妮音源 */
     fun isValid(bodyJson: String): Boolean {
         val obj = runCatching { Json.parseToJsonElement(bodyJson).jsonObject }.getOrNull() ?: return false
         val key = obj["key"]?.jsonPrimitive?.contentOrNullSafe().orEmpty()
-        val client = obj["client"]?.jsonPrimitive?.contentOrNullSafe().orEmpty()
         val tag = obj["tag"]?.jsonPrimitive?.contentOrNullSafe().orEmpty().trim()
-        val ok = key == secret && client == "annie-source" && (tag.isEmpty() || tag == IDENTITY_TAG)
+        val ok = key == secret && (tag.isEmpty() || tag == IDENTITY_TAG)
         if (!ok) Log.w(TAG, "握手被拒绝：key 不匹配或 tag 非法")
         return ok
     }
 
-    /** 成功应答体（与桌面端一致：`{ok, ts, tag, ver}`） */
+    /** 成功应答体：主字段 `status:"ok"`（插件读它），`ok` 作等价冗余 */
     fun successBody(ver: String): String =
-        """{"ok":true,"ts":${System.currentTimeMillis()},"tag":"$IDENTITY_TAG","ver":"${ver.replace("\"", "")}"}"""
+        """{"status":"ok","ok":true,"ts":${System.currentTimeMillis()},"tag":"$IDENTITY_TAG","ver":"${ver.replace("\"", "")}"}"""
 
     private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? =
         runCatching { content }.getOrNull()

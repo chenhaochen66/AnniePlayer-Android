@@ -185,7 +185,7 @@ private fun SearchSelectionSongRow(song: Song, onRemove: (String) -> Unit) {
             if (coverFailed || song.cover.isEmpty()) {
                 MusicNoteGlyph(
                     modifier = Modifier.size(AppIconSize.icon16),
-                    tint = AppColors.white24,
+                    tint = AppColors.glyphDim,
                 )
             } else {
                 AsyncImage(

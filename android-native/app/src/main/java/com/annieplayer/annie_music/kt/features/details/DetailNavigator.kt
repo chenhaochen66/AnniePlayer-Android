@@ -2,16 +2,16 @@ package com.annieplayer.annie_music.kt.features.details
 
 import androidx.compose.material3.SnackbarHostState
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
-import com.annieplayer.annie_music.kt.core.state.AlbumDetailEntry
+import com.annieplayer.annie_music.kt.core.state.AlbumRoute
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
-import com.annieplayer.annie_music.kt.core.state.SingerDetailEntry
+import com.annieplayer.annie_music.kt.core.state.SingerRoute
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.resolveArtist
-import com.annieplayer.annie_music.kt.data.sources.enrichAppleSong
-import com.annieplayer.annie_music.kt.data.sources.fetchKugouSongAuthors
+import com.annieplayer.annie_music.kt.data.sources.apple.enrichAppleSong
+import com.annieplayer.annie_music.kt.data.sources.kugou.fetchKugouSongAuthors
 import com.annieplayer.annie_music.kt.widgets.SongArtistRef
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -38,6 +38,9 @@ class DetailNavigator(
         val song = uiViewModel.state.value.songActionsSong
             ?: playerViewModel.state.value.currentSong
             ?: return
+        // **先收起播放页**：补 id 可能要等网络（Apple enrich / 酷狗 hash），
+        // 不能让用户一直停在播放页上等。失败时弹 snackbar，人就停在下面那一页。
+        uiViewModel.setPlayerOverlayVisible(false)
         scope.launch {
             var knownId = if (artist.id.isEmpty()) null else artist.id
             // Apple 搜索结果只有 artistName，没有 id；先补单曲详情拿 relationships.artists
@@ -74,9 +77,8 @@ class DetailNavigator(
                 snackbarHostState.showSnackbar("未找到歌手「${artist.name}」")
                 return@launch
             }
-            uiViewModel.setPlayerOverlayVisible(false)
-            uiViewModel.pushDetail(
-                SingerDetailEntry(
+            uiViewModel.pushRoute(
+                SingerRoute(
                     SingerDetailData(
                         id = resolved.id,
                         name = resolved.name,
@@ -90,6 +92,8 @@ class DetailNavigator(
 
     /** ⋮ → 专辑：先收起播放页，再把专辑详情压入真栈。 */
     fun openAlbumDetail(song: Song) {
+        // 与歌手分支一致：点了就收播放页，不等网络
+        uiViewModel.setPlayerOverlayVisible(false)
         if (song.platform == MusicPlatform.apple && song.albumId.isNullOrEmpty()) {
             scope.launch {
                 val enriched = runCatching { enrichAppleSong(song) }.getOrDefault(song)
@@ -105,9 +109,8 @@ class DetailNavigator(
     }
 
     private fun pushAlbumDetail(song: Song) {
-        uiViewModel.setPlayerOverlayVisible(false)
-        uiViewModel.pushDetail(
-            AlbumDetailEntry(
+        uiViewModel.pushRoute(
+            AlbumRoute(
                 AlbumDetailData(
                     id = song.albumId ?: "",
                     cover = song.cover,

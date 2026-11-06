@@ -36,14 +36,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import com.annieplayer.annie_music.kt.data.model.Album
-import com.annieplayer.annie_music.kt.data.model.MusicPlatform
-import com.annieplayer.annie_music.kt.data.sources.buildAlbumCoverUrl
+import com.annieplayer.annie_music.kt.data.sources.kuwo.buildAlbumCoverUrl
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppEasing
@@ -63,7 +61,7 @@ private val AlbumSearchCoverGutter = 6.dp
 /**
  * 专辑搜索结果（1:1 移植 Flutter `lib/widgets/album_search_results.dart`，卡片对齐 RN AlbumCard）。
  *
- * 结构：顶部居中当前平台名（11sp）-> 双列网格专辑卡片（底部留白 120）。
+ * 结构：双列网格专辑卡片（底部留白 = [AppSpacing.searchListBottomInset]）。
  * 加载中显示 [SkeletonLoader]；结果为空时：搜索词为空则什么都不显示，否则居中「未找到结果」。
  *
  * 入场动画严格对齐 Flutter：**400ms + easeOutCubic**，透明度 0->1 且同时向上位移
@@ -81,7 +79,6 @@ private val AlbumSearchCoverGutter = 6.dp
 fun AlbumSearchResults(
     albums: List<Album>,
     query: String,
-    source: MusicPlatform,
     onAlbumPress: (Album) -> Unit,
     modifier: Modifier = Modifier,
     isLoading: Boolean = false,
@@ -117,15 +114,6 @@ fun AlbumSearchResults(
                 translationY = liftPx * (1f - progress.value)
             },
     ) {
-        // 当前平台（专辑搜索为单源，标出来更清楚）
-        Text(
-            text = source.label,
-            modifier = Modifier.fillMaxWidth().padding(top = AppSpacing.sp2, bottom = AppSpacing.sp2),
-            color = AppColors.whiteA20,
-            fontSize = AppFontSize.xs,
-            textAlign = TextAlign.Center,
-        )
-
         BoxWithConstraints(
             modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
         ) {
@@ -144,7 +132,8 @@ fun AlbumSearchResults(
                     start = edge,
                     top = AppSpacing.sp4,
                     end = edge,
-                    bottom = AppSpacing.listBottomInset,
+                    // 与歌曲 / 歌手结果一致：底留白必须让开右下角 ⇄ 按钮（见 searchListBottomInset）
+                    bottom = AppSpacing.searchListBottomInset,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(gap),
                 verticalArrangement = Arrangement.spacedBy(gap),
@@ -236,7 +225,7 @@ private fun AlbumSearchCard(
             )
             Spacer(modifier = Modifier.height(AppSpacing.sp4))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                MusicNoteGlyph(modifier = Modifier.size(10.dp), tint = AppColors.whiteA20)
+                MusicNoteGlyph(modifier = Modifier.size(10.dp), tint = AppColors.glyphDim)
                 Spacer(modifier = Modifier.width(AppSpacing.sp4))
                 Text(
                     text = "${album.musiccnt}首",

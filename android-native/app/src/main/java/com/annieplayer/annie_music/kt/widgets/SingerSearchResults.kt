@@ -39,17 +39,16 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import com.annieplayer.annie_music.kt.data.model.Artist
-import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppEasing
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
+import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 
 
 
@@ -57,7 +56,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 /**
  * 歌手搜索结果（1:1 移植 Flutter `lib/widgets/singer_search_results.dart`）。
  *
- * 结构：顶部居中平台名（11sp）→ 单列歌手行列表（底部留白 170）。
+ * 结构：单列歌手行列表（底部留白 = [AppSpacing.searchListBottomInset]）。
  * 加载中显示 [SkeletonLoader]；结果为空时：搜索词为空则什么都不显示，否则居中「未找到结果」。
  *
  * 入场动画严格对齐 Flutter：**400ms + easeOutCubic**，透明度 0→1 且同时向上位移
@@ -70,7 +69,6 @@ import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 fun SingerSearchResults(
     artists: List<Artist>,
     query: String,
-    source: MusicPlatform,
     onArtistPress: (Artist) -> Unit,
     modifier: Modifier = Modifier,
     isLoading: Boolean = false,
@@ -109,20 +107,17 @@ fun SingerSearchResults(
                 translationY = liftPx * (1f - progress.value)
             },
     ) {
-        // 当前平台（歌手搜索为单源）
-        Text(
-            text = source.label,
-            modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp),
-            color = AppColors.white30,
-            fontSize = AppFontSize.xs,
-            textAlign = TextAlign.Center,
-        )
-
         val listState = rememberLazyListState()
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxWidth().weight(1f).shortScrollbar(listState),
-            contentPadding = PaddingValues(start = 0.dp, top = 4.dp, end = 0.dp, bottom = 170.dp),
+            // 与歌曲 / 专辑结果一致：底留白必须让开右下角 ⇄ 按钮（见 searchListBottomInset）
+            contentPadding = PaddingValues(
+                start = 0.dp,
+                top = 4.dp,
+                end = 0.dp,
+                bottom = AppSpacing.searchListBottomInset,
+            ),
         ) {
             items(items = artists, key = { it.id }) { artist ->
                 ArtistRow(artist = artist, onPress = onArtistPress)

@@ -48,3 +48,45 @@ android-native/wrapper-lite-app/app/build/
 android-native/wrapper-lite-app/.cxx/
 android-native/wrapper-lite-app/app/.cxx/
 android-native/wrapper-lite-app/local.properties
+
+# LunaBeat 反编译参考（纯本地对照用，整个目录不进版本库）
+#   lunabeat_src    jadx 产物，约 2.6 万文件 / 210 MB
+#   lunabeat_smali  apktool 产物，约 3.1 万文件 / 527 MB
+#   lunabeat.apk    反编译的源 APK
+#   so/             从 APK 抽出的 so
+# 全部可由 jadx / apktool 重新生成，不必入库。
+_ref/
+
+# 逆向分析资产（约 744 MB）：`_probe` 的 Apple 逆向脚本 + keys、`wrapper`、`ak1ra`、
+# `metadata_apis`、`wabt*` 等。
+#
+# 以前只有 `.git/info/exclude` 里一条**本地**规则 —— 那个文件本身不入库，换机器后就
+# 没人知道这里曾经有这些目录了（规则可读性和 `_ref/` 不一致）。放这里是为了让规则
+# 跟着仓库走；`.git/info/exclude` 里那份保留，双保险。
+analysis/
+
+# ── ffmpeg 自编：源码与中间产物不进库，**产物要进** ─────────────────────────
+#
+#   native/ffmpeg/src/       ffmpeg 8.1.3 源码树（约 85 MB），由 fetch-source.ps1
+#                            下载 —— 属于**构建输入**，不是产物。
+#   native/ffmpeg/prefix*/   make install 的中间落点，随时可重生成。
+#
+# 反过来，下面这些**必须留在 git 里**（和 libtemari.so 同样的策略）：
+#   app/src/main/jniLibs/arm64-v8a/libav{codec,format,util,filter,swresample,swscale,device}.so
+#   app/src/main/jniLibs/arm64-v8a/libffmpegkit{,_abidetect}.so
+#   native/ffmpeg/patches/   DSDIFF demuxer 等上游没有的补丁源码
+# 有了它们，克隆下来直接 assembleRelease 就能出包，不需要 WSL + Linux NDK + 10 分钟交叉编译。
+android-native/native/ffmpeg/src/
+android-native/native/ffmpeg/prefix*/
+
+# 构建期临时目录（.tmp-audio-test 的格式测试音频只留本机自测用，不进库）
+# 故意**不带尾斜杠**：脚本改代码前的备份目录 `.tmp-backup/<ts>/` 在还没创建时，
+# `git check-ignore` 会按「文件」去匹配，带斜杠的模式匹配不上。
+**/.tmp-*
+
+# 本机工具链（rustup/cargo 等，约 920 MB）。
+# 和 analysis/ 分开：analysis/ 放的是**逆向分析资产**（要留），这里放的是**能重装的环境**。
+# native/temari/build-android.ps1 默认从这里找 cargo/rustup（可用 ANNIE_CARGO_HOME 覆盖）。
+.toolchains/
+
+
