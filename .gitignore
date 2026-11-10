@@ -34,20 +34,15 @@ android-native/local.properties
 android-native/.cxx/
 android-native/app/.cxx/
 
-# wrapper-lite-app（QEMU 包装器）构建产物与本地配置
-# 注意：只忽略「能重新生成」的东西。下面这些是**必须留在 git 里**的依赖，别加进来：
-#   app/src/main/assets/guest/      initramfs.dat / vmlinuz / data.empty.dat（运行时必需的 guest 资产）
-#   app/src/main/assets/lib/        QEMU 的 84 个 aarch64 依赖库
-#   app/src/main/assets/qemu-fw/    QEMU firmware / keymaps
-#   app/src/main/jniLibs/           libqemu_x86_64.so（QEMU 可执行文件）
-#   assets-src/data.empty.img       生成 data.empty.dat 的空白 ext4 源镜像
-android-native/wrapper-lite-app/.gradle/
-android-native/wrapper-lite-app/.kotlin/
-android-native/wrapper-lite-app/build/
-android-native/wrapper-lite-app/app/build/
-android-native/wrapper-lite-app/.cxx/
-android-native/wrapper-lite-app/app/.cxx/
-android-native/wrapper-lite-app/local.properties
+# wrapper-lite-app（QEMU 包装器）整个目录不进本仓库
+# 它有自己的仓库：android-native/wrapper-lite-app/.git，独立提交、独立 remote。
+# 本目录只当本地工作副本用，不能再被外层 git 跟踪（嵌套 .git 会让外层看到
+# 一个 embedded repository，只留一个 160000 的空条目，等于什么都没记录）。
+#
+# 那些必须入库的资产（guest 资产 / 84 个 aarch64 依赖库 / qemu-fw /
+# libqemu_x86_64.so / assets-src/data.empty.img）现在由内层仓库自己管，
+# 内层的 .gitignore 只忽略 build 产物。
+android-native/wrapper-lite-app/
 
 # LunaBeat 反编译参考（纯本地对照用，整个目录不进版本库）
 #   lunabeat_src    jadx 产物，约 2.6 万文件 / 210 MB
@@ -71,11 +66,15 @@ analysis/
 #                            下载 —— 属于**构建输入**，不是产物。
 #   native/ffmpeg/prefix*/   make install 的中间落点，随时可重生成。
 #
-# 反过来，下面这些**必须留在 git 里**（和 libtemari.so 同样的策略）：
-#   app/src/main/jniLibs/arm64-v8a/libav{codec,format,util,filter,swresample,swscale,device}.so
+# 反过来，这些**必须留在 git 里**（和 libtemari.so 同样的策略）：
 #   app/src/main/jniLibs/arm64-v8a/libffmpegkit{,_abidetect}.so
+#   app/src/main/jniLibs/arm64-v8a/libc++_shared.so
+#      上游 ffmpeg-kit 的 JNI 层，我们的脚本重建不出来；libc++ 还必须与它同一次工具链
+#      （`build.gradle.kts` 的 `pickFirsts` 就是为此）。
 #   native/ffmpeg/patches/   DSDIFF demuxer 等上游没有的补丁源码
-# 有了它们，克隆下来直接 assembleRelease 就能出包，不需要 WSL + Linux NDK + 10 分钟交叉编译。
+#
+# `libav*/libsw*.so` 是**我们自己的编译产物**，不入库：克隆后跑一次
+# `native/ffmpeg/build-android.ps1`（WSL + Linux NDK，约 10 分钟）生成。
 android-native/native/ffmpeg/src/
 android-native/native/ffmpeg/prefix*/
 
@@ -88,5 +87,13 @@ android-native/native/ffmpeg/prefix*/
 # 和 analysis/ 分开：analysis/ 放的是**逆向分析资产**（要留），这里放的是**能重装的环境**。
 # native/temari/build-android.ps1 默认从这里找 cargo/rustup（可用 ANNIE_CARGO_HOME 覆盖）。
 .toolchains/
+
+# 设备探测抓下来的 dump（176 文件 / 46.5 MB）：
+#   apklibs/          从设备 dd 的 framework .so（libaudioclient / libaudiofoundation …），
+#                     逆向 AOSP 音频栈用，随时可重拉，且是 AOSP 版权代码
+#   jniLibs-backup/   本工程自己 so 的备份，源头就是 jniLibs/
+#   *.txt|*.html      各平台 URL / 音质 / 电台接口的响应样本，证据而非源码
+# 真正有测试价值的两个已转正为夹具（app/src/test/resources/fixtures/kuwo_*.xml）。
+android-native/.probe-backup/
 
 
