@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ffmpeg 裁剪版 → Android arm64 交叉编译（Linux / WSL 用这个；Windows 用 build-android.ps1）
+# ffmpeg 裁剪版 → Android arm64 交叉编译（Linux / WSL；这是唯一能产出完整产物的脚本）
 #
 # 用法：
 #   bash native/ffmpeg/build-android.sh            # 增量
@@ -10,9 +10,12 @@
 #   · 宿主 gcc / make（Ubuntu: apt install build-essential）
 #   · ffmpeg 源码：src/ffmpeg（fetch-source.ps1 或手工放一份 8.1.3）
 #
-# 产物：app/src/main/jniLibs/arm64-v8a/lib{avcodec,avformat,avutil,swresample}.so
+# 产物：app/src/main/jniLibs/arm64-v8a/lib{avcodec,avformat,avutil,swresample,avfilter,swscale,avdevice}.so
 #
-# 为什么自己编 / 裁掉什么，见 configure.sh 与 build-android.ps1 的文件头。
+# 为什么自己编 / 裁掉什么，见 configure.sh 的文件头。上游音频包单 ABI 的纯 ffmpeg 体积
+# 是 20.35 MB（libavcodec 11.09 + avfilter 2.78 + swscale 0.52 + avdevice 0.05）——
+# libavcodec 那份编进了完整视频解码器（h264/hevc/vp8/vp9/av1/mpeg4/theora），裁剪后
+# 总产物 ~5 MB。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

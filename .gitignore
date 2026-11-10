@@ -74,7 +74,7 @@ analysis/
 #   native/ffmpeg/patches/   DSDIFF demuxer 等上游没有的补丁源码
 #
 # `libav*/libsw*.so` 是**我们自己的编译产物**，不入库：克隆后跑一次
-# `native/ffmpeg/build-android.ps1`（WSL + Linux NDK，约 10 分钟）生成。
+# `native/ffmpeg/build-android.sh`（WSL + Linux NDK，约 10 分钟）生成。
 android-native/native/ffmpeg/src/
 android-native/native/ffmpeg/prefix*/
 

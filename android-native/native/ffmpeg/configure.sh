@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ffmpeg 裁剪版 configure（由 build-android.sh / build-android.ps1 调用，不要手工跑）
+# ffmpeg 裁剪版 configure（由 build-android.sh 调用，不要手工跑）
 #
 # ## 目标：**只替换 libav\*.so，保留 ffmpeg-kit 的 Java 层**
 #
