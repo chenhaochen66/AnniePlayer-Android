@@ -12,6 +12,13 @@ import kotlin.random.Random
 var kkboxSidProvider: () -> String? = { null }
 
 /**
+ * KKBOX 的 ds / ticket 接口**全部要求登录态**：不带 sid 时搜索返回空列表、歌单 500。
+ * 所以宁可抛一条明确的原因，也不要让上层静默拿到空结果（那会被当成「搜不到这首歌」）。
+ */
+internal fun kkboxRequireSid(): String =
+    kkboxSidProvider() ?: throw IllegalStateException("KKBOX 需要先在设置里登录账号")
+
+/**
  * 当前 KKBOX 完整会话（sid + 设备号 kkid + 内容密钥 licContentKey）。
  *
  * 播放 / 下载要用**官方票据接口**，而票据接口同时需要 sid 与 kkid，下载还要 licContentKey

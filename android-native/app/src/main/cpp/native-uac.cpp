@@ -57,6 +57,23 @@ constexpr int kFbPackets = 8;
 * 恢复时要重新起 URB，设备侧常常咔哒一下。超过这个时长（暂停放着、熄屏）就没必要 
 * 继续付每秒上千次唤醒的代价了。 */
 constexpr int kPauseDeepAfterMs = 2000;
+
+/**
+ * 事件码（`UacStream::pushEvent` 的 `code`），参数含义见注释。
+ *
+ * 存在的理由：这台 ROM 丢 App 日志（连 `__android_log_print` 也丢），所以 native 侧的
+ * "刚才发生了什么"只能自己存、由上层主动取。**只记状态跃迁与故障**，不记周期性数据 ——
+ * 环只有 96 格，写满就覆盖最旧的。
+ */
+enum : int32_t {
+    kEvStreamStart = 1,   /** a = 采样率, b = 声道数 */
+    kEvTransferFail = 2,  /** a = libusb status, b = 接口号 */
+    kEvUnderrun = 3,      /** a = 本次欠载帧数, b = 累计欠载次数 */
+    kEvReopenSeamless = 4,/** a = 新采样率, b = setRate 回读状态（1 已确认 / 0 未回读） */
+    kEvReopenRebuild = 5, /** a = 新采样率, b = 0 */
+    kEvRateRejected = 6,  /** a = 新采样率, b = 控制传输返回码 */
+    kEvDead = 7,          /** a = 触发来源（1 transfer / 2 写路径）, b = 0 */
+};
 constexpr uint8_t kClassAudio = 0x01;
 constexpr uint8_t kSubclassAudioControl = 0x01;
 constexpr uint8_t kSubclassAudioStreaming = 0x02;
@@ -776,8 +793,34 @@ libusb_transfer* fbTransfer = nullptr;
 *     
 * 用定点而不是 `atomic<float>`：float 的原子性与平台实现有关，     
 * 而这里每个采样都要读一次，定点读是一个普通的 32 位原子读。     */
-    std::atomic< int32_t > gainQ16{ annie::kGainUnity };    /** TPDF 抖动的随机状态；只在事件线程（`fill()`）里读写 */
+    std::atomic< int32_t > gainQ16{ annie::kGainUnity };
+    /** TPDF 抖动的随机状态；只在事件线程（`fill()`）里读写 */
     uint32_t ditherRng = 0x9E3779B9u;
+
+    // ── 事件环 + 快照：让 native 能"说出发生了什么" ──
+    //
+    // 为什么必须自带：这台 ROM 按进程配额丢 App 日志，`__android_log_print` 一条都留不下，
+    // logcat 也没有。于是"没声"这类问题在 native 侧完全不可见 —— 只能靠上层猜，
+    // 或者靠抓包反推。环是单写者（事件线程 / fill()）、无锁：写者只做一次 release 自增，
+    // 读者（JNI）取走即清空。
+    static const int kEventCodes = 8;
+    static const int kEventCapacity = 96;
+    std::atomic< uint32_t > eventHead{ 0 };
+    int32_t eventData[ kEventCapacity ][ 3 ]{};
+
+    /**
+     * 记一条事件。code 见 `kEv*` 常量，两个参数按 code 解释。
+     * **可以在音频/事件线程调用**（不阻塞、不分配）。
+     */
+    void pushEvent( int code, int a = 0, int b = 0 )
+    {
+        const uint32_t idx = eventHead.fetch_add( 1, std::memory_order_acq_rel );
+        int32_t* slot = eventData[ idx % kEventCapacity ];
+        slot[ 0 ] = code;
+        slot[ 1 ] = a;
+        slot[ 2 ] = b;
+    }
+
     /** attach 时 claim 的全部 AS 接口（PCM 与 raw DSD 可能不在同一个接口号上） */
     std::vector< int > claimedIfaces;
     bool acClaimed = false;
@@ -887,6 +930,7 @@ flushTarget.store( ring.writtenBytes(), std::memory_order_relaxed );
 // 垫 10 ms 静音把它盖住；静音不计 `framesRead`，时间轴不受影响。
 padFramesLeft.store(                    static_cast< uint32_t >( std::max( sampleRate / 100, 64 )),                    std::memory_order_release );
                 detail += state == 1 ? "⟳ 只换时钟（alt 未动）✔\n"                                     : "⟳ 只换时钟（alt 未动）⚠ 率未回读\n";
+                pushEvent( kEvReopenSeamless, rate, state );
                 return( true );
             
 }
@@ -911,6 +955,7 @@ padFramesLeft.store(                    static_cast< uint32_t >( std::max( sampl
         rawDsd = wantRaw;        
 // 位宽同理：换曲可能换位深，沿用上一条的 alt 会把 24 bit 截成 16 bit
         wireBits = wantWire;
+        pushEvent( kEvReopenRebuild, rate, 0 );
         return( startStream( why ));
     
 }
@@ -1207,7 +1252,8 @@ ring.init( ringCapacityBytes( pipeFrames ), outFrameBytes );
 // 新流：环是空的，第一批 URB 天然是静音，不需要额外垫子
 padFramesLeft.store( 0, std::memory_order_release );
         stop.store( false, std::memory_order_release );
-        dead.store( false, std::memory_order_release );        
+        dead.store( false, std::memory_order_release );
+        pushEvent( kEvStreamStart, sampleRate, channels );        
 // 新流一律回到"播放"态。
 //        
 // 曾经刻意不清，让 `reopen()` 的拆流重建继承上一条流的暂停状态（为了"暂停中换率
@@ -1859,7 +1905,14 @@ const size_t perChannel = static_cast< size_t >( channels ) > 0            ? fra
 {
                     float v;
                     std::memcpy( &v, s, 4 );
-                    v = std::max( -1.0f, std::min( 1.0f, v ));
+                    // **NaN / Inf 必须在这里挡掉。**
+                    //
+                    // `std::min(1.0f, NaN)` 按 `b < a ? b : a` 求值，NaN 比较恒 false，
+                    // 于是返回的是 **1.0f** —— 也就是说 NaN 会被钳成正满幅，而不是被丢弃。
+                    // 送进 DAC 就是一段直流：听感"没声"，还可能带直流偏置。
+                    // r8brain / PEQ 的 IIR 一旦吃到 NaN 会永久输出 NaN，所以闸必须在这里也有一道。
+                    if( !std::isfinite( v )) v = 0.0f;                    
+v = std::max( -1.0f, std::min( 1.0f, v ));
                     q = static_cast< int32_t >( std::lrintf( v * 2147483520.0f ));
                 
 }                else                
@@ -1942,6 +1995,7 @@ if( transfer->status == LIBUSB_TRANSFER_CANCELLED &&                self->stop.l
 }
             self->error = -8;
             self->dead.store( true, std::memory_order_release );
+            self->pushEvent( kEvDead, 1, static_cast< int >( transfer->status ));
             return;
         
 }
@@ -2079,7 +2133,9 @@ const int64_t fb = feedbackQ16.load( std::memory_order_relaxed );
                 if( got < want )                
 {
                     silenceFill( dst + ( pad + got ) * outFrameBytes,                                 ( want - got ) * outFrameBytes );
-                    underruns.fetch_add( 1, std::memory_order_relaxed );
+                    const int64_t totalUnder = underruns.fetch_add( 1, std::memory_order_relaxed ) + 1;
+                    // 欠载是"我们有活但供不上"的唯一硬证据；累计值一走一停就是断续
+                    pushEvent( kEvUnderrun, static_cast< int >( want - got ), static_cast< int >( totalUnder ));
                 
 }
                 if( got > 0 )                
@@ -2795,4 +2851,69 @@ Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeUacStream_nativeOutFra
 {
     UacStream* s = asStream( handle );
     return( s == nullptr ? 0 : static_cast< jint >( s->outFrameBytes ));
+}
+/**
+ * 这一条流的**状态快照**（定长 13 个 int），顺序与 Kotlin 侧 `UacSnapshot` 一一对应：
+ *
+ * ```
+ * 0 dead        1 paused      2 stop         3 sampleRate   4 channels
+ * 5 outFrameBytes 6 subslot   7 alt          8 framesRead   9 framesWritten
+ * 10 underruns  11 gainQ16    12 lastError
+ * ```
+ *
+ * `framesRead` / `framesWritten` / `underruns` 是 int64 截成 int32 —— 只用来算**增量**
+ * （"这一秒有没有在消费"），差值换了圈也不影响判断。
+ */
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeUacStream_nativeSnapshot(        JNIEnv* env, jclass /* 静态方法 */, jlong handle )
+{
+    UacStream* s = asStream( handle );
+    if( s == nullptr ) return( nullptr );
+    jint v[ 13 ];
+    v[ 0 ] = s->dead.load( std::memory_order_acquire ) ? 1 : 0;
+    v[ 1 ] = s->paused.load( std::memory_order_acquire ) ? 1 : 0;
+    v[ 2 ] = s->stop.load( std::memory_order_acquire ) ? 1 : 0;
+    v[ 3 ] = s->sampleRate;
+    v[ 4 ] = s->channels;
+    v[ 5 ] = static_cast< jint >( s->outFrameBytes );
+    v[ 6 ] = s->profile.subslot;
+    v[ 7 ] = s->profile.alt;
+    v[ 8 ] = static_cast< jint >( s->framesRead.load( std::memory_order_relaxed ));
+    v[ 9 ] = static_cast< jint >( s->framesWritten.load( std::memory_order_relaxed ));
+    v[ 10 ] = static_cast< jint >( s->underruns.load( std::memory_order_relaxed ));
+    v[ 11 ] = s->gainQ16.load( std::memory_order_relaxed );
+    v[ 12 ] = s->error;
+    jintArray out = env->NewIntArray( 13 );
+    if( out != nullptr ) env->SetIntArrayRegion( out, 0, 13, v );
+    return( out );
+}
+/**
+ * 取走事件环（每 3 个 int 一条：`code, a, b`），**取走即清空**。
+ *
+ * 只保留最近 `kEventCapacity` 条；写满时最旧的被覆盖，所以这里最多返回那么多。
+ */
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeUacStream_nativeDrainEvents(        JNIEnv* env, jclass /* 静态方法 */, jlong handle )
+{
+    UacStream* s = asStream( handle );
+    if( s == nullptr ) return( nullptr );
+    const uint32_t head = s->eventHead.load( std::memory_order_acquire );
+    const uint32_t available = std::min< uint32_t >( head, static_cast< uint32_t >( UacStream::kEventCapacity ));
+    std::vector< jint > flat;
+    flat.reserve( static_cast< size_t >( available ) * 3 );
+    for( uint32_t i = head - available; i < head; i++ )
+    {
+        const int32_t* slot = s->eventData[ i % static_cast< uint32_t >( UacStream::kEventCapacity ) ];
+        flat.push_back( slot[ 0 ] );
+        flat.push_back( slot[ 1 ] );
+        flat.push_back( slot[ 2 ] );
+    }
+    s->eventHead.store( 0, std::memory_order_release );
+    jintArray out = env->NewIntArray( static_cast< jsize >( flat.size()));
+    if( out != nullptr && !flat.empty())    
+{
+        env->SetIntArrayRegion( out, 0, static_cast< jsize >( flat.size()), flat.data());
+    
+}
+    return( out );
 }

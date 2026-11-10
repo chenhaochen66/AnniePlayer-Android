@@ -186,11 +186,13 @@ L3 **不是**独立页面，不许为它 `pushRoute`；它压在 L1 的某一页
 
 ### 7.4 新增浮层（L2）必须做三件事
 
-`OverlayVisibilityFlags` 现在与 `BACK_RULES` 一一对应、**覆盖全部 18 种可见浮层**。
+`OverlayVisibilityFlags` 现在与 `BACK_RULES` 一一对应、**覆盖全部 20 种可见浮层**
+（含两个不在 `UiState` 里的搜索页状态：`searchSelectionOverlay` / `searchSelection`）。
 新增浮层时三件都要做，缺一件就会退化成「靠注册顺序兜住」：
 
 1. **加可见性状态**：优先加在 `UiState`；状态不在 `UiState` 里的（如 `TranslatePicker.visible`、
-   `SearchScreenState.sourcePickerVisible`）就在 `toOverlayFlags` 加一个入参，由宿主传。
+   `SearchScreenState.sourcePickerVisible`、`SearchSelectionViewModel.state`）就在
+   `toOverlayFlags` 加一个入参，由宿主传。
 2. **登记进模型**：`OverlayVisibilityFlags` 加字段 + `BACK_RULES` 加规则。
    **位置一律排在 `PAGE` 之上** —— 浮层出现时详情页不许再吃返回，
    否则页面会在面板背后把自己的子标签 / 多选状态悄悄改掉（表现为「返回键没反应」）。

@@ -225,15 +225,21 @@ private fun AlbumSearchCard(
             )
             Spacer(modifier = Modifier.height(AppSpacing.sp4))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                MusicNoteGlyph(modifier = Modifier.size(10.dp), tint = AppColors.glyphDim)
-                Spacer(modifier = Modifier.width(AppSpacing.sp4))
-                Text(
-                    text = "${album.musiccnt}首",
-                    color = AppColors.white30,
-                    fontSize = AppFontSize.size10,
-                )
-                if (album.pub.isNotEmpty()) {
+                // 曲目数：只有平台真的给了才画。KKBOX 的专辑列表接口
+                // （`search_music.php?sf=album`、`v2/artist/{id}/album`）都没有曲目数字段，
+                // 要拿只能逐张打 `v1/album` —— 66 张就是 33 秒，不做。没有数字就不显示，
+                // 别把「0首」摆到卡片上。
+                if (album.musiccnt.toIntOrNull()?.let { it > 0 } == true) {
+                    MusicNoteGlyph(modifier = Modifier.size(10.dp), tint = AppColors.glyphDim)
+                    Spacer(modifier = Modifier.width(AppSpacing.sp4))
+                    Text(
+                        text = "${album.musiccnt}首",
+                        color = AppColors.white30,
+                        fontSize = AppFontSize.size10,
+                    )
                     Spacer(modifier = Modifier.width(AppSpacing.sp8))
+                }
+                if (album.pub.isNotEmpty()) {
                     Text(
                         text = album.pub,
                         modifier = Modifier.weight(1f),

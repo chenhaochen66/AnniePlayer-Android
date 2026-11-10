@@ -76,6 +76,7 @@ import com.annieplayer.annie_music.kt.features.library.LocalArtistSongsScreen
 import com.annieplayer.annie_music.kt.features.library.LocalFolderDetailScreen
 import com.annieplayer.annie_music.kt.features.library.LocalFolderListScreen
 import com.annieplayer.annie_music.kt.features.library.LocalLibraryDetailHost
+import com.annieplayer.annie_music.kt.features.favorites.FavoritesScreen
 import com.annieplayer.annie_music.kt.features.library.LocalLibraryScreen
 import com.annieplayer.annie_music.kt.features.library.LocalLibraryViewModel
 import com.annieplayer.annie_music.kt.features.library.LocalOverlayFrame
@@ -178,7 +179,7 @@ import com.annieplayer.annie_music.kt.widgets.SearchSelectionOverlay
 import com.annieplayer.annie_music.kt.widgets.SingerDetailSheet
 import com.annieplayer.annie_music.kt.widgets.SongActionsSheet
 import com.annieplayer.annie_music.kt.widgets.SourcePickerSheet
-import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
+import com.annieplayer.annie_music.kt.widgets.blockTouches
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -254,6 +255,8 @@ fun AppShell(
     // 本地曲库：详情栈条目渲染时要读它的扫描结果（曲目列表）
     localLibraryViewModel: com.annieplayer.annie_music.kt.features.library.LocalLibraryViewModel =
         activityViewModel(),
+    // 收藏：「加入到歌单」的候选列表与写入都要它
+    favoriteViewModel: com.annieplayer.annie_music.kt.core.state.FavoriteViewModel = activityViewModel(),
 ) {
     // ── 状态（对齐 Dart Riverpod providers + `_HomeScreenState` 字段） ──
     val uiState by uiViewModel.state.collectAsState()
@@ -261,6 +264,7 @@ fun AppShell(
     val localLibraryState by localLibraryViewModel.state.collectAsState()
     val downloadTasks by downloadViewModel.state.collectAsState()
     val selection by selectionViewModel.state.collectAsState()
+    val favoriteSnapshot by favoriteViewModel.snapshot.collectAsState()
 val writeQobuzDownloadTranslation by MoreSettings.writeQobuzDownloadTranslation.collectAsState()
 val writeEnhancedLyrics by MoreSettings.writeEnhancedLyrics.collectAsState()
 val saveLrcFile by MoreSettings.saveLrcFile.collectAsState()
@@ -677,6 +681,8 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
             val overlayFlags = uiState.toOverlayFlags(
                 translatePicker = translatePickerVisible,
                 sourcePicker = st.sourcePickerVisible,
+                searchSelectionOverlay = selection.overlayVisible,
+                searchSelection = selection.selectedSongs.isNotEmpty(),
             )
 
             // 根返回：**声明在最前面 → 优先级最低**，所有浮层 / 播放页 / tab 切换都先吃返回事件，
@@ -713,6 +719,17 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 }
             }
 
+            // 搜索页「待下载」面板：返回先收面板（它的关闭按钮是唯一可见出口，别逼用户去找）。
+            BackHandler(enabled = handleBack(overlayFlags) == BackTarget.SEARCH_SELECTION_OVERLAY) {
+                selectionViewModel.setOverlayVisible(false)
+            }
+
+            // 搜索页多选态：返回先退多选（清空勾选），而不是把搜索态 / 整个 App 收掉。
+            // 与详情页的多选同一条规则：**多选是一种形态，返回第一下永远只退这一层**。
+            BackHandler(enabled = handleBack(overlayFlags) == BackTarget.SEARCH_SELECTION) {
+                selectionViewModel.clearAll()
+            }
+
             // ── 基础内容列（Overlay.COLUMN）：按 tab 切换 ──
             //
             // 外面套 SaveableStateHolder：`when` 会把切走的页面移出组合树，
@@ -735,10 +752,9 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                         currentSong = currentSong,
                     )
 
-                    AppTab.PlaylistParse -> PlaylistParseScreen(
+                    AppTab.Favorites -> FavoritesScreen(
                         // 顶栏左侧菜单按钮：与主页 / 曲库页同一个动作（打开菜单抽屉）
                         onOpenMenu = { uiViewModel.setDrawerVisible(true) },
-                        onSubmit = { playlistParseSt.handleSubmit(it) },
                         modifier = Modifier.fillMaxSize(),
                     )
 
@@ -773,6 +789,13 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                     val pageCanConsumeBack = handleBack(overlayFlags) == BackTarget.PAGE
                     uiState.pageStack.forEachIndexed { index, entry ->
                         key(entry.key) {
+                            // L1 每层的指针拦截只在这里做一次，各页面壳子不再各写一份：
+                            // scrim / 背景只画、不参与命中测试，页面里没有控件的空白处会把触摸漏给
+                            // 下层 —— 实测症状是「歌单详情页里还能按到一级栈的菜单按钮」，以及
+                            // 栈深 ≥2 时点透到下一层页面的列表。
+                            // 本节点在同一个 key 组内先声明 → 视觉上更靠下：页面里的真控件仍先命中，
+                            // 只有没人消费的触摸才落到这里被吃掉。
+                            Box(modifier = Modifier.fillMaxSize().blockTouches())
                             val isTop = index == lastIndex
                             val localTop = isTop && pageCanConsumeBack
                             // 三个流媒体详情页**也传 localTop**（与下面「全部」页 / 本地页面一致）。
@@ -794,7 +817,48 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                                     uiViewModel = uiViewModel,
                                     playerViewModel = playerViewModel,
                                     downloadViewModel = downloadViewModel,
+                                    // overview 的两个「全部 ›」压栈（不再切页内 tab）：
+                                    // 子页是独立一层，返回逐层退回，与本地曲库那套对称。
+                                    onOpenSongs = {
+                                        uiViewModel.pushRoute(
+                                            com.annieplayer.annie_music.kt.core.state
+                                                .SingerSongsRoute(entry.data),
+                                        )
+                                    },
+                                    onOpenAlbums = { section ->
+                                        uiViewModel.pushRoute(
+                                            com.annieplayer.annie_music.kt.core.state
+                                                .SingerAlbumsRoute(entry.data, section),
+                                        )
+                                    },
                                 )
+
+                                // 歌手的「全部单曲 / 全部专辑」：与 overview 同一个组件、同一份缓存，
+                                // 只是 `page` 固定成对应那一页。
+                                is com.annieplayer.annie_music.kt.core.state.SingerSongsRoute ->
+                                    SingerDetailSheet(
+                                        data = entry.data,
+                                        isTop = localTop,
+                                        onClose = { uiViewModel.popRoute() },
+                                        uiViewModel = uiViewModel,
+                                        playerViewModel = playerViewModel,
+                                        downloadViewModel = downloadViewModel,
+                                        page = com.annieplayer.annie_music.kt.widgets
+                                            .SingerDetailPage.songs,
+                                    )
+
+                                is com.annieplayer.annie_music.kt.core.state.SingerAlbumsRoute ->
+                                    SingerDetailSheet(
+                                        data = entry.data,
+                                        isTop = localTop,
+                                        onClose = { uiViewModel.popRoute() },
+                                        uiViewModel = uiViewModel,
+                                        playerViewModel = playerViewModel,
+                                        downloadViewModel = downloadViewModel,
+                                        page = com.annieplayer.annie_music.kt.widgets
+                                            .SingerDetailPage.albums,
+                                        albumSection = entry.section,
+                                    )
                                 is PlaylistRoute -> PlaylistDetailSheet(
                                     data = entry.data,
                                     isTop = localTop,
@@ -828,6 +892,34 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                                     onPlay = { song, queue -> with(st) { handlePlaySong(song, queue) } },
                                     onMore = { song -> dl.openActions(song) },
                                 )
+
+                                // ── 收藏库的子页面：同样并进这条 pageStack ──
+                                is com.annieplayer.annie_music.kt.core.state.FavoriteSectionRoute ->
+                                    LocalLibraryDetailHost(
+                                        isTop = localTop,
+                                        onClose = { uiViewModel.popRoute() },
+                                    ) { requestClose ->
+                                        com.annieplayer.annie_music.kt.features.favorites.FavoriteSectionScreen(
+                                            section = entry.section,
+                                            isTop = localTop,
+                                            onClose = requestClose,
+                                        )
+                                    }
+
+                                // 收藏库的自建播放列表详情：收 id、页面自己从 snapshot 现取
+                                is com.annieplayer.annie_music.kt.core.state.UserPlaylistRoute ->
+                                    LocalLibraryDetailHost(
+                                        isTop = localTop,
+                                        onClose = { uiViewModel.popRoute() },
+                                    ) { requestClose ->
+                                        com.annieplayer.annie_music.kt.features.favorites.UserPlaylistScreen(
+                                            playlistId = entry.playlistId,
+                                            isTop = localTop,
+                                            onClose = requestClose,
+                                        )
+                                    }
+
+                                // 新建自建播放列表已经改成弹窗（`NewPlaylistDialog`），不再占栈位
 
                                 // ── 本地曲库的子页面：与流媒体共用同一条 pageStack ──
                                 // 套 LocalOverlayFrame 拿到和详情浮层一样的「遮罩 + 150ms 滑入/滑出」；
@@ -979,39 +1071,29 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                                 is QobuzRoute -> LocalOverlayFrame(
                                     onClose = { uiViewModel.popRoute() },
                                 ) { requestClose ->
-                                    // 内层 Box 消费触摸：页面本身只做视觉覆盖，空区域点击不能穿透到下层。
-                                    // `LocalOverlayFrame` 的 scrim 只是背景，不带指针消费，所以这层必须留着。
-                                    Box(
-                                        modifier = Modifier.fillMaxSize().clickableNoRipple { },
-                                    ) {
-                                        QobuzDetailScreen(
-                                            qobuzViewModel = qobuzViewModel,
-                                            playerViewModel = playerViewModel,
-                                            downloadViewModel = downloadViewModel,
-                                            onBack = requestClose,
-                                            isTop = localTop,
-                                            type = entry.type,
-                                            id = entry.id,
-                                        )
-                                    }
+                                    QobuzDetailScreen(
+                                        qobuzViewModel = qobuzViewModel,
+                                        playerViewModel = playerViewModel,
+                                        downloadViewModel = downloadViewModel,
+                                        onBack = requestClose,
+                                        isTop = localTop,
+                                        type = entry.type,
+                                        id = entry.id,
+                                    )
                                 }
 
                                 is KkboxRoute -> LocalOverlayFrame(
                                     onClose = { uiViewModel.popRoute() },
                                 ) { requestClose ->
-                                    Box(
-                                        modifier = Modifier.fillMaxSize().clickableNoRipple { },
-                                    ) {
-                                        KkboxDetailScreen(
-                                            kkboxViewModel = kkboxViewModel,
-                                            playerViewModel = playerViewModel,
-                                            downloadViewModel = downloadViewModel,
-                                            onBack = requestClose,
-                                            isTop = localTop,
-                                            type = entry.type,
-                                            id = entry.id,
-                                        )
-                                    }
+                                    KkboxDetailScreen(
+                                        kkboxViewModel = kkboxViewModel,
+                                        playerViewModel = playerViewModel,
+                                        downloadViewModel = downloadViewModel,
+                                        onBack = requestClose,
+                                        isTop = localTop,
+                                        type = entry.type,
+                                        id = entry.id,
+                                    )
                                 }
                             }
                         }
@@ -1403,6 +1485,78 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                 visible = uiState.songActionsVisible,
                 song = uiState.songActionsSong ?: currentSong,
                 onClose = { uiViewModel.setSongActionsVisible(false) },
+                // 「加入到歌单」的候选：**按歌的平台分边** —— 在线歌只列 online 歌单，
+                // 本地歌只列 local 歌单（混边在数据层就不允许），并预计算「这首歌在不在里面」。
+                // 一次 HashSet，不在每行里现算 key（20 个歌单 × 上千首时那是几万次字符串拼接）。
+                playlistOptions = remember(favoriteSnapshot, uiState.songActionsSong) {
+                    val target = uiState.songActionsSong ?: currentSong
+                    if (target == null) {
+                        emptyList()
+                    } else {
+                        val isLocal =
+                            target.platform == com.annieplayer.annie_music.kt.data.model.MusicPlatform.local
+                        val wantedScope = if (isLocal) {
+                            com.annieplayer.annie_music.kt.data.favorites.PlaylistScope.local
+                        } else {
+                            com.annieplayer.annie_music.kt.data.favorites.PlaylistScope.online
+                        }
+                        val songKey =
+                            com.annieplayer.annie_music.kt.data.favorites.FavoriteKeys.song(target)
+                        favoriteSnapshot.userPlaylists
+                            .filter { it.scope == wantedScope }
+                            .map { pl ->
+                                com.annieplayer.annie_music.kt.widgets.SongPlaylistOption(
+                                    playlistId = pl.id,
+                                    name = pl.name,
+                                    trackCount = pl.songs.size,
+                                    alreadyContains = pl.songs.any {
+                                        com.annieplayer.annie_music.kt.data.favorites
+                                            .FavoriteKeys.song(it) == songKey
+                                    },
+                                )
+                            }
+                    }
+                },
+                // 加入后面板**不关**：上面那份 options 会随 snapshot 重组，该行变成「已加入」
+                onAddToPlaylist = { playlistId ->
+                    (uiState.songActionsSong ?: currentSong)?.let { song ->
+                        favoriteViewModel.addSongToUserPlaylist(playlistId, song)
+                    }
+                },
+                // 「我喜欢」与歌单共用同一个二级面板：这里给的是「是否已收藏 + 那一边共几首」。
+                // 按 `Song.platform` 分边，与 `playlistOptions` 同一条判据（本地歌进本地喜欢）。
+                favoriteSelected = remember(favoriteSnapshot, uiState.songActionsSong) {
+                    val target = uiState.songActionsSong ?: currentSong
+                    target != null && favoriteSnapshot.songs.any {
+                        it.key == com.annieplayer.annie_music.kt.data.favorites
+                            .FavoriteKeys.song(target)
+                    }
+                },
+                favoriteCount = remember(favoriteSnapshot, uiState.songActionsSong) {
+                    val target = uiState.songActionsSong ?: currentSong
+                    val isLocal =
+                        target?.platform == com.annieplayer.annie_music.kt.data.model.MusicPlatform.local
+                    favoriteSnapshot.songsIn(
+                        if (isLocal) {
+                            com.annieplayer.annie_music.kt.data.favorites.FavoriteMode.local
+                        } else {
+                            com.annieplayer.annie_music.kt.data.favorites.FavoriteMode.online
+                        },
+                    ).size
+                },
+                // 这是一个开关：未收藏 → 收藏，已收藏（行显示「已收藏」）再点 → 取消收藏
+                onAddToFavorites = {
+                    (uiState.songActionsSong ?: currentSong)?.let { favoriteViewModel.toggleSong(it) }
+                },
+                // 「从本歌单移除」只在从自建歌单详情页打开面板时才有
+                onRemoveFromPlaylist = uiState.songActionsFromUserPlaylistId?.let { playlistId ->
+                    {
+                        val song = uiState.songActionsSong ?: currentSong
+                        if (song != null) {
+                            favoriteViewModel.removeSongFromUserPlaylist(playlistId, song)
+                        }
+                    }
+                },
                 onDownload = { song -> uiViewModel.setPicker(true, song = song) },
                 onOpenArtist = { artist ->
                     val shown = uiState.songActionsSong ?: currentSong
@@ -1603,13 +1757,12 @@ val translatePickerSongTitle by TranslatePicker.songTitle.collectAsState()
                     scope.launch {
                         cacheClearing = true
                         try {
-                            // 播放缓存必须走 Media3 的 Cache API（目录正被 SimpleCache 占用）
+                            // 播放缓存分两条路清：Media3 那份必须走 Cache API（目录连索引被 SimpleCache
+                            // 占着），KKBOX 解密目录由 AssetCache 删；对用户是同一项。
                             if (CacheCategory.PLAYBACK in cacheSelected) {
                                 playerViewModel.clearPlaybackCache()
                             }
-                            AssetCache.clearCacheCategories(
-                                cacheSelected - CacheCategory.PLAYBACK,
-                            )
+                            AssetCache.clearCacheCategories(cacheSelected)
                         } catch (_: Exception) {
                         }
                         cacheClearing = false

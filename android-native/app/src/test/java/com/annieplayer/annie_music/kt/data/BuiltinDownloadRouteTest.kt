@@ -114,7 +114,16 @@ class BuiltinDownloadRouteTest {
         // KKBOX 只走官方票据接口：没有会话必须直接报错，**绝不**回落到别家音源。
         // 测试环境里 kkboxSessionProvider 的默认实现就是 `{ null }`。
         val error = runCatching {
-            com.annieplayer.annie_music.kt.data.sources.kkbox.fetchKkboxPlayUrl("kkbox:test")
+            com.annieplayer.annie_music.kt.data.sources.kkbox.fetchKkboxPlayUrl(
+                com.annieplayer.annie_music.kt.data.model.Song(
+                    id = "kkbox:test",
+                    title = "test",
+                    artist = "test",
+                    cover = "",
+                    duration = 0,
+                    platform = com.annieplayer.annie_music.kt.data.model.MusicPlatform.kkbox,
+                ),
+            )
         }.exceptionOrNull()
         assertEquals("KKBOX 需要先登录账号才能播放", error?.message)
     }

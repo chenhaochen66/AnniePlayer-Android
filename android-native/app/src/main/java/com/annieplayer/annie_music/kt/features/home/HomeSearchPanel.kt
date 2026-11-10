@@ -171,6 +171,7 @@ internal fun HomeSearchPanel(
                                         name = album.name,
                                         artist = album.artist,
                                         platform = album.platform,
+                                        artistId = album.artistId,
                                     ),
                                 ),
                             )

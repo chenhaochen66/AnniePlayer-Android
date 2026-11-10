@@ -33,8 +33,40 @@ internal suspend fun fetchHomeKuwo(): List<HomeShelf> {
     val hotPage = cachedKuwoFeed(kuwoHotPageUrl, "hotpage")?.let { kuwoShelvesOf(it) }.orEmpty()
     val merged = runCatching { mergeKuwoShelves(tuijian, hotPage) }
         .getOrDefault(if (tuijian.isNotEmpty()) tuijian else hotPage)
-    if (merged.isNotEmpty()) return merged
+    if (merged.isNotEmpty()) return withKuwoEditorPicks(merged)
     return fetchHomeKuwoWeb()
+}
+
+/** 「精选歌单」区块的 id；热门流给了就不补，没给才用 web 的编辑推荐顶一行。 */
+private const val KW_EDITOR_SHELF_ID = "kuwo:editor"
+
+/**
+ * 「编辑精选」补位。
+ *
+ * 热门流的 `scroll_songlist`（`label=编辑精选`）**经常整段空**：实测连打 5 次、换 `prod` 版本号、
+ * 换 `count` 全是 `<section …></section>` 零个 `<songlist>`。这不是签名也不是参数问题 ——
+ * 服务端就是不投放这条运营位，客户端拿不到任何东西。空的那些天用 web 端
+ * `api/www/rcm/index/playlist`（编辑推荐 10 张）补一行同名区块，避免首页整行凭空消失。
+ *
+ * 补出来的卡是方图（`HomeCardStyle.Playlist`），不进大图轮播 —— web 接口给的是 500 方图，
+ * 塞进 16:9 的 Hero 位会左右留黑边。
+ */
+private suspend fun withKuwoEditorPicks(shelves: List<HomeShelf>): List<HomeShelf> {
+    if (shelves.any { it.id == KW_HERO_SHELF_ID }) return shelves
+    val items = runCatching { kuwoWebPlaylistItems("editor") }.getOrDefault(emptyList())
+    if (items.isEmpty()) return shelves
+    val used = shelves.filterIsInstance<HomeShelf.Cards>()
+        .flatMapTo(HashSet()) { shelf -> shelf.items.map { it.key } }
+    val fresh = items.filter { used.add(it.key) }
+    if (fresh.isEmpty()) return shelves
+    return listOf(
+        HomeShelf.Cards(
+            id = KW_EDITOR_SHELF_ID,
+            title = "编辑精选",
+            subtitle = "酷我编辑推荐",
+            items = fresh.take(HomePlaylistsMax),
+        ),
+    ) + shelves
 }
 
 /** 解析失败（服务端改结构 / 半截响应）一律当「没有内容」，交给下一级数据源。 */
@@ -73,7 +105,25 @@ private const val kuwoHotPageUrl: String =
 
 /** 酷我 web 端 api/www 系列的兜底：只给一行推荐歌单。 */
 private suspend fun fetchHomeKuwoWeb(): List<HomeShelf> {
-    val key = HomeCachePrefix + "kuwo:playlist"
+    val items = kuwoWebPlaylistItems("playlist")
+    if (items.isEmpty()) return emptyList()
+    return listOf(
+        HomeShelf.Cards(
+            id = "kuwo:playlist",
+            title = "推荐歌单",
+            subtitle = "酷我编辑精选",
+            items = items.take(HomePlaylistsMax),
+        ),
+    )
+}
+
+/**
+ * web 端 `rcm/index/playlist` → 歌单卡。一次给 10 张编辑推荐（`rn` 要 30 也只回 10）。
+ *
+ * 「编辑精选」补位与最终兜底行共用这一段，只有缓存 key 的后缀不同 —— 两处各抄一份必然走散。
+ */
+private suspend fun kuwoWebPlaylistItems(keySuffix: String): List<HomeItem> {
+    val key = HomeCachePrefix + "kuwo:" + keySuffix
     val resp = cacheService.get<Map<String, Any?>>(key) ?: run {
         val fresh = runCatching {
             httpGetJson(
@@ -88,7 +138,7 @@ private suspend fun fetchHomeKuwoWeb(): List<HomeShelf> {
     } ?: return emptyList()
 
     val list = jsonList(jsonMap(resp["data"])?.get("list"))
-    val items = list.mapNotNull { raw ->
+    return list.mapNotNull { raw ->
         val m = jsonMap(raw) ?: return@mapNotNull null
         val id = jsonStr(m["id"])
         val name = decodeHtmlEntities(jsonStr(m["name"]))
@@ -107,15 +157,6 @@ private suspend fun fetchHomeKuwoWeb(): List<HomeShelf> {
             target = HomeTarget.Playlist(MusicPlatform.kuwo, id, name, cover),
         )
     }
-    if (items.isEmpty()) return emptyList()
-    return listOf(
-        HomeShelf.Cards(
-            id = "kuwo:playlist",
-            title = "推荐歌单",
-            subtitle = "酷我编辑精选",
-            items = items.take(HomePlaylistsMax),
-        ),
-    )
 }
 
 /** 酷我 web 端 api/www 系列接口的固定请求头（Secret + cookie 是项目里已验证的那一对）。 */

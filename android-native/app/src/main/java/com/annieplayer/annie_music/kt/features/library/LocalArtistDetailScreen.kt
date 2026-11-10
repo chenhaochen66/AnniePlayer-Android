@@ -21,6 +21,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,12 +30,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
+import com.annieplayer.annie_music.kt.core.state.FavoriteViewModel
 import com.annieplayer.annie_music.kt.data.local.LocalLibraryStore
 import com.annieplayer.annie_music.kt.data.local.LocalTrackMeta
 import com.annieplayer.annie_music.kt.data.local.albumGroupKey
-import com.annieplayer.annie_music.kt.data.local.albumYearOf
+import com.annieplayer.annie_music.kt.data.local.localAlbumDateOf
 import com.annieplayer.annie_music.kt.data.local.artistGroupKeys
 import com.annieplayer.annie_music.kt.data.local.localAlbumType
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
@@ -41,6 +46,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
 import com.annieplayer.annie_music.kt.widgets.rememberCoverPalette
+import com.annieplayer.annie_music.kt.widgets.DetailHeartButton
 import com.annieplayer.annie_music.kt.widgets.DetailPlayAllPill
 import com.annieplayer.annie_music.kt.widgets.shortScrollbar
 import com.annieplayer.annie_music.kt.widgets.SongRowPager
@@ -53,8 +59,9 @@ private val ArtistAlbumCardHeight = 208.dp
 private const val LocalArtistPageRows = 5
 
 /**
- * overview「歌曲」段最多放几首（= 4 页 × 5 行，照流媒体 `st.songs.take(ArtistSongsPageSize)`）；
- * 超过这个数才给「全部 ›」。
+ * overview「歌曲」段最多放几首（= 4 页 × 5 行，照流媒体 `st.songs.take(ArtistSongsPageSize)`）。
+ *
+ * 这只是**预览上限**，不再是「全部 ›」的显示门槛：一首歌也会给全部入口。
  */
 private const val LocalArtistOverviewSongs = 20
 
@@ -69,11 +76,11 @@ private const val LocalArtistOverviewAlbums = 10
  *    副标 `N 首 · M 张专辑` + 白底「播放」胶囊；
  * 2. 「歌曲」段 —— **和流媒体一样按页横滑**：[LocalArtistPageRows] 行一页、往右翻，
  *    最多 [LocalArtistOverviewSongs] 首（序号 → 等化器、40dp 封面、16sp 标题、
- *    `歌手 · 专辑` 副标题、音质角标、⋮）；只有歌数**超过**这个上限时才给「全部 ›」；
+ *    `歌手 · 专辑` 副标题、音质角标、⋮）；「全部 ›」**恒定出现**（一首歌也给）；
  * 3. 「专辑」段 —— **只预览最近 [LocalArtistOverviewAlbums] 张**（发行时间倒序），
- *    140×208 横滑卡（N 首 · 类型 · 年份）；同样只有张数超过预览数才给「全部 ›」。
+ *    140×208 横滑卡（N 首 · 类型 · 发行日期）；「全部 ›」同样恒定出现。
  *
- * 「全部」进的是 `LocalArtistSongsEntry` / `LocalArtistAlbumsEntry` 两个页面（内页可排序）。
+ * 「全部」压的是 `LocalArtistSongsRoute` / `LocalArtistAlbumsRoute` 两个栈内页面（内页可排序）。
  * 背景**跟本页歌手的封面取色**（= 该歌手首曲封面）；歌手列表页走的是「跟随正在播放歌曲封面」
  * 的氛围色——两者刻意不同：详情页的颜色应该由「你正在看的是谁」决定，而不是「在放哪首歌」。
  */
@@ -97,18 +104,18 @@ fun LocalArtistDetailScreen(
         tracks.filter { artistName in artistGroupKeys(it) }
     }
     val ordered = remember(members) { sortArtistTracks(members) }
-    // 专辑按发行时间倒序（没年份的排最后），与专辑列表默认排序一致
+    // 专辑按发行时间倒序（没日期的排最后），与专辑列表默认排序一致
     val albums = remember(ordered) {
         ordered.groupBy { albumGroupKey(it) }.entries
             .map { (key, list) -> key to list }
             .sortedWith { a, b ->
-                val ya = albumYearOf(a.second)
-                val yb = albumYearOf(b.second)
+                val da = localAlbumDateOf(a.second)
+                val db = localAlbumDateOf(b.second)
                 when {
-                    ya == null && yb == null -> a.first.compareTo(b.first)
-                    ya == null -> 1
-                    yb == null -> -1
-                    else -> yb.compareTo(ya)
+                    da == null && db == null -> a.first.compareTo(b.first)
+                    da == null -> 1
+                    db == null -> -1
+                    else -> db.compareTo(da)
                 }
             }
     }
@@ -120,6 +127,14 @@ fun LocalArtistDetailScreen(
     // overview 只预览一小部分，「全部」按钮只在装不下时才出现
     val overviewSongs = remember(ordered) { ordered.take(LocalArtistOverviewSongs) }
     val overviewAlbums = remember(albums) { albums.take(LocalArtistOverviewAlbums) }
+
+    // 收藏：本地歌手的键就是展示用的名字（与 `artistGroupKeys` 一致），paths 供改 tag 后自愈
+    val heroCoverUrl = heroCover?.let { "file://$it" }
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+    val favoriteSnapshot by favoriteViewModel.snapshot.collectAsState()
+    val favorited = remember(favoriteSnapshot, artistName) {
+        favoriteViewModel.isArtistFavorite(artistName)
+    }
 
     // 出栈由 AppShell 的全局 PAGE 处理器统一做
 
@@ -178,18 +193,34 @@ fun LocalArtistDetailScreen(
                             textAlign = TextAlign.Center,
                         )
                         Spacer(modifier = Modifier.height(AppSpacing.sp16))
-                        DetailPlayAllPill(
-                            onClick = { if (ordered.isNotEmpty()) onPlayAt(ordered, 0) },
-                            enabled = ordered.isNotEmpty(),
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DetailHeartButton(
+                                selected = favorited,
+                                onClick = {
+                                    favoriteViewModel.toggleArtist(
+                                        platform = MusicPlatform.local,
+                                        artistId = null,
+                                        name = artistName,
+                                        picture = heroCoverUrl.orEmpty(),
+                                        paths = ordered.map { it.path },
+                                        key = artistName,
+                                    )
+                                },
+                            )
+                            Spacer(modifier = Modifier.width(AppSpacing.sp16))
+                            DetailPlayAllPill(
+                                onClick = { if (ordered.isNotEmpty()) onPlayAt(ordered, 0) },
+                                enabled = ordered.isNotEmpty(),
+                            )
+                        }
                     }
                 }
 
-                // ── 歌曲（预览一段，「全部」只在装不下时出现）──
+                // ── 歌曲（预览一段；「全部」恒定出现，一首歌也给）──
                 item(key = "songs-header") {
                     LocalSectionHeader(
                         title = "歌曲",
-                        onSeeAll = if (ordered.size > LocalArtistOverviewSongs) onOpenAllSongs else null,
+                        onSeeAll = if (ordered.isEmpty()) null else onOpenAllSongs,
                     )
                 }
                 // ── 歌曲：和流媒体**同一个**翻页容器（页宽 / 页间距 / 页码指示都在那边）──
@@ -224,12 +255,12 @@ fun LocalArtistDetailScreen(
                     }
                 }
 
-                // ── 专辑（横滑预览，「全部」只在装不下时出现）──
+                // ── 专辑（横滑预览；「全部」恒定出现，一张也给）──
                 if (overviewAlbums.isNotEmpty()) {
                     item(key = "albums-header") {
                         LocalSectionHeader(
                             title = "专辑",
-                            onSeeAll = if (albums.size > LocalArtistOverviewAlbums) onOpenAllAlbums else null,
+                            onSeeAll = onOpenAllAlbums,
                         )
                     }
                     item(key = "albums-shelf") {
@@ -247,9 +278,8 @@ fun LocalArtistDetailScreen(
                                     modifier = Modifier
                                         .width(ArtistAlbumCardWidth)
                                         .height(ArtistAlbumCardHeight),
-                                    year = albumYearOf(list),
-                                    type = localAlbumType(list.size),
-                                )
+                                    date = localAlbumDateOf(list),
+                                    type = localAlbumType(list.size),                                )
                             }
                         }
                     }

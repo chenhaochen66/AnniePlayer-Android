@@ -796,9 +796,16 @@ Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeR8bResampler_processBy
 		{
 			for( int c = 0; c < channels; ++c )
 			{
+				// **NaN / Inf 闸。**
+				//
+				// r8brain 的滤波状态里只要进过一个非有限值，之后每一块都是 NaN；
+				// 而写到 DAC 侧 NaN 会被钳成满幅直流 —— 听感"没声"，且症状是
+				// "某一首之后所有歌都没声"。闸放在写回之前，代价一次比较。
+				float v = applyOutputLpf( s, c, i, ops[ c ][ i ] );
+				if( !std::isfinite( v )) v = 0.0f;
 				writeSample( outPtr +
 					( static_cast< size_t >( produced + i ) * channels + c ) * outBytes,
-					outEncoding, applyOutputLpf( s, c, i, ops[ c ][ i ] ), doDither, s->rng,
+					outEncoding, v, doDither, s->rng,
 					&s->ns[ static_cast< size_t >( c ) ], &s->peakAbs, &s->clipCount );
 			}
 		}

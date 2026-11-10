@@ -72,6 +72,7 @@ suspend fun searchAlbum(keyword: String, page: Int = 1, pageSize: Int = 50): Lis
             artist = decodeHtmlEntities(
                 kuwoStrOr(firstTruthy(listOf(item["artist"], item["ARTIST"])), "未知歌手"),
             ),
+            artistId = kuwoStrOr(firstTruthy(listOf(item["artistid"], item["ARTISTID"])), ""),
             platform = MusicPlatform.kuwo,
             musiccnt = kuwoStrOr(
                 firstTruthy(listOf(item["musiccnt"], item["MUSICCNT"])),
@@ -130,8 +131,8 @@ suspend fun searchArtist(keyword: String): List<Artist> {
     }
 }
 
-/** 酷我歌手头像：用歌手搜索按名字取（酷我 artistInfo 接口返回空，不可用） */
-suspend fun fetchKuwoArtistAvatar(name: String): String {
+/** 酷我歌手头像（**按名字兜底**）：有 id 时走 `KuwoArtist.fetchKuwoArtistAvatar`，别直接用这个 */
+internal suspend fun fetchKuwoArtistAvatarByName(name: String): String {
     val q = name.trim()
     if (q.isEmpty()) return ""
     return try {
@@ -146,12 +147,12 @@ suspend fun fetchKuwoArtistAvatar(name: String): String {
 }
 
 /**
- * 酷我歌手简介：走经典 `r.s` 歌手搜索的 `abslist[].desc`。
+ * 酷我歌手简介（**按名字兜底**）：有 id 时走 `KuwoArtist.fetchKuwoArtistBio`（`artistinfo.desc`）。
  *
- * 注意：[searchArtist] 走的是 `/api/www/search/searchArtistBykeyWord`，那条响应**不带** `desc`，
- * 所以简介必须用这个经典接口单独取一次。
+ * [searchArtist] 走的是 `/api/www/search/searchArtistBykeyWord`，那条响应**不带** `desc`，
+ * 所以这条兜底必须用经典 `r.s?ft=artist` 单独取一次。
  */
-suspend fun fetchKuwoArtistBio(name: String): String {
+internal suspend fun fetchKuwoArtistBioByName(name: String): String {
     val q = name.trim()
     if (q.isEmpty()) return ""
     return try {
@@ -163,13 +164,7 @@ suspend fun fetchKuwoArtistBio(name: String): String {
         // 优先精确同名，否则取第一条
         val hit = list.firstOrNull { asText(it["ARTIST"]) == q } ?: list.firstOrNull()
         val raw = (hit?.get("desc") ?: "").toString()
-        // 伪 JSON 里换行是转义的 `\n`（可能被多重转义），统一还原成空格并清掉残留下划线
-        decodeHtmlEntities(
-            raw.replace(Regex("\\\\+n"), " ")
-                .replace(Regex("\\\\+"), "")
-                .replace(Regex("\\s+"), " ")
-                .trim(),
-        )
+        cleanKuwoDesc(raw)
     } catch (_: Throwable) {
         ""
     }

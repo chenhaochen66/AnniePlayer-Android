@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -64,6 +65,7 @@ private val MetaLineHeight = 13.sp
  * - 点击 → 多选模式下切换选中，否则播放。
  * - 长按 → 进入多选并选中该行（未选中时）。
  * - 右侧 ⋮：点开全局单曲操作菜单（下载 / 跳转歌手…）；下载中显示旋转环。
+ *   **多选态整块换成 [SelectCheckBox]**（勾在框里、无底色），⋮ 不渲染。
  *
  * 视觉（**单栏**）：
  * - 封面 [AppSize.searchTileCover] = 44dp / 圆角 8；三行文本 **17sp / 13sp / 11sp**
@@ -73,10 +75,10 @@ private val MetaLineHeight = 13.sp
  * - 正在播放 → 与专辑详情列表同一套行样式（[playingRowBackground]：8% 圆角底 + 左侧 3dp 竖条
  *   + 标题着色 + 封面上的 [PlayingIndicator] 等化器），但**颜色是中性灰**而不是封面取色主色，
  *   避免单栏长列表整屏被彩色化。
- * - 多选选中 → `primary @ 8%` 底色（与专辑详情一致）。
+ * - 多选选中 → `primary @ 8%` 底色（与专辑详情一致）；标记**只在行尾**的勾选框里，
+ *   封面前不再插图标（插进去会让整行文字横向跳一格）。
  *
- * 说明：Compose 无 Material 的 `Icons.Default.CheckBox` 轻量等价物（在 extended 里），
- * 这里用 `CheckSquareIcon` 自绘，形状对齐 Flutter `Icons.check_box`（圆角方块 + 勾）。
+ * 勾选框用 [SelectCheckBox]（与专辑 / 歌单 / 本地曲库同一个组件），不再自带一套实心方图标。
  */
 @Composable
 fun SongTile(
@@ -135,17 +137,26 @@ fun SongTile(
             },
         )
 
-        // ── 行尾 ⋮（单曲操作菜单；下载中显示旋转环） ──
-        Box(
-            modifier = Modifier
-                .clickableRipple { onDownload(song) }
-                .padding(AppSpacing.sp10),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (isDownloading) {
-                DownloadRing()
-            } else {
-                SongMoreGlyph()
+        // ── 行尾槽位：多选态 = 勾选框；常态 = ⋮（下载中显示旋转环） ──
+        val toggle = onToggleSelect
+        if (selectionMode && toggle != null) {
+            Box(modifier = Modifier.padding(horizontal = AppSpacing.sp10)) {
+                SelectCheckBox(checked = selected, onToggle = { toggle(song) })
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    // 命中区与勾选框同位同宽（48dp）：切多选时文字区不横向跳一格
+                    .minimumInteractiveComponentSize()
+                    .clickableRipple { onDownload(song) }
+                    .padding(AppSpacing.sp10),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (isDownloading) {
+                    DownloadRing()
+                } else {
+                    SongMoreGlyph()
+                }
             }
         }
     }
@@ -175,11 +186,6 @@ private fun SongTileCard(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (selected) {
-            CheckSquareIcon(modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(AppSpacing.sp8))
-        }
-
         // ── 封面 50dp / 圆角 8 ──
         Box(
             modifier = Modifier
@@ -245,7 +251,13 @@ private fun SongTileCard(
     }
 }
 
-/** 第三行 meta：`时长 · 音质标 · 源名`（如 `3:34 · FLAC · 酷我`） */
+/**
+ * 第三行 meta：`时长 · 音质标 · 源名`（如 `3:34 · FLAC · 酷我`）。
+ *
+ * 颜色与第二行（`歌手 · 专辑`）**完全一致**（`textTertiary`）：这两行是同一块副文本，
+ * 之前给音质标单独上靛蓝、分隔符用 `primaryA60`，整行读起来像三个不同层级的信息。
+ * 音质仍保留 `SemiBold` —— 权重区分够了，不需要再换色。
+ */
 @Composable
 private fun SongTileMetaLine(song: Song, sourceLabel: String?) {
     val parts = remember(song.duration, song.qualities, song.platform, sourceLabel) {
@@ -264,20 +276,20 @@ private fun SongTileMetaLine(song: Song, sourceLabel: String?) {
         text = buildAnnotatedString {
             parts.forEachIndexed { i, (label, isQuality) ->
                 if (i > 0) {
-                    withStyle(SpanStyle(color = AppColors.primaryA60, fontSize = AppFontSize.xs)) {
+                    withStyle(SpanStyle(color = AppColors.textTertiary, fontSize = AppFontSize.xs)) {
                         append(" · ")
                     }
                 }
                 if (isQuality) {
                     withStyle(
                         SpanStyle(
-                            color = AppColors.indigo300A95,
+                            color = AppColors.textTertiary,
                             fontSize = AppFontSize.xs,
                             fontWeight = FontWeight.SemiBold,
                         ),
                     ) { append(label) }
                 } else {
-                    withStyle(SpanStyle(color = AppColors.primaryA60, fontSize = AppFontSize.xs)) {
+                    withStyle(SpanStyle(color = AppColors.textTertiary, fontSize = AppFontSize.xs)) {
                         append(label)
                     }
                 }
@@ -288,9 +300,18 @@ private fun SongTileMetaLine(song: Song, sourceLabel: String?) {
     )
 }
 
-/** `秒 -> m:ss`（对齐 Flutter `_formatDuration`） */
-private fun formatDuration(seconds: Int): String =
-    "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
+/**
+ * `秒 -> m:ss`（对齐 Flutter `_formatDuration`）。
+ *
+ * **超过 100000 秒（27 小时）当毫秒处理**：历史数据里真的混进过毫秒 ——
+ * 酷狗聚合接口的 `timelength_320` 是毫秒，早先几个版本直接当秒写进了 `Song.duration`，
+ * 于是 `4:03` 的歌渲染成 `4052:53`。映射层已经修了，但**已收藏的 `Song` 是快照**，
+ * 不会自己变；这里兜一次，老收藏就当场恢复正常，不用重新收藏。
+ */
+private fun formatDuration(seconds: Int): String {
+    val total = if (seconds > 100_000) seconds / 1000 else seconds
+    return "${total / 60}:${(total % 60).toString().padStart(2, '0')}"
+}
 
 /**
  * 音质短标签（可多个）。

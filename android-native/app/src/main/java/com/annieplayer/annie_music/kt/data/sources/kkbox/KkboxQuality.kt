@@ -1,8 +1,20 @@
 package com.annieplayer.annie_music.kt.data.sources.kkbox
 
+import com.annieplayer.annie_music.kt.data.model.Quality
+
 // ================================================================================================
 // KKBOX 音质：档位 ↔ 接口 format_name、扩展名、DRM 判定
 // ================================================================================================
+
+/** [Quality] → [kkboxQualityFormatMap] 的 key。 */
+fun kkboxQualityKeyOf(quality: Quality): String = when (quality) {
+    Quality.hires -> "hires"
+    Quality.flac -> "hifi"
+    Quality.k320k -> "320k"
+    Quality.k128k -> "128k"
+    // aac256 / alac / atmos 在 KKBOX 没有对应档位：按最高档请求，票里没有会自己往下降
+    else -> "hires"
+}
 
 /** 音质 key -> KKBOX 的 format_name */
 internal val kkboxQualityFormatMap: Map<String, String> = mapOf(

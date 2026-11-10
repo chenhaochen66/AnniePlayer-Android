@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -57,6 +56,7 @@ import com.annieplayer.annie_music.kt.core.routing.BackTarget
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.FavoriteViewModel
 import com.annieplayer.annie_music.kt.core.state.MoreSettings
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
@@ -69,8 +69,8 @@ import com.annieplayer.annie_music.kt.core.state.toOverlayFlags
 import com.annieplayer.annie_music.kt.core.util.downloadQualityFor
 import com.annieplayer.annie_music.kt.data.PlaylistService
 import com.annieplayer.annie_music.kt.data.enrichSong
+import com.annieplayer.annie_music.kt.data.favorites.FavoriteKeys
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
-import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
 import com.annieplayer.annie_music.kt.data.playQualityLabelOf
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
@@ -190,6 +190,12 @@ private fun PlaylistDetailContent(
         MusicPlatform.entries.firstOrNull { it.name == raw } ?: MusicPlatform.kuwo
     }
 
+    /** 收藏 key 用的 platform：**必须与 [PlaylistDetailHero] 里算 key 的那条一致**（见下方 sync） */
+    val favoritePlatform = remember(data.platform) {
+        MusicPlatform.entries.firstOrNull { it.name == data.platform } ?: MusicPlatform.kuwo
+    }
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+
     suspend fun play(song: Song) {
         val idx = st.songs.indexOfFirst { it.id == song.id }
         if (idx < 0) return
@@ -199,9 +205,9 @@ private fun PlaylistDetailContent(
         playerViewModel.setQueue(st.songs, idx, fromPlaylist = data)
         try {
             val url = fetchPlayUrlBySong(song)
-            val lyric = fetchLyric(song)
+            // 歌词交给 `setQueue` → `PlayerState._ensureLyric`（它带 KKBOX 的 sid）；
+            // 这里再取一次是不带 sid 的版本，会把真歌词覆盖成「暂无歌词」。
             playerViewModel.updateSongPlayUrl(song.id, url)
-                    playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric, lyric.wordLyric, lyric.translateLangs)
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
         }
@@ -269,6 +275,17 @@ private fun PlaylistDetailContent(
                 st.cover = result.cover
                 st.songs = result.songs
                 st.hasPlaylist = true
+                // 校准收藏记录：这个歌单如果已经收藏，把列表里显示的名字 / 封面 / 创建者 /
+                // 曲目数对齐到当前事实。只有**打开了这个歌单**才会走到这里 ——
+                // 收藏库的列表页从不发请求。未收藏、或值没变，`syncPlaylistMeta` 都不会写库。
+                favoriteViewModel.syncPlaylistMeta(
+                    platform = favoritePlatform,
+                    id = data.id,
+                    name = st.name,
+                    cover = st.cover,
+                    creator = st.creator,
+                    trackCount = st.songs.size,
+                )
             } else {
                 st.error = "获取歌单失败，请检查链接是否正确"
             }
@@ -341,6 +358,7 @@ private fun PlaylistDetailContent(
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     PlaylistDetailBody(
                         st = st,
+                        data = data,
                         tasks = tasks,
                         palette = palette,
                         playingId = playerState.currentSong?.id,
@@ -477,6 +495,7 @@ private fun PlaylistDetailHeader(
 @Composable
 private fun PlaylistDetailBody(
     st: PlaylistDetailState,
+    data: PlaylistDetailData,
     tasks: Map<String, DownloadTask>,
     palette: ColorPalette,
     playingId: String?,
@@ -528,6 +547,7 @@ private fun PlaylistDetailBody(
                     item {
                         PlaylistDetailHero(
                             st = st,
+                            data = data,
                             onPlayAll = { st.songs.firstOrNull()?.let(onPlay) },
                             onBatch = { st.batchPickerVisible = true },
                         )
@@ -562,9 +582,22 @@ private fun PlaylistDetailBody(
 @Composable
 private fun PlaylistDetailHero(
     st: PlaylistDetailState,
+    data: PlaylistDetailData,
     onPlayAll: () -> Unit,
     onBatch: () -> Unit,
 ) {
+    // 收藏状态就地取 Activity 作用域的 VM，避免把「收藏」一路穿过三层列表函数
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+    val favoriteSnapshot by favoriteViewModel.snapshot.collectAsState()
+    val playlistPlatform = remember(data.platform) {
+        MusicPlatform.entries.firstOrNull { it.name == data.platform } ?: MusicPlatform.kuwo
+    }
+    val favoriteKey = remember(data.id, playlistPlatform) {
+        FavoriteKeys.playlist(playlistPlatform, data.id)
+    }
+    val favorited = remember(favoriteSnapshot, favoriteKey) {
+        favoriteViewModel.isPlaylistFavorite(favoriteKey)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -620,6 +653,21 @@ private fun PlaylistDetailHero(
         )
         Spacer(modifier = Modifier.height(AppSpacing.sp16))
         Row(verticalAlignment = Alignment.CenterVertically) {
+            DetailHeartButton(
+                selected = favorited,
+                onClick = {
+                    favoriteViewModel.togglePlaylist(
+                        platform = playlistPlatform,
+                        id = data.id,
+                        name = st.name.ifEmpty { data.name.orEmpty() },
+                        cover = st.cover.ifEmpty { data.cover.orEmpty() },
+                        // 列表展示用：收藏那一刻的创建者与曲目数（之后打开歌单详情会校准）
+                        creator = st.creator,
+                        trackCount = st.songs.size,
+                    )
+                },
+            )
+            Spacer(modifier = Modifier.width(AppSpacing.sp16))
             DetailPlayAllPill(
                 onClick = onPlayAll,
                 enabled = st.songs.isNotEmpty(),
@@ -648,12 +696,13 @@ private fun PlaylistDetailHero(
 }
 
 /**
- * 歌曲行：多选框 + 序号 / 正在播放动效 + 名称 /「歌手 · 专辑」+ 下载按钮。
+ * 歌曲行：序号 / 正在播放动效 + 名称 /「歌手 · 专辑」+（多选勾选框 | ⋮）。
  *
- * - 多选：左侧用 [DetailCheckBox]（替换原自绘对勾；点击对勾与点击行都切换选中）；
+ * - 多选：右侧槽位换成 `SelectCheckBox`（勾在框里、无底色；点击勾与点击行都切换选中），
+ *   行首序号保持不变；
  * - 命中当前歌（[playing]）：行底 [playingRowBackground]（主色 8% 圆角底 + 左侧 3dp 主色条）、
  *   序号列换 [PlayingIndicator]、标题用 `palette.primary`；
- * - 点行播放 / 点下载按钮的逻辑与原来完全一致（selectMode 下点行只切换选中）。
+ * - 点行播放 / 点 ⋮ 的逻辑与原来完全一致（selectMode 下点行只切换选中）。
  *
  * @param playing 该行是否命中当前播放歌（由调用方按 `currentSong.id` 判定）。
  * @param palette 封面动态色板（正在播放动效的取色来源）。
@@ -689,10 +738,6 @@ private fun PlaylistDetailSongRow(
             .padding(horizontal = AppSpacing.sp16, vertical = AppSpacing.sp10),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (selectMode) {
-            DetailCheckBox(checked = selected, onToggle = { onToggle(song.id) })
-            Spacer(modifier = Modifier.width(AppSpacing.sp10))
-        }
         Box(
             modifier = Modifier.width(AppSpacing.sp28),
             contentAlignment = Alignment.Center,
@@ -732,7 +777,10 @@ private fun PlaylistDetailSongRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (!selectMode) {
+        // 行尾槽位：多选态 = 勾选框；常态 = ⋮（下载中转环由 SongMoreGlyph 自己画）
+        if (selectMode) {
+            SelectCheckBox(checked = selected, onToggle = { onToggle(song.id) })
+        } else {
             Box(
                 modifier = Modifier
                     // 命中区 ≥48dp：本修饰符只预留布局空间（行高 60dp 内不撑高），触摸外扩由输入层完成

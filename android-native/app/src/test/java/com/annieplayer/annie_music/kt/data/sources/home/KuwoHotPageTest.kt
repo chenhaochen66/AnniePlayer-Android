@@ -270,6 +270,50 @@ class KuwoHotPageTest {
         assertEquals(44, (shelves[0] as HomeShelf.Cards).items.size)
     }
 
+    // ── 运营位的封面字段 ──
+
+    @Test
+    fun hero_card_falls_back_to_pic_full_size_when_img_is_absent() {
+        // banner 里 `statistics_id="text_ad_*"` 的运营位**只给 `pic_full_size`、不给 `img`**。
+        // 只读 img 的后果不是「少一张图」，而是整行大图卡变成无图占位 —— 看起来像这行没了。
+        val xml = """<root><section type="banner" label="">""" +
+            """<songlist id="3732585566" name="听谁在唱歌2|烟火入旋律歌声愈人心" """ +
+            """statistics_id="text_ad_68637" img="" """ +
+            """pic_full_size="https://zimg.kuwo.cn/AdSystemConsole/img/1794068009467.jpg"/>""" +
+            """</section></root>"""
+        val hero = kuwoHotShelves(parseKuwoHotPage(xml)).first { it.id == KW_HERO_SHELF_ID }
+        val card = (hero as HomeShelf.Cards).items.single()
+        assertEquals(
+            "https://zimg.kuwo.cn/AdSystemConsole/img/1794068009467.jpg",
+            card.cover,
+        )
+        assertEquals("听谁在唱歌2|烟火入旋律歌声愈人心", card.title)
+    }
+
+    @Test
+    fun album_card_falls_back_to_pic_full_size_when_img_is_absent() {
+        val xml = """<root><section type="tab_scroll_list" label="数字专辑">""" +
+            """<album id="106419877" name="《折月亮》影视原声带" artist="群星" """ +
+            """releasedate="2026-11-08" musiccnt="14" img="" """ +
+            """pic_full_size="https://zimg.kuwo.cn/AdSystemConsole/img/1794044113629.png"/>""" +
+            """</section></root>"""
+        val cards = kuwoHotShelves(parseKuwoHotPage(xml)).first().let { (it as HomeShelf.Cards).items }
+        val card = cards.single()
+        assertEquals("https://zimg.kuwo.cn/AdSystemConsole/img/1794044113629.png", card.cover)
+        assertEquals("2026-11-08", card.pub)
+        assertEquals(14, card.count)
+    }
+
+    @Test
+    fun img_wins_over_pic_full_size_when_both_are_present() {
+        // 常规位两者都有时必须是 img（`/300/` → `/500/` 那条规则挂在它上面）
+        val xml = """<root><section type="r10_songlist_tab" label="为你推荐"><songlist """ +
+            """id="1" name="歌单" img="http://img1.kuwo.cn/x/300/1.jpg" """ +
+            """pic_full_size="http://zimg.kuwo.cn/ad/2.jpg"/></section></root>"""
+        val card = (kuwoHotShelves(parseKuwoHotPage(xml)).single() as HomeShelf.Cards).items.single()
+        assertEquals("http://img1.kuwo.cn/x/500/1.jpg", card.cover)
+    }
+
     // ── 边界 ──
 
     @Test

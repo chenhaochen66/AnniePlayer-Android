@@ -24,6 +24,7 @@ import com.annieplayer.annie_music.kt.data.sources.apple.appleMusicStorefront
 import com.annieplayer.annie_music.kt.data.sources.apple.fetchAppleStorefronts
 import com.annieplayer.annie_music.kt.data.sources.apple.searchAppleMusic
 import com.annieplayer.annie_music.kt.data.sources.kkbox.parseKkboxUrl
+import com.annieplayer.annie_music.kt.data.sources.kkbox.searchKkboxSongs
 import com.annieplayer.annie_music.kt.data.sources.qobuz.parseQobuzUrl
 import com.annieplayer.annie_music.kt.data.sources.kugou.searchKugouMusic
 import com.annieplayer.annie_music.kt.data.sources.kuwo.searchMusic
@@ -125,8 +126,9 @@ class SearchScreenState(
                 offset = (page - 1) * kSearchPageSize,
             )
             MusicPlatform.apple -> searchAppleMusic(query, page = page, limit = kAppleSearchPageSize)
+            MusicPlatform.kkbox -> searchKkboxSongs(query, page = page, limit = kSearchPageSize)
             // 本地曲库不参与云端搜索（自己那一页自带筛选框）
-            MusicPlatform.kkbox, MusicPlatform.local -> emptyList()
+            MusicPlatform.local -> emptyList()
         }
 
     /** 按当前平台发起单曲搜索（单栏：只有一列） */

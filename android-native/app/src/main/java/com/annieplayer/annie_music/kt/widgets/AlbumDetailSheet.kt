@@ -55,12 +55,17 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.annieplayer.annie_music.kt.core.audio.apple.ApplePrefetch
 import com.annieplayer.annie_music.kt.core.compose.activityViewModel
+import com.annieplayer.annie_music.kt.data.favorites.FavoriteKeys
 import com.annieplayer.annie_music.kt.core.routing.BackTarget
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.FavoriteViewModel
 import com.annieplayer.annie_music.kt.core.state.MoreSettings
+import com.annieplayer.annie_music.kt.core.state.SingerDetailData
+import com.annieplayer.annie_music.kt.core.state.SingerRoute
+import com.annieplayer.annie_music.kt.data.resolveArtist
 import com.annieplayer.annie_music.kt.core.util.downloadQualityFor
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
@@ -72,7 +77,6 @@ import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.state.toOverlayFlags
 import com.annieplayer.annie_music.kt.data.fetchAlbumSongsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
-import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
 import com.annieplayer.annie_music.kt.data.playQualityLabelOf
 import com.annieplayer.annie_music.kt.data.model.AlbumSong
@@ -217,6 +221,16 @@ private fun AlbumDetailContent(
     val tasks by downloadViewModel.state.collectAsState()
     val playerState by playerViewModel.state.collectAsState()
 
+    // 收藏：读 snapshot 才能让爱心在点击后立刻变（只查 `isAlbumFavorite` 不会触发重组）
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+    val favoriteSnapshot by favoriteViewModel.snapshot.collectAsState()
+    val albumFavoriteKey = remember(data.id, data.platform) {
+        FavoriteKeys.album(data.platform, data.id, data.name, data.artist)
+    }
+    val albumFavorited = remember(favoriteSnapshot, albumFavoriteKey) {
+        favoriteViewModel.isAlbumFavorite(albumFavoriteKey)
+    }
+
     /** 封面动态色板（与播放页同一取色链路；同 url 进程级缓存见 core/util/ColorExtractor.kt） */
     val palette = rememberCoverPalette(data.cover)
 
@@ -268,9 +282,9 @@ private fun AlbumDetailContent(
         playerViewModel.setQueue(converted, idx)
         try {
             val url = fetchPlayUrlBySong(converted[idx])
-            val lyric = fetchLyric(converted[idx])
+            // 歌词交给 `setQueue` → `PlayerState._ensureLyric`（它带 KKBOX 的 sid）。
+            // 这里再取一次是不带 sid 的版本，会拿到「暂无歌词」占位并把真歌词覆盖掉。
             playerViewModel.updateSongPlayUrl(target.id, url)
-                    playerViewModel.updateSongLyric(target.id, lyric.lrc, lyric.tlyric, lyric.wordLyric, lyric.translateLangs)
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
         }
@@ -348,6 +362,22 @@ private fun AlbumDetailContent(
                 compareBy({ it.discNumber ?: 1 }, { it.track ?: Int.MAX_VALUE }),
             )
             st.releaseDate = result.pub
+            // 校准收藏记录：这张专辑如果已经收藏，把列表里显示的名字 / 歌手 / 封面 /
+            // 曲目数 / 发行日期对齐到当前事实。
+            // 只有在**打开了这张专辑**时才会走到这里 —— 收藏库的列表页从不发请求。
+            // 曲目数与日期来自接口；名字/歌手/封面来自 `data`（从主页或搜索进来时是平台当前值，
+            // 从收藏库进来时就是收藏记录本身 → 值不变 → 不写库）。
+            // 未收藏、或值没变，`syncAlbumMeta` 都不会写库。
+            favoriteViewModel.syncAlbumMeta(
+                platform = data.platform,
+                albumId = data.id,
+                name = data.name,
+                artist = data.artist,
+                cover = data.cover,
+                trackCount = st.songs.size,
+                releaseDate = st.releaseDate,
+                artistId = data.artistId,
+            )
         } catch (e: Exception) {
             val msg = (e.message ?: "").replaceFirst("Exception: ", "")
             st.error = msg.ifEmpty { "加载失败" }
@@ -425,6 +455,30 @@ private fun AlbumDetailContent(
                         onDownload = { uiViewModel.setSongActionsVisible(true, toSong(it)) },
                         onToggle = { toggleSelect(it) },
                         onBatch = { st.pickerVisible = true },
+                        onOpenArtist = {
+                            val name = data.artist.trim()
+                            if (name.isNotEmpty()) {
+                                scope.launch {
+                                    val resolved = resolveArtist(
+                                        data.platform,
+                                        name,
+                                        data.artistId.ifEmpty { null },
+                                    )
+                                    if (resolved != null && resolved.id.isNotEmpty()) {
+                                        uiViewModel.pushRoute(
+                                            SingerRoute(
+                                                SingerDetailData(
+                                                    id = resolved.id,
+                                                    name = resolved.name,
+                                                    picture = resolved.picture,
+                                                    platform = data.platform,
+                                                ),
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
+                        },
                     )
                 }
             }
@@ -542,6 +596,7 @@ private fun AlbumDetailBody(
     onDownload: (AlbumSong) -> Unit,
     onToggle: (String) -> Unit,
     onBatch: () -> Unit,
+    onOpenArtist: () -> Unit,
 ) {
     when {
         st.loading -> {
@@ -589,6 +644,7 @@ private fun AlbumDetailBody(
                             data = data,
                             onPlayAll = { st.songs.firstOrNull()?.let(onPlay) },
                             onBatch = onBatch,
+                            onOpenArtist = onOpenArtist,
                         )
                     }
                     val multiDisc = st.songs.mapNotNull { it.discNumber }.distinct().size > 1
@@ -641,7 +697,18 @@ private fun AlbumDetailHero(
     data: AlbumDetailData,
     onPlayAll: () -> Unit,
     onBatch: () -> Unit,
+    onOpenArtist: () -> Unit,
 ) {
+    // 收藏状态就地取（Activity 作用域的 VM，任何层级取到的都是同一份）；
+    // 不用从列表层一路传参数 —— 收藏只跟「这一张专辑」有关，和列表状态无关。
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+    val favoriteSnapshot by favoriteViewModel.snapshot.collectAsState()
+    val favoriteKey = remember(data.id, data.platform) {
+        FavoriteKeys.album(data.platform, data.id, data.name, data.artist)
+    }
+    val favorited = remember(favoriteSnapshot, favoriteKey) {
+        favoriteViewModel.isAlbumFavorite(favoriteKey)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -682,6 +749,8 @@ private fun AlbumDetailHero(
         Spacer(modifier = Modifier.height(AppSpacing.sp4))
         Text(
             text = data.artist,
+            // 有 id 就秒开（酷我专辑接口本来就给 artistid）；没有则退回按名字搜索一次
+            modifier = Modifier.clickableRipple { onOpenArtist() },
             color = AppColors.whiteA50,
             fontSize = AppFontSize.size15,
             textAlign = TextAlign.Center,
@@ -700,6 +769,23 @@ private fun AlbumDetailHero(
         }
         Spacer(modifier = Modifier.height(AppSpacing.sp16))
         Row(verticalAlignment = Alignment.CenterVertically) {
+            DetailHeartButton(
+                selected = favorited,
+                onClick = {
+                    favoriteViewModel.toggleAlbum(
+                        platform = data.platform,
+                        albumId = data.id,
+                        name = data.name,
+                        artist = data.artist,
+                        cover = data.cover,
+                        // 列表展示用：收藏那一刻的曲目数与发行日期（之后打开详情页会校准）
+                        trackCount = st.songs.size,
+                        releaseDate = st.releaseDate,
+                        artistId = data.artistId,
+                    )
+                },
+            )
+            Spacer(modifier = Modifier.width(AppSpacing.sp16))
             DetailPlayAllPill(
                 onClick = onPlayAll,
                 enabled = st.songs.isNotEmpty(),
@@ -737,7 +823,7 @@ private fun albumDetailMetaLine(st: AlbumDetailState): String {
     return parts.joinToString(" · ")
 }
 
-/** 曲目行：多选框 + 序号 / 播放指示 + 名称 / 歌手 +（任务徽标 | 下载按钮） */
+/** 曲目行：序号 / 播放指示 + 名称 / 歌手 +（多选勾选框 | 任务徽标 | ⋮） */
 @Composable
 private fun AlbumDetailSongRow(
     song: AlbumSong,
@@ -767,14 +853,6 @@ private fun AlbumDetailSongRow(
             .padding(horizontal = AppSpacing.sp16, vertical = AppSpacing.sp10),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (selectMode) {
-            // 多选对勾（替换原自绘勾选方框；点击对勾与点击行都切换选中）
-            DetailCheckBox(
-                checked = selected,
-                onToggle = { onToggle(song.id) },
-            )
-            Spacer(modifier = Modifier.width(AppSpacing.sp10))
-        }
         Box(
             modifier = Modifier.width(AppSpacing.sp28),
             contentAlignment = Alignment.Center,
@@ -814,10 +892,21 @@ private fun AlbumDetailSongRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (task != null && task.status != DownloadStatus.completed) {
+        // 行尾槽位只有两种内容：多选态 = 勾选框，常态 = 任务徽标 / ⋮（二者不会同时出现）
+        if (selectMode) {
+            SelectCheckBox(
+                checked = selected,
+                onToggle = { onToggle(song.id) },
+            )
+        } else if (task != null && task.status != DownloadStatus.completed) {
             AlbumDetailTaskBadge(task = task)
-        } else if (!selectMode) {
-            Box(modifier = Modifier.semantics { contentDescription = "更多操作 ${song.name}" }) {
+        } else {
+            // 命中区与多选勾选框同位同宽（都是 48dp）：切多选时文字区不横向跳一格
+            Box(
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .semantics { contentDescription = "更多操作 ${song.name}" },
+            ) {
                 SongMoreButton(onClick = { onDownload(song) })
             }
         }

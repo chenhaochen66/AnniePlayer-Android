@@ -223,7 +223,7 @@ object AppSize {
     /** 多选下载条（玻璃 pill）内容区高度；命中区由 `minimumInteractiveComponentSize()` 预留到 48dp */
     val detailDownloadBarHeight = 44.dp
 
-    /** 详情页多选勾选框视觉边长（未选中描边方 / 选中实心方共用；命中区另由 Material 最小触摸尺寸预留） */
+    /** 多选勾选框视觉边长（两种状态都是这一条描边框，选中只多一个勾；命中区另由 Material 最小触摸尺寸预留） */
     val detailCheckBoxSize = 18.dp
 
     /** 正在播放指示器：单条竖条宽度（圆角条） */

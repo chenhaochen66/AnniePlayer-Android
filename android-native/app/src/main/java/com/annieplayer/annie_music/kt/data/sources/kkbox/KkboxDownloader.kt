@@ -32,12 +32,17 @@ object KkboxDownloader {
     /**
      * 下载并落盘一首 KKBOX 歌。
      *
+     * @param quality 用户选的档位（会映射成 KKBOX 的 format_name；票里没有该格式时接口自己
+     *   按 hiRes → hifi → 320k → 192k → 128k 降）
      * @param onProgress 0..1
      * @return 自定义目录时是最终文件路径；默认目录入库成功时是 `content://` URI
      */
-    suspend fun download(song: Song, onProgress: (Double) -> Unit): String {
-        // 官方票据：档位固定要最高档，票里没有该格式时接口自己按 hiRes → hifi → 320k → 192k → 128k 降
-        val ticket = fetchKkboxDownloadTicket(song.id, "hires")
+    suspend fun download(
+        song: Song,
+        quality: Quality = Quality.hires,
+        onProgress: (Double) -> Unit,
+    ): String {
+        val ticket = fetchKkboxDownloadTicket(song.id, kkboxQualityKeyOf(quality))
         val rawId = song.id.removePrefix("kkbox:")
         val qualityKey = formatNameToQuality(ticket.formatName)
         val lyric = runCatching { getSongLyrics(ticket.sid, rawId).lrc }.getOrDefault("")

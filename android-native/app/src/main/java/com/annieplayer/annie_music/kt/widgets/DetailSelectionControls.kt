@@ -1,5 +1,6 @@
 package com.annieplayer.annie_music.kt.widgets
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -21,7 +22,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -30,7 +30,6 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
-import com.annieplayer.annie_music.kt.ui.theme.AppDuration
 import com.annieplayer.annie_music.kt.ui.theme.AppEasing
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppFontWeight
@@ -40,36 +39,40 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 
 // ================================================================================================
-// 详情页共享：多选对勾 + 多选下载条
+// 多选：勾选框 + 批量下载条
 // ================================================================================================
 
-/** 勾选缩放：未选中静置 0.85 → 选中 1.0（状态切换的「弹一下」反馈）。 */
-private const val DetailCheckRestScale = 0.85f
+/** 勾的书写动画：0 → 1 截取整条勾（140ms ≈ 一次轻点的反馈时长，再长会觉得「卡」）。 */
+private const val SelectCheckDrawMs = 140
 
-/** 勾选缩放：选中态 1.0。 */
-private const val DetailCheckCheckedScale = 1f
+/** 框线颜色切换：描边比勾先到位，读起来像「框亮了 → 勾进去」。 */
+private const val SelectCheckTintMs = 120
 
 /**
- * 详情页多选勾选框（专辑 / 歌单 / Qobuz / KKBOX 详情行尾共用）。
+ * 多选勾选框（**全 App 唯一的一种选中标记**：专辑 / 歌单 / 歌手 / Qobuz / KKBOX / 自建歌单 /
+ * 本地曲库行 / 搜索结果行，全部用这一个）。
  *
- * 视觉 18dp（[AppSize.detailCheckBoxSize]）：
+ * 视觉 18dp（[AppSize.detailCheckBoxSize]），**两种状态都不填充底色**：
  * - 未选中：1.5dp 等效描边圆角方（[DetailCheckBoxBlank]，r4 等效圆角，色 [AppColors.textTertiary]）；
- * - 选中：[AppColors.primary] 实心圆角方 + [DetailCheckMark] 对勾（色 [AppColors.background]）；
- * - 禁用：描边 / 实心底统一 [AppColors.textDisabled]。
+ * - 选中：描边转 [AppColors.primary]，框内写上一个同色勾（[DetailCheckMark]）。
  *
- * 交互：状态切换时 0.85 → 1.0 缩放（`animateFloatAsState`）+ 轻触觉
- * （[HapticFeedbackType.TextHandleMove]）；命中区由 [minimumInteractiveComponentSize] 预留到
- * Material 建议的 48dp（实际触摸还会在输入层自动外扩），视觉元素居中不变。
+ * 为什么不做「实心方 + 反色勾」：一行里同时出现实心块和描边块时，实心块的视觉重量是描边块的
+ * 两三倍，选中行会像被贴了一块标签；而现在选中已经由**行底** `primaryA08` 承担，
+ * 勾只负责回答「勾了没有」。同理不缩放：状态切换由「勾写上去 / 缩回去」表达
+ * （[DetailCheckMark] 的 `progress`）。
+ *
+ * 交互：点击切换 + 轻触觉（[HapticFeedbackType.TextHandleMove]）；命中区由
+ * [minimumInteractiveComponentSize] 预留到 48dp（60dp 行高内不撑高，触摸外扩由输入层完成）。
  *
  * 无障碍：自绘可交互元素，显式给出 `contentDescription`（「选择」/「已选择」）与
- * [Role.Checkbox]；对勾本身是装饰（由父级语义承载）。
+ * [Role.Checkbox]；勾本身是装饰（由父级语义承载）。
  *
  * @param checked 是否已选中。
  * @param onToggle 点击切换回调。
  * @param enabled 是否可交互（禁用时不响应点击、语义标记 disabled）。
  */
 @Composable
-fun DetailCheckBox(
+fun SelectCheckBox(
     checked: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
@@ -77,13 +80,21 @@ fun DetailCheckBox(
 ) {
     val haptics = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
-    val scale by animateFloatAsState(
-        targetValue = if (checked) DetailCheckCheckedScale else DetailCheckRestScale,
-        animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.easeInOutQuad),
-        label = "detailCheckBoxScale",
+    val drawProgress by animateFloatAsState(
+        targetValue = if (checked) 1f else 0f,
+        animationSpec = tween(durationMillis = SelectCheckDrawMs, easing = AppEasing.easeOut),
+        label = "selectCheckDraw",
     )
-    val boxColor = if (enabled) AppColors.primary else AppColors.textDisabled
-    val outlineColor = if (enabled) AppColors.textTertiary else AppColors.textDisabled
+    val outlineColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> AppColors.textDisabled
+            checked -> AppColors.primary
+            else -> AppColors.textTertiary
+        },
+        animationSpec = tween(durationMillis = SelectCheckTintMs),
+        label = "selectCheckOutline",
+    )
+    val checkColor = if (enabled) AppColors.primary else AppColors.textDisabled
 
     Box(
         modifier = modifier
@@ -103,30 +114,14 @@ fun DetailCheckBox(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(AppSize.detailCheckBoxSize)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                },
-        ) {
-            if (checked) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(boxColor, RoundedCornerShape(AppRadius.r4)),
-                )
-                DetailCheckMark(
-                    modifier = Modifier.fillMaxSize(),
-                    tint = AppColors.background,
-                )
-            } else {
-                DetailCheckBoxBlank(
-                    modifier = Modifier.fillMaxSize(),
-                    tint = outlineColor,
-                )
-            }
+        Box(modifier = Modifier.size(AppSize.detailCheckBoxSize)) {
+            DetailCheckBoxBlank(modifier = Modifier.fillMaxSize(), tint = outlineColor)
+            // progress <= 0 时 DetailCheckMark 自己整段不画，所以这里不需要额外的显隐判断
+            DetailCheckMark(
+                modifier = Modifier.fillMaxSize(),
+                tint = checkColor,
+                progress = drawProgress,
+            )
         }
     }
 }

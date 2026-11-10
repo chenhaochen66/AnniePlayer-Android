@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -79,7 +80,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
-import com.annieplayer.annie_music.kt.widgets.DetailCheckBox
+import com.annieplayer.annie_music.kt.widgets.SelectCheckBox
 import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
 import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
 import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
@@ -163,7 +164,7 @@ private fun qobuzDetailToSong(track: QobuzTrack, hires: Boolean = false): Song =
  * - 列表**直接铺在氛围背景上**（不套玻璃面板），底部仍保留
  *   [AppSpacing.listBottomInset]（迷你条 + 手势条）预留；
  * - 正在播放行：`playingRowBackground(palette.primary)` + [PlayingIndicator] + 标题主色；
- * - 多选：行内 [DetailCheckBox]，底部浮层 [MultiSelectDownloadBar]（替换旧头部批量按钮）；
+ * - 多选：行尾 `SelectCheckBox`，底部浮层 [MultiSelectDownloadBar]（替换旧头部批量按钮）；
  * - 进出页通过 [SnapshotPaletteAndRestore] 灌入 / 恢复全局色板（与播放页同一取色链路）。
  */
 @Composable
@@ -353,7 +354,10 @@ fun QobuzDetailScreen(
     // `isTop` 必须是宿主的 `localTop`（栈顶且无更高层浮层）：否则被压住的页面会抢返回，
     // 而它只清掉自己的 selectMode，上层页面纹丝不动 —— 看起来就是「返回键失效」。
     BackHandler(enabled = isTop && st.selectMode) {
+        // 与顶栏「取消」走同一条退出路径（`onToggleSelectMode` 里面也会清选中）：
+        // 只把 selectMode 置 false 会把 selectedIds 留在内存里，下次进多选还得靠清空补一次
         st.selectMode = false
+        st.selectedIds.clear()
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -694,7 +698,7 @@ private fun QobuzDetailListHeader(st: QobuzDetailScreenState) {
 }
 
 /**
- * 曲目行：多选框 + 序号 + 标题 +（下载中环 | 下载按钮）；行底 1dp 分隔线。
+ * 曲目行：序号 + 标题 +（多选勾选框 | 下载中环 | ⋮）；行底 1dp 分隔线。
  *
  * 「正在播放」行（[playing]）：主色行底（`playingRowBackground`，左侧 3dp 主色条 + 8% 圆角底）
  * + 序号列换 [PlayingIndicator] + 标题主色；点击行为与普通行完全一致
@@ -737,13 +741,6 @@ private fun QobuzDetailTrackRow(
             .padding(horizontal = QobuzDetailScreenPaddingH, vertical = AppSpacing.sp10),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (selectMode) {
-            DetailCheckBox(
-                checked = selected,
-                onToggle = { onToggle(track.id) },
-            )
-            Spacer(modifier = Modifier.width(AppSpacing.sp10))
-        }
         Box(modifier = Modifier.width(AppSpacing.sp24), contentAlignment = Alignment.Center) {
             if (playing) {
                 PlayingIndicator(tint = palette.readablePrimary())
@@ -766,15 +763,23 @@ private fun QobuzDetailTrackRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (downloading) {
+        // 行尾槽位：多选态 = 勾选框；常态 = 下载中环 / ⋮
+        if (selectMode) {
+            SelectCheckBox(
+                checked = selected,
+                onToggle = { onToggle(track.id) },
+            )
+        } else if (downloading) {
             CircularProgressIndicator(
                 modifier = Modifier.size(AppIconSize.icon20),
                 color = AppColors.primary,
                 strokeWidth = AppBorder.thick,
             )
-        } else if (!selectMode) {
+        } else {
             Box(
                 modifier = Modifier
+                    // 与多选勾选框同位同宽（48dp）：切多选时文字区不横向跳一格
+                    .minimumInteractiveComponentSize()
                     .clickableRipple { onDownload(track) }
                     .padding(AppSpacing.sp4),
                 contentAlignment = Alignment.Center,

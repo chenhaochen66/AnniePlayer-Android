@@ -359,7 +359,7 @@ private fun menuDrawerCacheSubtitle(cacheSize: MenuDrawerCacheSize): String = wh
     is MenuDrawerCacheSize.Ready -> if (cacheSize.bytes <= 0L) {
         "暂无可清理内容"
     } else {
-        "当前 ${menuDrawerFormatSize(cacheSize.bytes)}｜播放缓存 + 封面/图片 + 下载文件 + 接口缓存"
+        "当前 ${menuDrawerFormatSize(cacheSize.bytes)}｜播放缓存（含 KKBOX 高音质）+ 封面/图片 + 下载文件 + 接口缓存"
     }
 }
 

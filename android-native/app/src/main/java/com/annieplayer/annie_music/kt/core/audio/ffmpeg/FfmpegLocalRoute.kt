@@ -46,6 +46,14 @@ internal object FfmpegLocalRoute {
         if (path.isEmpty()) return false
         if (!NativeFfmpegDemux.isAvailable()) return false
         val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        // `.part` 是「下载中的临时文件」，不是容器扩展名。
+        //
+        // KKBOX 高音质缓存的 `play_*_flac.part` 正是这种：内容是标准 FLAC/M4A。
+        // 不排除的话，同一首歌**第一次播**（本机 http 代理）走 Media3 普通路径、
+        // **第二次播**（缓存命中给的是这个 `.part` 的 file://）被误判成「冷门容器」走全链路
+        // —— 两条链的重采样实现不同（Media3 AudioProcessor vs ffmpeg swr/r8brain），
+        // 声音会不一样，而且 HTTP 那条也没法走全链路（native 是按路径读文件的）。
+        if (ext == "part") return false
         // 冷门容器：Media3 根本没有对应 Extractor，只能 ffmpeg 从文件头读
         if (ext.isNotEmpty() && ext !in MEDIA3_CONTAINERS) return true
         // 常见容器但高解析：索引里有记录才判，没扫到就先按现状播

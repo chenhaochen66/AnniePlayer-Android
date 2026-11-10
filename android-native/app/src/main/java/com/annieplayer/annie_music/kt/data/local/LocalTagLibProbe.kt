@@ -147,11 +147,69 @@ internal object LocalTagLibProbe {
         if (bytes.isEmpty()) return null
         return try {
             out.parentFile?.mkdirs()
-            out.writeBytes(bytes)
+            writeCoverScaled(bytes, out)
             out.absolutePath
         } catch (_: Throwable) {
             runCatching { out.delete() }
             null
+        }
+    }
+
+    /** 封面缓存的最大边长（与 `LocalTagProbe.COVER_MAX_PX` 同一个值，两条路径出来的图一样大） */
+    private const val COVER_MAX_PX = 512
+
+    /**
+     * 把内嵌封面写成文件，**长边缩到 [COVER_MAX_PX]**。
+     *
+     * 为什么必须缩：TagLib 这条是首选路径（`LocalLibraryViewModel._loadCover` 的四级降级里排第一），
+     * 而它给的是**原始图片字节** —— 一首 FLAC 内嵌 3000×3000、2MB 的封面很常见，
+     * 3000 首就是几 GB 缓存，而列表行只有 52dp、详情页最多 55% 屏宽。
+     *
+     * 已经够小的图**原样落盘**：重编码既有画质损失又白费一次解码。
+     * 缩放走 `inSampleSize`（解码阶段就采样，内存峰值只有目标尺寸的几倍），
+     * 再用 `createScaledBitmap` 精确到长边 512，最后 JPEG 85 落盘。
+     */
+    private fun writeCoverScaled(bytes: ByteArray, out: File) {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val w = bounds.outWidth
+        val h = bounds.outHeight
+        if (w <= 0 || h <= 0) {
+            // 解不出来（罕见格式 / 加密图）→ 原样写，至少能显示
+            out.writeBytes(bytes)
+            return
+        }
+        if (w <= COVER_MAX_PX && h <= COVER_MAX_PX) {
+            out.writeBytes(bytes)
+            return
+        }
+        var sample = 1
+        while (w / (sample * 2) > COVER_MAX_PX && h / (sample * 2) > COVER_MAX_PX) sample *= 2
+        val decoded = android.graphics.BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: run {
+            out.writeBytes(bytes)
+            return
+        }
+        val longSide = maxOf(decoded.width, decoded.height)
+        val scaled = if (longSide <= COVER_MAX_PX) {
+            decoded
+        } else {
+            val ratio = COVER_MAX_PX.toFloat() / longSide
+            val targetW = (decoded.width * ratio).toInt().coerceAtLeast(1)
+            val targetH = (decoded.height * ratio).toInt().coerceAtLeast(1)
+            android.graphics.Bitmap.createScaledBitmap(decoded, targetW, targetH, true)
+                .also { if (it !== decoded) decoded.recycle() }
+        }
+        try {
+            java.io.FileOutputStream(out).use { fos ->
+                scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, fos)
+            }
+        } finally {
+            scaled.recycle()
         }
     }
 

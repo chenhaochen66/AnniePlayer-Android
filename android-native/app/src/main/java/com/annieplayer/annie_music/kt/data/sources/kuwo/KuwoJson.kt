@@ -3,6 +3,7 @@ package com.annieplayer.annie_music.kt.data.sources.kuwo
 import com.annieplayer.annie_music.kt.data.network.json
 import com.annieplayer.annie_music.kt.data.network.jsonElementToAny
 import com.annieplayer.annie_music.kt.data.sources.common.asText
+import com.annieplayer.annie_music.kt.data.sources.common.decodeHtmlEntities
 
 // ================================================================================================
 // 酷我伪 JSON 解析与取值
@@ -28,8 +29,7 @@ internal fun kuwoInt(v: Any?): Int = when (v) {
 }
 
 /** 将 JSON 数组安全转换为 Map 列表 */
-internal fun kuwoMapList(v: Any?): List<Map<String, Any?>> {
-    if (v !is List<*>) return emptyList()
+internal fun kuwoMapList(v: Any?): List<Map<String, Any?>> {    if (v !is List<*>) return emptyList()
     val out = ArrayList<Map<String, Any?>>()
     for (e in v) {
         if (e is Map<*, *>) {
@@ -90,3 +90,16 @@ internal fun kuwoParseList(text: String, keysPattern: String): List<Map<String, 
     }
     return emptyList()
 }
+
+/**
+ * 歌手简介（`desc`）文本清理。
+ *
+ * 伪 JSON 里换行是转义的 `\n`（可能被多重转义成 `\\n`），还有成串的反斜杠残留；
+ * 再还原 HTML 实体、把连续空白压成一个空格。
+ */
+internal fun cleanKuwoDesc(raw: String): String = decodeHtmlEntities(
+    raw.replace(Regex("\\\\+n"), " ")
+        .replace(Regex("\\\\+"), "")
+        .replace(Regex("\\s+"), " ")
+        .trim(),
+)

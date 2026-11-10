@@ -142,6 +142,27 @@ internal object NativeUacStream {
     fun describe(handle: Long): String =
         if (handle == 0L) "" else runCatching { nativeDescribe(handle) }.getOrDefault("")
 
+    /**
+     * 这条流的**状态快照**：`dead/paused/stop/采样率/声道/帧字节/subslot/alt/
+     * framesRead/framesWritten/欠载数/gainQ16/lastError`。
+     *
+     * 为什么需要它：这台 ROM 丢 App 日志（连 `__android_log_print` 都不留），native 侧
+     * 出问题时上层完全看不见 —— 只能靠猜或者抓包。快照是**唯一**能让"现在到底怎么了"
+     * 说出口的通道。
+     */
+    fun snapshot(handle: Long): IntArray? =
+        if (handle == 0L) null else runCatching { nativeSnapshot(handle) }.getOrNull()
+
+    /**
+     * 取走 native 的事件环（每 3 个 int 一条：`code, a, b`），**取走即清空**。
+     *
+     * `code` 的含义见 `native-uac.cpp` 的 `kEv*`：
+     * `1` 开流（率, 声道）、`2` transfer 失败（status, 接口）、`3` 欠载（帧, 累计）、
+     * `4` 只换时钟（率, 回读状态）、`5` 拆流重建（率）、`6` 换率被拒（率, 返回码）、
+     * `7` 置 dead（来源, status）。
+     */
+    fun drainEvents(handle: Long): IntArray =
+        if (handle == 0L) IntArray(0) else runCatching { nativeDrainEvents(handle) }.getOrDefault(IntArray(0))
     /** 只读描述符（不 claim、不设率），用于能力面板 */
     fun describeFd(fd: Int): String =
         if (fd < 0) "" else runCatching { nativeDescribeFd(fd) }.getOrDefault("")
@@ -254,4 +275,6 @@ internal object NativeUacStream {
     private external fun nativeOutFrameBytes(handle: Long): Int
     private external fun nativeDescribe(handle: Long): String
     private external fun nativeDescribeFd(fd: Int): String
+    private external fun nativeSnapshot(handle: Long): IntArray?
+    private external fun nativeDrainEvents(handle: Long): IntArray
 }

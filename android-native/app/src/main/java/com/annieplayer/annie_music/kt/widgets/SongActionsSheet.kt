@@ -23,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
@@ -150,12 +152,45 @@ fun SongActionsSheet(
      */
     playlistTarget: PlaylistDetailData? = null,
     onOpenPlaylist: (PlaylistDetailData) -> Unit = {},
+    /**
+     * 「加入到歌单」的候选（自建、与这首歌同一边、已带「是否已在里面」）。
+     *
+     * 空列表仍然会显示那一行 —— 点开是「还没有自建播放列表」的空态，
+     * 比「功能看不见」诚实。本地歌只列本地歌单（混边在数据层就不允许）。
+     */
+    playlistOptions: List<SongPlaylistOption> = emptyList(),
+    /** 加入某个自建歌单（**面板不关**，那一行随即变成「已加入」） */
+    onAddToPlaylist: (playlistId: String) -> Unit = {},
+    /**
+     * 「我喜欢」这一行（与「加入到歌单」同一个二级面板的第一行）：
+     * 这首歌是否已收藏、那一边一共收藏了多少首。见 [onAddToFavorites]。
+     */
+    favoriteSelected: Boolean = false,
+    favoriteCount: Int = 0,
+    /**
+     * 收藏到「我喜欢」/ 取消收藏（开关）。null = 整行不渲染。
+     *
+     * 和「加入到歌单」放进同一个面板：用户心里这两件事是同一个动作（「把这首收起来」），
+     * 分成两个入口（一个在 ⋮、一个在心形按钮）只会让人多点一次。
+     * 与自建歌单的「已加入」不同，这一行点第二次是**取消收藏**（面板不关，行变回「+」）。
+     */
+    onAddToFavorites: (() -> Unit)? = null,
+    /**
+     * 「从本歌单移除」：只有从自建歌单详情页打开面板时才有（宿主传 null 即整行不渲染）。
+     *
+     * 不移除确认：这是可撤销动作（再加回来就行），加确认只会多一次点击。
+     */
+    onRemoveFromPlaylist: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // 二级歌手选择面板可见性（面板收起时同步复位，避免下次打开直接闪出二级面板）
     var artistPickerVisible by remember { mutableStateOf(false) }
+    var playlistPickerVisible by remember { mutableStateOf(false) }
     LaunchedEffect(visible) {
-        if (!visible) artistPickerVisible = false
+        if (!visible) {
+            artistPickerVisible = false
+            playlistPickerVisible = false
+        }
     }
 
     val artists = remember(song) { songArtistsOf(song) }
@@ -194,8 +229,28 @@ fun SongActionsSheet(
             }
 
             // 动作：一条连续列表，不分组（参照 Apple Music 的动作菜单）。
-            // 顺序规则：**就地生效的在前，会跳走的在后** —— 用户翻到列表末尾之前
-            // 就已经看到「下载」「歌曲详情」这类主操作。
+            // 加入到歌单：**下载之上、第一个动作行**。两种情况都有这一项，只是候选不同：
+            // 在线歌列 `scope = online` 的自建歌单，本地歌列 `scope = local` 的
+            // （分边由宿主算好传进来，这里不判断平台）。
+            SongActionsRow(
+                icon = { tint ->
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.size(AppIconSize.icon22),
+                    )
+                },
+                label = "加入到歌单",
+                subtitle = if (playlistOptions.isEmpty()) {
+                    "我喜欢"
+                } else {
+                    "我喜欢 · ${playlistOptions.size} 个歌单"
+                },
+                showsChevron = false,
+                onTap = { playlistPickerVisible = true },
+            )
+
             if (isLocalSong) {
                 // 本地文件：第一行是「歌曲详情」（替代流媒体的「下载」）。
                 // 图标用信息圆点 —— 之前复用了「跳转到专辑」的唱片图标，两行长得一模一样。
@@ -297,6 +352,30 @@ fun SongActionsSheet(
                 )
             }
 
+            // 从本歌单移除：只有「从自建歌单详情页」打开面板时才有。
+            // 与「删除」同在最底部，但它排在删除**之上** —— 删文件不可逆，
+            // 破坏性更强的那个永远压最底。
+            if (onRemoveFromPlaylist != null) {
+                Spacer(modifier = Modifier.height(AppSpacing.sp8))
+                SongActionsRow(
+                    icon = { tint ->
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            tint = tint,
+                            modifier = Modifier.size(AppIconSize.icon22),
+                        )
+                    },
+                    label = "从本歌单移除",
+                    subtitle = "不会删除下载的文件",
+                    showsChevron = false,
+                    onTap = {
+                        onClose()
+                        onRemoveFromPlaylist()
+                    },
+                )
+            }
+
             // 删除：破坏性操作不跟其它行连排，用一段留白隔开压在最后，
             // 手指从上往下滑时不会顺势点到它。
             // 只有本地文件才有这个语义（云端歌曲的「删除」应该是取消下载，不属于本面板）。
@@ -345,6 +424,19 @@ fun SongActionsSheet(
             visible = visible && localDetailsVisible,
             song = song,
             onClose = { localDetailsVisible = false },
+        )
+
+        // 二级：选择播放列表（点「加入到歌单」弹出）。
+        // 加入后**面板不关**：宿主 reload 之后 `playlistOptions` 会把这个歌单变成
+        // 「已加入」，用户可以接着加进别的歌单（也接着收进「我喜欢」）。
+        PlaylistPickerSheet(
+            visible = visible && playlistPickerVisible,
+            options = playlistOptions,
+            favoriteSelected = favoriteSelected,
+            favoriteCount = favoriteCount,
+            onClose = { playlistPickerVisible = false },
+            onSelect = { onAddToPlaylist(it) },
+            onAddToFavorites = onAddToFavorites,
         )
     }
 }

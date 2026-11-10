@@ -361,6 +361,15 @@ Java_com_annieplayer_annie_1music_kt_core_audio_dsp_NativeDsp_processBytes(
 
     applyBandsAndGain(*state, buffer.data(), total);
 
+    // **NaN / Inf 闸。**
+    //
+    // PEQ 是 IIR：一个非有限值进入滤波器状态，之后每一块输出都是 NaN 且永远拉不回来 ——
+    // 症状正是"某一首之后所有歌都没声"（NaN 送到 DAC 侧会被钳成满幅直流）。
+    // 放在"算完、写回之前"，代价是一次分支预测必中的比较。
+    for (int i = 0; i < total; ++i) {
+        if (!std::isfinite(buffer[i])) buffer[i] = 0.0f;
+    }
+
     for (int i = 0; i < total; ++i) {
         writeSample(outBytes + i * sampleBytes, encoding, buffer[i]);
     }

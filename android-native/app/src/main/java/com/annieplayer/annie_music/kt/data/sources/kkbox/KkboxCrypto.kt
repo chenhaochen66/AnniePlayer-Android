@@ -53,10 +53,10 @@ internal class KkboxRc4(key: String, drop: Int = 0) {
         }
     }
 
-    /** PRGA：加密/解密输入（异或流密钥） */
-    fun process(input: ByteArray): ByteArray {
-        val output = ByteArray(input.size)
-        for (n in input.indices) {
+    /** PRGA：加密/解密输入（异或流密钥）；[length] 允许只处理前缀，避免每块都 copy 一次 */
+    fun process(input: ByteArray, length: Int = input.size): ByteArray {
+        val output = ByteArray(length)
+        for (n in 0 until length) {
             _i = (_i + 1) and 0xFF
             _j = (_j + _s[_i]) and 0xFF
             val t = _s[_i]
@@ -66,6 +66,25 @@ internal class KkboxRc4(key: String, drop: Int = 0) {
             output[n] = ((input[n].toInt() and 0xFF) xor k).toByte()
         }
         return output
+    }
+
+    /**
+     * PRGA 原地异或，**不分配输出数组**。
+     *
+     * 流式播放每 64KB 调一次，[process] 那种一次一分配的写法在一首 34MB 的歌上要制造
+     * 500 多个临时数组（约 30MB 垃圾）；拖动进度条时还要再叠加，GC 抖动会直接吃掉手感。
+     */
+    fun processInPlace(input: ByteArray, offset: Int, length: Int = input.size - offset) {
+        for (n in 0 until length) {
+            _i = (_i + 1) and 0xFF
+            _j = (_j + _s[_i]) and 0xFF
+            val t = _s[_i]
+            _s[_i] = _s[_j]
+            _s[_j] = t
+            val k = _s[(_s[_i] + _s[_j]) and 0xFF]
+            val idx = offset + n
+            input[idx] = ((input[idx].toInt() and 0xFF) xor k).toByte()
+        }
     }
 }
 

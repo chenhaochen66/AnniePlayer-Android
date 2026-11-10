@@ -28,7 +28,17 @@ private suspend fun _fetchNeteaseSongDetails(chunk: List<Map<String, Any?>>): Li
             val al = neteaseAsMap(sm["al"]) ?: emptyMap()
             val cover = "${al["picUrl"] ?: ""}?param=800y800"
 
+            // 歌手名与 id **必须同样取自 `ar`**：歌单这条路径没有第二处来源。
+            // 只取 name 的后果是收藏后点不进歌手页（`ar[].id` 接口一直都在，
+            // 实测 `POST /api/v3/song/detail` 的 `ar[0].id = 185858`）。
             val arList = neteaseListOfMaps(sm["ar"])
+            val artistNames = arList
+                .map { decodeHtmlEntities((it["name"] ?: "").toString()) }
+                .filter { it.isNotEmpty() }
+            val artistIds = arList
+                .map { (it["id"] ?: "").toString() }
+                .filter { it.isNotEmpty() }
+                .takeIf { it.size == artistNames.size } ?: emptyList()
 
             val qualities = ArrayList<Quality>()
             if (jsTruthy(sm["hr"])) qualities.add(Quality.hires)
@@ -41,9 +51,7 @@ private suspend fun _fetchNeteaseSongDetails(chunk: List<Map<String, Any?>>): Li
             Song(
                 id = "netease:${sm["id"]}",
                 title = decodeHtmlEntities((sm["name"] ?: "").toString()),
-                artist = decodeHtmlEntities(
-                    arList.map { (it["name"] ?: "").toString() }.joinToString(" / "),
-                ),
+                artist = artistNames.joinToString(" / "),
                 cover = cover,
                 album = decodeHtmlEntities((al["name"] ?: "").toString()),
                 albumId = if (jsTruthy(al["id"])) al["id"].toString() else null,
@@ -54,6 +62,8 @@ private suspend fun _fetchNeteaseSongDetails(chunk: List<Map<String, Any?>>): Li
                 tlyric = null,
                 qualities = if (qualities.isNotEmpty()) qualities else listOf(Quality.k128k),
                 qualitySizes = parseNeteaseQualitySizes(sm),
+                artistNames = artistNames,
+                artistIds = artistIds,
             )
         }
     } catch (_: Throwable) {

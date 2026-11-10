@@ -405,7 +405,7 @@ private fun _kuwoHotPlaylist(
     val id = attrs["id"].orEmpty()
     val name = attrs["name"].orEmpty()
     if (id.isEmpty() || name.isEmpty()) return null
-    val cover = _kuwoHomeCover(attrs["img"].orEmpty())
+    val cover = _kuwoHomeCover(_kuwoFeedImage(attrs))
     val listen = attrs["listencnt"]?.toLongOrNull() ?: 0L
     return HomeItem(
         key = "kuwo:playlist:$id",
@@ -424,7 +424,7 @@ private fun _kuwoHotAlbum(attrs: Map<String, String>): HomeItem? {
     val name = attrs["name"].orEmpty()
     if (id.isEmpty() || name.isEmpty()) return null
     val artist = attrs["artist"].orEmpty()
-    val cover = _kuwoHomeCover(attrs["img"].orEmpty())
+    val cover = _kuwoHomeCover(_kuwoFeedImage(attrs))
     return HomeItem(
         key = "kuwo:album:$id",
         title = name,
@@ -443,6 +443,15 @@ private fun _kuwoHotAlbum(attrs: Map<String, String>): HomeItem? {
  */
 private fun _kuwoHomeCover(url: String): String =
     if (url.isEmpty()) "" else url.replace("/300/", "/500/")
+
+/**
+ * feed 条目的图：`img` 是常规位，**运营位（`banner` 里 `statistics_id=text_ad_*` 那些）只有
+ * `pic_full_size`**，没有 `img`。只读 `img` 会让整行运营卡变成无图占位。
+ */
+private fun _kuwoFeedImage(attrs: Map<String, String>): String =
+    attrs["img"].orEmpty()
+        .ifEmpty { attrs["pic_full_size"].orEmpty() }
+        .ifEmpty { attrs["small_img"].orEmpty() }
 
 // ── 属性解析 ──
 

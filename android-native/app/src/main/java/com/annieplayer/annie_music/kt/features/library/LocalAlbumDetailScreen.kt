@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,15 +34,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImage
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
+import com.annieplayer.annie_music.kt.core.state.FavoriteViewModel
 import com.annieplayer.annie_music.kt.data.local.LocalLibraryStore
 import com.annieplayer.annie_music.kt.data.local.LocalTrackMeta
 import com.annieplayer.annie_music.kt.data.local.albumGroupKey
+import com.annieplayer.annie_music.kt.data.local.localAlbumDateOf
+import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.ui.theme.AppColors
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
+import com.annieplayer.annie_music.kt.widgets.DetailHeartButton
 import com.annieplayer.annie_music.kt.widgets.DetailPlayAllPill
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.clickableRipple
@@ -90,6 +96,14 @@ fun LocalAlbumDetailScreen(
     // 与流媒体 `AlbumDetailSheet` 完全一致：整页配色（背景染色 + 正在播放主色）都跟随专辑封面取色
     val heroCoverUrl = heroCover?.let { "file://$it" }
     val palette = rememberCoverPalette(heroCoverUrl)
+
+    // 收藏：键直接用曲库算出来的 albumKey（`albumGroupKey` 用的是 albumArtist，
+    // 与 `FavoriteKeys.album` 拼的 artistDisplay 不一定相同，不能自己重算）
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+    val favoriteSnapshot by favoriteViewModel.snapshot.collectAsState()
+    val favorited = remember(favoriteSnapshot, albumKey) {
+        favoriteViewModel.isAlbumFavorite(albumKey)
+    }
 
     // 出栈由 AppShell 的全局 PAGE 处理器统一做
 
@@ -185,6 +199,21 @@ fun LocalAlbumDetailScreen(
                             }
                             Spacer(modifier = Modifier.height(AppSpacing.sp16))
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                DetailHeartButton(
+                                    selected = favorited,
+                                    onClick = {
+                                        favoriteViewModel.toggleAlbum(
+                                            platform = MusicPlatform.local,
+                                            albumId = null,
+                                            name = title,
+                                            artist = subtitle,
+                                            cover = heroCoverUrl.orEmpty(),
+                                            paths = ordered.map { it.path },
+                                            key = albumKey,
+                                        )
+                                    },
+                                )
+                                Spacer(modifier = Modifier.width(AppSpacing.sp16))
                                 DetailPlayAllPill(
                                     onClick = { if (ordered.isNotEmpty()) onPlayAt(ordered, 0) },
                                     enabled = ordered.isNotEmpty(),
@@ -231,15 +260,14 @@ fun LocalAlbumDetailScreen(
 }
 
 /**
- * Hero 元信息：`2024 · 12 首 · 3.4 GB · FLAC 24bit 96kHz`（照 `albumDetailMetaLine`）。
+ * Hero 元信息：`2024-03-08 · 12 首 · 3.4 GB · FLAC 24bit 96kHz`（照 `albumDetailMetaLine`）。
  *
  * 位深/采样率取该专辑里**最高的一首**（同专辑大多同规格，取最高的那首最有代表性）。
  */private fun albumMetaLine(tracks: List<LocalTrackMeta>): String {
     if (tracks.isEmpty()) return ""
     val parts = ArrayList<String>(4)
-    tracks.firstNotNullOfOrNull { t ->
-        t.year?.take(4)?.takeIf { y -> y.length == 4 && y.all(Char::isDigit) }
-    }?.let { parts += it }
+    // 发行日期（不只是年）：与专辑卡、专辑列表排序同一条规范化规则（`normalizeReleaseDate`）
+    localAlbumDateOf(tracks)?.let { parts += it }
     parts += "${tracks.size} 首"
     val bytes = tracks.sumOf { it.size }
     if (bytes > 0) {

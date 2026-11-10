@@ -2,13 +2,7 @@ package com.annieplayer.annie_music.kt.widgets
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -43,6 +37,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -50,7 +45,6 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -80,8 +74,10 @@ import com.annieplayer.annie_music.kt.core.routing.BackTarget
 import com.annieplayer.annie_music.kt.core.routing.handleBack
 import com.annieplayer.annie_music.kt.core.state.AlbumDetailData
 import com.annieplayer.annie_music.kt.core.state.AlbumRoute
+import com.annieplayer.annie_music.kt.core.state.AppleReleaseSection
 import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
+import com.annieplayer.annie_music.kt.core.state.FavoriteViewModel
 import com.annieplayer.annie_music.kt.core.state.MoreSettings
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
@@ -90,17 +86,23 @@ import com.annieplayer.annie_music.kt.features.downloads.DownloadMeta
 import com.annieplayer.annie_music.kt.features.downloads.batchDownloadQualities
 import com.annieplayer.annie_music.kt.features.downloads.downloadOneAndRegister
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
+import com.annieplayer.annie_music.kt.core.state.SingerDetailCache
+import com.annieplayer.annie_music.kt.core.state.SingerDetailCacheState
 import com.annieplayer.annie_music.kt.core.state.SingerDetailData
+import com.annieplayer.annie_music.kt.core.state.mergeSongs
 import com.annieplayer.annie_music.kt.core.state.UiViewModel
 import com.annieplayer.annie_music.kt.core.state.toOverlayFlags
 import com.annieplayer.annie_music.kt.data.DownloadDirService
 import com.annieplayer.annie_music.kt.data.enrichSong
+import com.annieplayer.annie_music.kt.data.favorites.FavoriteKeys
+import com.annieplayer.annie_music.kt.data.artistSongsBatchSize
 import com.annieplayer.annie_music.kt.data.fetchArtistAlbumsByPlatform
 import com.annieplayer.annie_music.kt.data.fetchArtistAvatarByPlatform
 import com.annieplayer.annie_music.kt.data.fetchArtistBioByPlatform
+import com.annieplayer.annie_music.kt.data.fetchArtistSongsBatch
 import com.annieplayer.annie_music.kt.data.fetchArtistSongsByPlatform
+import com.annieplayer.annie_music.kt.data.fetchArtistSongsQuick
 import com.annieplayer.annie_music.kt.data.fetchDownloadUrlBySong
-import com.annieplayer.annie_music.kt.data.fetchLyric
 import com.annieplayer.annie_music.kt.data.fetchPlayUrlBySong
 import com.annieplayer.annie_music.kt.data.playQualityLabelOf
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
@@ -135,17 +137,19 @@ import okhttp3.Request
  * 歌手详情浮层（1:1 移植 Flutter `lib/widgets/singer_detail_sheet.dart`，对齐 RN 版
  * components/SingerDetailOverlay.tsx）。
  *
+ * **一个路由 = 一页内容**：`page` 由宿主传（overview / 全部单曲 / 全部专辑），本组件内部
+ * 不再有「页内 tab」这层状态。三个页面各是**独立的一层栈**（`SingerRoute` /
+ * `SingerSongsRoute` / `SingerAlbumsRoute`），返回逐层退回，与本地曲库那套子页对称。
+ * 数据通过 `SingerDetailCache` 按歌手共享，所以从 overview 点「全部」不会重新拉一次。
+ *
  * 结构（自上而下）：返回条（多选时含三态全选 + 多选 / 取消 chip）→ 歌手头像 / 名字 / 歌曲数 →
- * （多选时）批量下载条 [MultiSelectDownloadBar] →「歌曲 / 专辑」分段 → 内容区（分页歌曲列表，或 2 列专辑网格）。
+ * （多选时）批量下载条 → 内容区（overview 分段预览 / 分页歌曲列表 / 2 列专辑网格）。
  *
  * 关键行为：
- * - 每次以 `data.id` 为 key 重建内部状态（对应 Flutter 的 ValueKey）。
  * - 歌曲每页 20 首，底部渲染分页器（对齐 RN 的页段算法）。
  * - 行点击播放；长按进入多选（带震动反馈）；多选模式下点击切换选中。
  * - 单曲 / 批量下载均先弹出音质选择器（150ms 淡入）。
- * - 返回手势：先关本页音质选择器；更高层浮层（播放页 / 队列 / ⋮ / 多歌手 / 下载队列 /
- *   专辑详情）可见时本页不响应（对齐 Flutter 各 PopScope 的「按层让位」规则，
- *   优先级数据见 core/routing/OverlayStack.kt）。
+ * - 返回手势：多选态下只退多选（`BackHandler`），出栈由宿主统一做。
  * - 头像为空时按平台补拉一次（从播放页 ⋮ 跳进来时 data.picture 是空的）。
  *
  * 背景：整屏铺 [CoverPaletteBackdrop]（`sheen = true`，与详情页同一套液态玻璃高光）——封面与色板
@@ -155,6 +159,10 @@ import okhttp3.Request
  * 本文件同时收纳 [detailDownloadSong] 下载助手与本页私有的统一笔重自绘图标；
  * 音质选择器复用共用组件 [QualityPickerSheet]。
  */
+
+/** 歌手详情的三页内容。页内不再切 tab，切页 = 压栈。 */
+enum class SingerDetailPage { overview, songs, albums }
+
 @Composable
 fun SingerDetailSheet(
     data: SingerDetailData,
@@ -164,6 +172,14 @@ fun SingerDetailSheet(
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     modifier: Modifier = Modifier,
+    /** 本实例渲染哪一页（由路由决定，进来之后不再变）。 */
+    page: SingerDetailPage = SingerDetailPage.overview,
+    /** 仅「全部专辑」页：Apple 只看某一段；其它平台传 null。 */
+    albumSection: AppleReleaseSection? = null,
+    /** overview 的「最热门 · 全部 ›」：宿主压 `SingerSongsRoute`。 */
+    onOpenSongs: () -> Unit = {},
+    /** overview 的专辑段「全部 ›」：宿主压 `SingerAlbumsRoute`；Apple 传对应段。 */
+    onOpenAlbums: (AppleReleaseSection?) -> Unit = {},
     colorViewModel: ColorViewModel = activityViewModel(),
 ) {
     // 数据与可见性由宿主（详情真栈）传入：不再读 uiState 里的可见性/数据，也没有 early-return。
@@ -177,45 +193,12 @@ fun SingerDetailSheet(
             downloadViewModel = downloadViewModel,
             colorViewModel = colorViewModel,
             modifier = modifier,
+            page = page,
+            albumSection = albumSection,
+            onOpenSongs = onOpenSongs,
+            onOpenAlbums = onOpenAlbums,
         )
     }
-}
-
-/** 歌手详情内部可变状态（对齐 Dart `_SingerDetailViewState` 的字段） */
-private class SingerDetailState {
-    var tab by mutableStateOf("overview")
-
-    var songs by mutableStateOf<List<Song>>(emptyList())
-    var songTotal by mutableStateOf(0)
-    var songPageable by mutableStateOf(true)
-    var songPage by mutableStateOf(1)
-    var songLoading by mutableStateOf(false)
-    var songError by mutableStateOf("")
-
-    var albums by mutableStateOf<List<Album>>(emptyList())
-    var albumLoading by mutableStateOf(false)
-    var albumSortAsc by mutableStateOf(false)
-
-    /** Apple：专辑与 EP/单曲分开显示 */
-    var appleAlbums by mutableStateOf<List<Album>>(emptyList())
-    var appleSingles by mutableStateOf<List<Album>>(emptyList())
-    var appleReleaseSection by mutableStateOf<AppleReleaseSection?>(null)
-
-    val selectedSongs = mutableStateListOf<Song>()
-
-    /** 多选模式显式开关（长按行或头部「多选」chip 进入；「取消」/ 批量下载完成后退出）。 */
-    var selectMode by mutableStateOf(false)
-
-    var batchPickerVisible by mutableStateOf(false)
-    var batchDownloading by mutableStateOf(false)
-
-    /** 批量下载进度文案（[MultiSelectDownloadBar] 下载中展示，形如 `3/12 歌名`）。 */
-    var batchProgress by mutableStateOf("")
-
-    var avatarUrl by mutableStateOf("")
-
-    /** 歌手简介（各平台从已有的歌手接口顺带取；为空则整段不显示） */
-    var bio by mutableStateOf("")
 }
 
 @Composable
@@ -227,10 +210,15 @@ private fun SingerDetailContent(
     playerViewModel: PlayerViewModel,
     downloadViewModel: DownloadViewModel,
     colorViewModel: ColorViewModel,
+    page: SingerDetailPage,
+    albumSection: AppleReleaseSection?,
+    onOpenSongs: () -> Unit,
+    onOpenAlbums: (AppleReleaseSection?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val uiState by uiViewModel.state.collectAsState()
-    val st = remember { SingerDetailState() }
+    // 数据按歌手共享（overview 与两个子页是三个栈内页面，各自有组合实例）
+    val st = SingerDetailCache.of(data.platform, data.id)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -241,28 +229,88 @@ private fun SingerDetailContent(
 
     val artistName = data.name
 
-    suspend fun loadSongs(page: Int) {
-        st.songPage = page
-        st.songs = emptyList()
+    /** 收藏校准用（首页 / 详情页的爱心另有实例，同一个 Activity 作用域 VM） */
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+
+    /**
+     * 酷我 / 酷狗的「歌手单曲」接口不带结构化歌手字段：用本页歌手补上，
+     * 这样行尾 ⋮ 的「跳转到歌手」有确定 id（秒开），也不会把组合名按 & 拆成两个人。
+     */
+    fun withArtist(s: Song): Song =
+        if (s.artistNames.isEmpty()) {
+            s.copy(artistNames = listOf(data.name), artistIds = listOf(data.id))
+        } else {
+            s
+        }
+
+    /**
+     * 首屏一页（20 首）：overview 的「最热门」预览，也是「全部单曲」页的第一帧。
+     *
+     * 已有内容就直接返回 —— 续拉过的歌手再进来不能被打回 20 首。
+     */
+    suspend fun ensureFirstPage() {
+        if (st.songs.isNotEmpty()) return
+        // 第一阶段：KKBOX 的 `v3/artist` 自带 20 首热门（约 2 秒），先把它们摆上去，
+        // 别让整页空着等全量扫描（扫 800 条搜索索引要 7 秒）。
+        runCatching { fetchArtistSongsQuick(data.platform, data.id) }.getOrNull()?.let { quick ->
+            if (quick.isNotEmpty()) {
+                st.songs = quick.map(::withArtist)
+                st.songTotal = quick.size
+            }
+        }
         st.songLoading = true
         st.songError = ""
         try {
-            val result = fetchArtistSongsByPlatform(data.platform, data.id, page)
-            // 酷我 / 酷狗的「歌手单曲」接口不带结构化歌手字段：用本页歌手补上，
-            // 这样行尾 ⋮ 的「跳转到歌手」有确定 id（秒开），也不会把组合名按 & 拆成两个人。
-            st.songs = result.songs.map { s ->
-                if (s.artistNames.isEmpty()) {
-                    s.copy(artistNames = listOf(data.name), artistIds = listOf(data.id))
-                } else {
-                    s
-                }
-            }
-            st.songTotal = result.total
-            st.songPageable = result.pageable
+            val result = fetchArtistSongsByPlatform(data.platform, data.id, 1)
+            st.songs = result.songs.map(::withArtist)
+            st.songTotal = if (result.total > 0) result.total else st.songs.size
+            // 第 1 页正好等于平台一批（Apple 的 100）时，续拉不必再从头拉一遍；
+            // 其它平台第 1 页只有 20 首，必须从 0 开始，靠 `mergeSongs` 去重吃掉重叠
+            val batch = artistSongsBatchSize(data.platform)
+            st.songLoadedThrough = if (batch > 0 && st.songs.size >= batch) st.songs.size else 0
+            st.songComplete = false
         } catch (e: Exception) {
             st.songError = e.message ?: "加载失败"
         } finally {
             st.songLoading = false
+        }
+    }
+
+    /**
+     * 把剩下的曲目一批一批拉完。**只有进了「全部单曲」页才会调用**，overview 绝不触发。
+     *
+     * 每批追加到尾部（按 id 去重），所以列表变长时滚动位置不动、overview 的「最热门」
+     * 前 20 首也不变。退出页面 = 协程作用域被取消，已拉到的留在 [SingerDetailCache] 里，
+     * 下次进来从 `songLoadedThrough` 接着拉。
+     */
+    suspend fun loadRemainingSongs() {
+        if (st.songComplete) return
+        st.songError = ""
+        if (artistSongsBatchSize(data.platform) <= 0) {
+            // Qobuz 这类没有分页接口的平台，第一页就是全部
+            st.songComplete = true
+            return
+        }
+        while (true) {
+            val offset = st.songLoadedThrough
+            val batch = runCatching {
+                fetchArtistSongsBatch(data.platform, data.id, offset)
+            }.getOrNull()
+            if (batch == null) {
+                st.songError = "加载中断"
+                return
+            }
+            if (batch.songs.isEmpty()) {
+                st.songComplete = true
+                return
+            }
+            st.songs = mergeSongs(st.songs, batch.songs.map(::withArtist))
+            st.songLoadedThrough = offset + batch.songs.size
+            st.songTotal = maxOf(st.songTotal, st.songs.size)
+            if (!batch.hasMore) {
+                st.songComplete = true
+                return
+            }
         }
     }
 
@@ -283,14 +331,31 @@ private fun SingerDetailContent(
             st.appleAlbums = emptyList()
         } finally {
             st.albumLoading = false
+            // 空结果也算「拉过」：否则没有专辑的歌手每次进页面都再请求一次
+            st.albumsLoaded = true
         }
     }
 
     suspend fun loadAvatarIfNeeded() {
-        if (data.picture.isNotEmpty()) return
+        // 已收藏的歌手：**即使 `data.picture` 非空也拉一次** —— 收藏记录里的头像是收藏那一刻的，
+        // 打开歌手详情页正是校准它的时机（与专辑 / 歌单的曲目数校准同一套思路）。
+        // 未收藏且入参已有头像时照旧跳过，不多打一次请求。
+        val favorited = favoriteViewModel.isArtistFavorite(
+            FavoriteKeys.artist(data.platform, data.id, data.name),
+        )
+        if (data.picture.isNotEmpty() && !favorited) return
         try {
             val url = fetchArtistAvatarByPlatform(data.platform, data.id, data.name)
-            if (url.isNotEmpty()) st.avatarUrl = url
+            if (url.isNotEmpty()) {
+                st.avatarUrl = url
+                // 校准收藏记录（未收藏时内部直接返回，不写库）
+                favoriteViewModel.syncArtistMeta(
+                    platform = data.platform,
+                    artistId = data.id,
+                    name = data.name,
+                    picture = url,
+                )
+            }
         } catch (_: Exception) {
             // 对齐 Dart：补头像失败保持占位
         }
@@ -307,43 +372,9 @@ private fun SingerDetailContent(
         }
     }
 
-    fun switchTab(tab: String) {
-        if (st.tab == tab) return
-        st.tab = tab
-        if (tab == "album") {
-                // 切到「专辑」分页时退出多选：该分页没有歌曲可选，留着多选态会出现
-                // 「能进多选但没有可选项」的空壳状态（真机反馈）。
-                st.selectMode = false
-                st.selectedSongs.clear()
-                st.appleReleaseSection = null
-                scope.launch { loadAlbums() }
-            }
-    }
-
-    /** Apple overview「全部」：只进对应的 EP/单曲或专辑段，而不是两段一起看。 */
-    fun openAppleReleaseSection(section: AppleReleaseSection) {
-        st.appleReleaseSection = section
-        st.tab = "album"
-        st.selectMode = false
-        st.selectedSongs.clear()
-        if (st.albums.isEmpty()) scope.launch { loadAlbums() }
-    }
-
     fun toggleSelect(song: Song) {
         val idx = st.selectedSongs.indexOfFirst { it.id == song.id }
         if (idx >= 0) st.selectedSongs.removeAt(idx) else st.selectedSongs.add(song)
-    }
-
-    /** 全选 / 取消全选当前页歌曲（半选态点击同样走「补齐为全选」分支）。 */
-    fun toggleSelectAll() {
-        if (singerDetailAllSelected(st.songs, st.selectedSongs)) {
-            val pageIds = st.songs.map { it.id }.toSet()
-            st.selectedSongs.removeAll { it.id in pageIds }
-        } else {
-            for (s in st.songs) {
-                if (st.selectedSongs.none { it.id == s.id }) st.selectedSongs.add(s)
-            }
-        }
     }
 
     /** 进入 / 退出多选；退出时连同已选歌曲一并清空（等价原「清空」的观感）。 */
@@ -362,9 +393,11 @@ private fun SingerDetailContent(
         playerViewModel.setQueue(st.songs, idx)
         try {
             val url = fetchPlayUrlBySong(song)
-            val lyric = fetchLyric(song)
             playerViewModel.updateSongPlayUrl(song.id, url)
-                    playerViewModel.updateSongLyric(song.id, lyric.lrc, lyric.tlyric, lyric.wordLyric, lyric.translateLangs)
+            // 歌词**不在这里取**：`setQueue` 已经让 `PlayerState._ensureLyric` 发起了（它知道
+            // KKBOX 要带 sid）。这里再取一次是不带 sid 的版本，KKBOX 会拿到「暂无歌词」占位，
+            // 而它跑在取链之后（高音质要 1.5s+）—— 正好把已经拿到的真歌词**覆盖掉**。
+            // 首次播放没歌词、第二次重播才有（取链命中磁盘变快，占位先到、真歌词后到）就是这个。
         } catch (_: Exception) {
             // 对齐 Dart：拉取失败静默忽略
         }
@@ -381,6 +414,8 @@ private fun SingerDetailContent(
                     name = album.name,
                     artist = album.artist,
                     platform = album.platform,
+                    // 这批专辑本来就是这个歌手的，平台没给 album.artistId 时用当前歌手 id 兜底
+                    artistId = album.artistId.ifEmpty { data.id },
                 ),
             ),
         )
@@ -419,34 +454,42 @@ private fun SingerDetailContent(
         st.selectMode = false
     }
 
-    LaunchedEffect(Unit) {
-        if (data.platform == MusicPlatform.apple) {
-            // Apple 详情涉及歌曲、专辑、EP/单曲、头像、简介多个接口，并行拉取
-            coroutineScope {
-                launch { loadSongs(1) }
-                launch { loadAlbums() }
-                launch { loadAvatarIfNeeded() }
-                launch { loadBioIfNeeded() }
+    // 首帧只拉「本页 + 公共头图」需要的东西；缓存里已有的不重复拉
+    // （overview 与两个子页共享 `SingerDetailCache`，从 overview 点「全部」不该再等一轮请求）。
+    LaunchedEffect(page) {
+        coroutineScope {
+            launch { if (st.avatarUrl.isEmpty()) loadAvatarIfNeeded() }
+            launch { loadBioIfNeeded() }
+            when (page) {
+                SingerDetailPage.overview -> {
+                    // 本页只要「最热门 前几首」+「专辑横滑」—— **绝不续拉全量**
+                    launch { ensureFirstPage() }
+                    launch { if (!st.albumsLoaded) loadAlbums() }
+                }
+
+                // 「全部单曲」页：先保证有一页可看，再把剩下的在后台续拉完。
+                // 必须串在**同一个协程**里：并行的话续拉可能先拿到 1000 首，
+                // 随后 `ensureFirstPage` 用第 1 页把它覆盖掉。
+                SingerDetailPage.songs -> launch {
+                    ensureFirstPage()
+                    loadRemainingSongs()
+                }
+
+                SingerDetailPage.albums -> launch { if (!st.albumsLoaded) loadAlbums() }
             }
-        } else {
-            loadSongs(1)
-            // overview 需要同时有「Most popular 前几首」与「Albums 横滑」，进页就把两者都拉上
-            loadAlbums()
-            loadAvatarIfNeeded()
-            loadBioIfNeeded()
         }
     }
 
-    // 返回手势：本页**只管页内状态**（子 tab 回退 / 多选退出）。出栈由 `AppShell` 的全局
-    // PAGE 处理器统一做；更高层浮层（音质 / 队列 / 播放页 / ⋮）由更上层的 BackHandler 优先消费。
-    //
-    // **必须带 `isTop`**，否则会出现「站在『全部歌曲』里再压进一张专辑，返回键毫无反应」：
-    //   - `tab != "overview"` 让本 handler 常驻启用；
-    //   - 而 `AlbumDetailSheet` 平时没有启用的 BackHandler（只在多选模式注册）；
-    //   - OnBackPressedDispatcher 按注册逆序派发，唯一启用的就是本 handler；
-    //   - 于是它吃掉返回，把**下层**的 tab 悄悄切回 overview，上层页面纹丝不动。
-    //
-    // 加上 `isTop` 后，被压在下面时本 handler 自动禁用，返回交给栈顶页面 / 全局 PAGE 处理器。
+    // 退出这一页时清掉多选态：`selectMode` 存在共享缓存里，靠「页面在组合里」来收尾
+    // 会留下一个回到子页就自动全选的怪状态。
+    DisposableEffect(page) {
+        onDispose {
+            if (page == SingerDetailPage.songs) {
+                st.selectMode = false
+                st.selectedSongs.clear()
+            }
+        }
+    }
 
     // 进出场：150ms + 线性（AppDuration.sheet + AppEasing.linear，与其它浮层同规格）
     val slide = remember { Animatable(1f) }
@@ -472,26 +515,18 @@ private fun SingerDetailContent(
         }
     }
 
-    // 子页（全部歌曲 / 全部专辑）的返回先回 overview（不播滑出），overview 才真正关面板
-    fun goBack() {
-        if (st.tab != "overview") {
-            st.tab = "overview"
-            st.selectMode = false
-            st.selectedSongs.clear()
-            // overview 的「最热门」只认第 1 页 → 从完整列表回来时把列表复位
-            if (st.songPage != 1) scope.launch { loadSongs(1) }
-        } else {
-            requestClose()
-        }
-    }
-
     // 把「带动画出栈」注册给返回裁决（AppShell 收到返回时优先走这里，而不是直接 popRoute）
     com.annieplayer.annie_music.kt.core.routing.RememberPageClose { requestClose() }
-    BackHandler(enabled = isTop && (st.tab != "overview" || st.selectMode)) { goBack() }
 
-    val totalPages = (st.songTotal + PageSize - 1) / PageSize
-    val pageRange = singerDetailPageRange(st.songPage, totalPages)
-    val showPagination = st.songPageable && totalPages > 1
+    // 返回手势：本页**只管多选退出**这一层，出栈（含从子页退回 overview）由 AppShell 的
+    // PAGE 处理器统一做 —— 子页现在是独立路由，不需要本页替它分派。
+    //
+    // **必须带 `isTop`**：被压在别的页面下面时本 handler 若仍启用，会抢走上层的返回，
+    // 而它只清掉下层的选中，表现为「返回键毫无反应」。
+    BackHandler(enabled = isTop && st.selectMode) {
+        st.selectMode = false
+        st.selectedSongs.clear()
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         // ── 遮罩（Flutter: Color(0x80000000)，点击不关闭） ──
@@ -504,7 +539,7 @@ private fun SingerDetailContent(
                 .fillMaxSize()
                 // 吞掉面板空白处的点击：本浮层盖在歌手搜索结果之上，若不吞，未命中可点子元素的
                 // 触摸会**漏给下层列表**（真机复现：点「待下载歌曲」那片区域跳到了下一个歌手）。
-                // 与专辑详情面板同一套做法（见 AlbumDetailSheet）。
+                // 整屏的指针拦截由宿主页面栈统一做；面板自己再吃一层，面板内部的空白同样不漏。
                 .clickableNoRipple { }
                 .graphicsLayer { translationY = slide.value * size.height },
         ) {
@@ -518,27 +553,24 @@ private fun SingerDetailContent(
             )
             Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
                 SingerDetailHeader(
-                    // 多选入口只在「全部歌曲」子页出现（专辑子页没有歌曲可选）
-                    showSelectEntry = st.tab == "song",
-                    selectMode = st.tab == "song" && st.selectMode,
-                    selectedAll = st.tab == "song" && st.selectMode &&
-                        singerDetailTriState(st.songs, st.selectedSongs) ==
-                        SingerDetailTriState.Checked,
-                    onClose = { goBack() },
-                    onToggleSelectAll = { toggleSelectAll() },
+                    // 多选入口只在「全部单曲」页出现（专辑页没有歌曲可选）
+                    showSelectEntry = page == SingerDetailPage.songs,
+                    selectMode = page == SingerDetailPage.songs && st.selectMode,
+                    onClose = { requestClose() },
                     onToggleSelectMode = { toggleSelectMode() },
-                    title = when (st.tab) {
-                        "song" -> "全部单曲"
-                        "album" -> "全部专辑"
-                        else -> "歌手详情"
+                    title = when (page) {
+                        SingerDetailPage.songs -> "全部单曲"
+                        SingerDetailPage.albums -> "全部专辑"
+                        SingerDetailPage.overview -> "歌手详情"
                     },
-                    titleCount = if (st.tab == "song" && st.songTotal > 0) {
-                        "${st.songTotal} 首"
+                    // 续拉期间跟着列表一起长，拉完就是真总数
+                    titleCount = if (page == SingerDetailPage.songs && st.songs.isNotEmpty()) {
+                        "${maxOf(st.songTotal, st.songs.size)} 首"
                     } else {
                         null
                     },
                 )
-                if (st.tab == "song" && st.selectMode) {
+                if (page == SingerDetailPage.songs && st.selectMode) {
                     // 待下载选择条（对齐 Dart `_selectionBar`）：数量徽标 + 「待下载歌曲」+
                     // 清空 + 下载全部。样式与新的视觉语言一致（玻璃条 + 主色动作按钮），
                     // 进度文案沿用 `st.batchProgress`（形如 `3/12 歌名`）。
@@ -608,64 +640,47 @@ private fun SingerDetailContent(
                     }
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    AnimatedContent(
-                        targetState = st.tab,
-                        transitionSpec = {
-                            // 进子页时新页从右侧滑入、返回时从左侧滑入（overview 视为上一层）
-                            val enterFromRight = targetState != "overview"
-                            val enter = slideInHorizontally(
-                                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
-                            ) { if (enterFromRight) it else -it / 3 }
-                            val exit = slideOutHorizontally(
-                                animationSpec = tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear),
-                            ) { if (enterFromRight) -it / 3 else it }
-                            (enter + fadeIn(tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear))) togetherWith
-                                (exit + fadeOut(tween(durationMillis = AppDuration.sheet, easing = AppEasing.linear)))
-                        },
-                        label = "singerDetailView",
-                    ) { tab ->
-                        when (tab) {
-                            "overview" -> SingerDetailOverview(
-                                st = st,
-                                data = data,
-                                artistName = artistName,
-                                apple = data.platform == MusicPlatform.apple,
-                                activeSongId = playerState.currentSong?.id,
-                                onPlay = { scope.launch { playSong(it) } },
-                                onDownload = { uiViewModel.setSongActionsVisible(true, it) },
-                                onOpenAlbum = { openAlbum(it) },
-                                onSeeAllSongs = { switchTab("song") },
-                                onSeeAllSingles = { openAppleReleaseSection(AppleReleaseSection.singles) },
-                                onSeeAllAlbums = {
+                    // 页内不再切 tab：每一页是一次压栈（`SingerRoute` / `SingerSongsRoute` /
+                    // `SingerAlbumsRoute`），进出场由本页自己的 slide 负责。
+                    when (page) {
+                        SingerDetailPage.overview -> SingerDetailOverview(
+                            st = st,
+                            data = data,
+                            artistName = artistName,
+                            apple = data.platform == MusicPlatform.apple,
+                            activeSongId = playerState.currentSong?.id,
+                            onPlay = { scope.launch { playSong(it) } },
+                            onDownload = { uiViewModel.setSongActionsVisible(true, it) },
+                            onOpenAlbum = { openAlbum(it) },
+                            onSeeAllSongs = onOpenSongs,
+                            onSeeAllSingles = { onOpenAlbums(AppleReleaseSection.singles) },
+                            onSeeAllAlbums = {
+                                onOpenAlbums(
                                     if (data.platform == MusicPlatform.apple) {
-                                        openAppleReleaseSection(AppleReleaseSection.albums)
+                                        AppleReleaseSection.albums
                                     } else {
-                                        switchTab("album")
-                                    }
-                                },
-                            )
+                                        null
+                                    },
+                                )
+                            },
+                        )
 
-                            "song" -> SingerDetailSongs(
-                                st = st,
-                                tasks = tasks,
-                                activeSongId = playerState.currentSong?.id,
-                                totalPages = totalPages,
-                                pageRange = pageRange,
-                                showPagination = showPagination,
-                                onPlay = { scope.launch { playSong(it) } },
-                                onDownload = { uiViewModel.setSongActionsVisible(true, it) },
-                                onToggle = { toggleSelect(it) },
-                                onGoToPage = { scope.launch { loadSongs(it) } },
-                            )
+                        SingerDetailPage.songs -> SingerDetailSongs(
+                            st = st,
+                            tasks = tasks,
+                            activeSongId = playerState.currentSong?.id,
+                            onPlay = { scope.launch { playSong(it) } },
+                            onDownload = { uiViewModel.setSongActionsVisible(true, it) },
+                            onToggle = { toggleSelect(it) },
+                        )
 
-                            else -> SingerDetailAlbums(
-                                st = st,
-                                apple = data.platform == MusicPlatform.apple,
-                                filter = st.appleReleaseSection,
-                                onSortToggle = { st.albumSortAsc = !st.albumSortAsc },
-                                onOpenAlbum = { openAlbum(it) },
-                            )
-                        }
+                        SingerDetailPage.albums -> SingerDetailAlbums(
+                            st = st,
+                            apple = data.platform == MusicPlatform.apple,
+                            filter = albumSection,
+                            onSortToggle = { st.albumSortAsc = !st.albumSortAsc },
+                            onOpenAlbum = { openAlbum(it) },
+                        )
                     }
                 }
             }
@@ -712,63 +727,20 @@ private fun SingerDetailContent(
     }
 }
 
-/** 分页大小（对齐 Dart `_pageSize = 20`） */
-private const val PageSize = ArtistSongsPageSize
-
-/** 当前页歌曲是否全部已选（头部三态全选用；空列表视为未全选）。 */
-private fun singerDetailAllSelected(pageSongs: List<Song>, selected: List<Song>): Boolean =
-    pageSongs.isNotEmpty() && pageSongs.all { s -> selected.any { it.id == s.id } }
-
-/** 当前页歌曲的三态（全选 / 部分选中 / 未选），供头部「全选 / 取消全选」按钮使用。 */
-private fun singerDetailTriState(pageSongs: List<Song>, selected: List<Song>): SingerDetailTriState = when {
-    singerDetailAllSelected(pageSongs, selected) -> SingerDetailTriState.Checked
-    pageSongs.any { s -> selected.any { it.id == s.id } } -> SingerDetailTriState.Indeterminate
-    else -> SingerDetailTriState.Unchecked
-}
-
-/** 页段算法（对齐 Dart `_pageRange` / RN getPageRange） */
-private fun singerDetailPageRange(current: Int, total: Int): List<Any> {
-    if (total <= 7) return (1..total).toList()
-    val result = mutableListOf<Any>()
-    if (current <= 3) {
-        val max = if (total < 4) total else 4
-        for (i in 1..max) result.add(i)
-        if (total > 4) {
-            result.add("ellipsis")
-            result.add(total)
-        }
-    } else if (current >= total - 2) {
-        result.add(1)
-        result.add("ellipsis")
-        for (i in (total - 3)..total) result.add(i)
-    } else {
-        result.add(1)
-        result.add("ellipsis")
-        result.add(current - 1)
-        result.add(current)
-        result.add(current + 1)
-        result.add("ellipsis")
-        result.add(total)
-    }
-    return result
-}
-
 // ================================================================================================
 // 头部与信息区
 // ================================================================================================
 
 /**
- * 返回条：chevron_left 22 +（多选态）全选 / 取消全选 + 多选 / 取消。
+ * 返回条：chevron_left 22 +（多选态）多选 / 取消。
  *
  * 与专辑详情同款：都是纯文字主色按钮（不用玻璃 chip），多选入口只在「全部歌曲」子页出现。
  */
 @Composable
 private fun SingerDetailHeader(
     selectMode: Boolean,
-    selectedAll: Boolean,
     showSelectEntry: Boolean,
     onClose: () -> Unit,
-    onToggleSelectAll: () -> Unit,
     onToggleSelectMode: () -> Unit,
     title: String? = null,
     titleCount: String? = null,
@@ -810,20 +782,6 @@ private fun SingerDetailHeader(
             }
         }
         Spacer(modifier = Modifier.weight(1f))
-        if (showSelectEntry && selectMode) {
-            Box(
-                modifier = Modifier
-                    .clickableRipple(onToggleSelectAll)
-                    .padding(AppSpacing.sp4),
-            ) {
-                Text(
-                    text = if (selectedAll) "取消全选" else "全选",
-                    color = AppColors.primary,
-                    fontSize = AppFontSize.size13,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-        }
         if (showSelectEntry) {
             Box(
                 modifier = Modifier
@@ -855,11 +813,12 @@ private const val SingerDetailOverviewAlbumCount = 10
  * overview 页：大头像 Hero + 动作行 +「Most popular」前几首 +「Albums」横滑。
  *
  * 数据全部来自本页已有的 `st.songs`（第 1 页）与 `st.albums`；
- * 两个 section 右侧的「全部 ›」把 `st.tab` 切到对应子页。
+ * 两个 section 右侧的「全部 ›」**压栈**（`SingerSongsRoute` / `SingerAlbumsRoute`），
+ * 由宿主回调完成。
  */
 @Composable
 private fun SingerDetailOverview(
-    st: SingerDetailState,
+    st: SingerDetailCacheState,
     data: SingerDetailData,
     artistName: String,
     apple: Boolean,
@@ -897,16 +856,17 @@ private fun SingerDetailOverview(
                 avatarUrl = st.avatarUrl.ifEmpty { data.picture },
                 avatarKey = data.id,
                 bio = st.bio,
+                platform = data.platform,
                 onPlayAll = { st.songs.firstOrNull()?.let(onPlay) },
                 playEnabled = st.songs.isNotEmpty(),
             )
         }
-        // 「全部」只在预览装不下时出现（歌数超过一页 / 专辑数超过预览上限）
-        val showSeeAllSongs = st.songTotal > ArtistSongsPageSize
+        // 「全部」**恒定出现**（只要这一段有内容）：一首歌 / 一张专辑也能进去看，
+        // 那里有排序与完整信息；预览段装得下就不给入口的旧规则会让「全部」变得不可预期。
         item {
             SingerDetailSectionHeader(
                 title = "最热门",
-                onSeeAll = if (showSeeAllSongs) onSeeAllSongs else null,
+                onSeeAll = if (st.songs.isEmpty()) null else onSeeAllSongs,
             )
         }
         item {
@@ -942,11 +902,7 @@ private fun SingerDetailOverview(
                 item {
                     SingerDetailSectionHeader(
                         title = "单曲 / EP",
-                        onSeeAll = if (st.appleSingles.size > SingerDetailOverviewAlbumCount) {
-                            onSeeAllSingles
-                        } else {
-                            null
-                        },
+                        onSeeAll = if (appleSingles.isEmpty()) null else onSeeAllSingles,
                     )
                 }
                 item {
@@ -961,11 +917,7 @@ private fun SingerDetailOverview(
                 item {
                     SingerDetailSectionHeader(
                         title = "专辑",
-                        onSeeAll = if (st.appleAlbums.size > SingerDetailOverviewAlbumCount) {
-                            onSeeAllAlbums
-                        } else {
-                            null
-                        },
+                        onSeeAll = if (appleAlbums.isEmpty()) null else onSeeAllAlbums,
                     )
                 }
                 item {
@@ -980,7 +932,7 @@ private fun SingerDetailOverview(
             item {
                 SingerDetailSectionHeader(
                     title = "专辑",
-                    onSeeAll = if (st.albums.size > SingerDetailOverviewAlbumCount) onSeeAllAlbums else null,
+                    onSeeAll = if (recentAlbums.isEmpty()) null else onSeeAllAlbums,
                 )
             }
             item {
@@ -1060,9 +1012,19 @@ private fun SingerDetailHero(
     avatarUrl: String,
     avatarKey: String,
     bio: String,
+    platform: MusicPlatform,
     onPlayAll: () -> Unit,
     playEnabled: Boolean,
 ) {
+    // 收藏状态就地取（Activity 作用域 VM），不穿透列表层
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+    val favoriteSnapshot by favoriteViewModel.snapshot.collectAsState()
+    val favoriteKey = remember(avatarKey, platform) {
+        FavoriteKeys.artist(platform, avatarKey, name)
+    }
+    val favorited = remember(favoriteSnapshot, favoriteKey) {
+        favoriteViewModel.isArtistFavorite(favoriteKey)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1137,15 +1099,29 @@ private fun SingerDetailHero(
             )
         }
         Spacer(modifier = Modifier.height(AppSpacing.sp16))
-        DetailPlayAllPill(onClick = onPlayAll, enabled = playEnabled)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DetailHeartButton(
+                selected = favorited,
+                onClick = {
+                    favoriteViewModel.toggleArtist(
+                        platform = platform,
+                        artistId = avatarKey,
+                        name = name,
+                        picture = avatarUrl,
+                    )
+                },
+            )
+            Spacer(modifier = Modifier.width(AppSpacing.sp16))
+            DetailPlayAllPill(onClick = onPlayAll, enabled = playEnabled)
+        }
     }
 }
 
 /**
  * section 标题行：左侧标题 + 右侧「全部 ›」玻璃 pill。
  *
- * [onSeeAll] 传 `null` 时**不渲染「全部」** —— 与本地曲库歌手详情同一规则：
- * 预览段已经装下了全部内容时，那个按钮点了也是同一个列表，纯噪声。
+ * [onSeeAll] 传 `null` 只在**这一段还没有数据**时用（加载中不出按钮）；
+ * 有内容就一定给 —— 一首歌 / 一张专辑也能进「全部」页。
  */
 @Composable
 private fun SingerDetailSectionHeader(title: String, onSeeAll: (() -> Unit)? = null) {
@@ -1221,25 +1197,18 @@ private fun SingerDetailQualityBadge(label: String, modifier: Modifier = Modifie
     }
 }
 
-/** 头部全选控件三态：未选 / 部分选中 / 全选。 */
-private enum class SingerDetailTriState { Unchecked, Indeterminate, Checked }
-
 // ================================================================================================
-// 歌曲 Tab
+// 歌曲页
 // ================================================================================================
 
 @Composable
 private fun SingerDetailSongs(
-    st: SingerDetailState,
+    st: SingerDetailCacheState,
     tasks: Map<String, DownloadTask>,
     activeSongId: String?,
-    totalPages: Int,
-    pageRange: List<Any>,
-    showPagination: Boolean,
     onPlay: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onToggle: (Song) -> Unit,
-    onGoToPage: (Int) -> Unit,
 ) {
     when {
         st.songLoading -> {
@@ -1248,7 +1217,9 @@ private fun SingerDetailSongs(
             }
         }
 
-        st.songError.isNotEmpty() -> {
+        // 只有「一首都没拿到」才整页报错：续拉中断时列表里已经有内容了，
+        // 那种情况由列表底部的状态行说明，不能把整页换成错误页
+        st.songError.isNotEmpty() && st.songs.isEmpty() -> {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1302,18 +1273,46 @@ private fun SingerDetailSongs(
                         },
                     )
                 }
-                if (showPagination) {
-                    item {
-                        SingerDetailPagination(
-                            current = st.songPage,
-                            totalPages = totalPages,
-                            range = pageRange,
-                            onGoTo = onGoToPage,
-                        )
-                    }
+                // 底部状态行：续拉进度 / 到底了。列表在变长，滚动位置不受影响
+                item {
+                    SingerDetailSongsFooter(
+                        loaded = st.songs.size,
+                        total = st.songTotal,
+                        complete = st.songComplete,
+                        error = st.songError,
+                    )
                 }
             }
         }
+    }
+}
+
+/**
+ * 「全部单曲」列表底部的续拉状态行。
+ *
+ * 列表是边拉边变长的，用户需要知道「还在加载」还是「已经到底」——
+ * 没有这一行的话，翻到末尾会以为歌手就这么几首。
+ */
+@Composable
+private fun SingerDetailSongsFooter(
+    loaded: Int,
+    total: Int,
+    complete: Boolean,
+    error: String,
+) {
+    val text = when {
+        complete -> "共 $loaded 首"
+        error.isNotEmpty() -> "已加载 $loaded 首 · $error"
+        total > loaded -> "已加载 $loaded / 共 $total 首 · 加载中…"
+        else -> "已加载 $loaded 首 · 加载中…"
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = AppSpacing.sp16),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = text, color = AppColors.white30, fontSize = AppFontSize.xs)
     }
 }
 
@@ -1457,36 +1456,29 @@ private fun SingerDetailSongRow(
                     Spacer(modifier = Modifier.width(AppSpacing.sp4))
                     SingerDetailQualityBadge(label = badge)
                 }
-                if (selected) {
-                    Spacer(modifier = Modifier.width(AppSpacing.sp4))
-                    Box(
-                        modifier = Modifier
-                            .size(AppSpacing.sp20)
-                            .clip(CircleShape)
-                            .background(AppColors.primary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        SingerDetailCheckMark(modifier = Modifier.size(14.dp), tint = AppColors.white)
-                    }
-                }
             }
         }
 
-        if (!selected) {
-            if (isDownloading) {
-                Box(
-                    modifier = Modifier.padding(AppSpacing.sp4),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        color = AppColors.primary,
-                        strokeWidth = 2.dp,
-                    )
-                }
-            } else {
-                SongMoreButton(onClick = { onDownload(song) })
+        // 行尾槽位：多选态 = 勾选框；常态 = 下载中环 / ⋮
+        if (selectionMode) {
+            SelectCheckBox(checked = selected, onToggle = { onToggle(song) })
+        } else if (isDownloading) {
+            Box(
+                modifier = Modifier.padding(AppSpacing.sp4),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    color = AppColors.primary,
+                    strokeWidth = 2.dp,
+                )
             }
+        } else {
+            // 命中区与多选勾选框同位同宽（48dp）：切多选时文字区不横向跳一格
+            SongMoreButton(
+                onClick = { onDownload(song) },
+                modifier = Modifier.minimumInteractiveComponentSize(),
+            )
         }
     }
 }
@@ -1521,91 +1513,13 @@ private fun SingerDetailCover(song: Song) {
     }
 }
 
-/** 分页器（对齐 Dart `_pagination` / `_pageButton`） */
-@Composable
-private fun SingerDetailPagination(
-    current: Int,
-    totalPages: Int,
-    range: List<Any>,
-    onGoTo: (Int) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = AppSpacing.sp12, vertical = AppSpacing.sp16),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        SingerDetailPageButton(
-            enabled = current > 1,
-            onTap = { onGoTo(current - 1) },
-        ) {
-            SingerDetailChevronLeft(modifier = Modifier.size(14.dp), tint = AppColors.glyphMid)
-        }
-        for (p in range) {
-            Spacer(modifier = Modifier.width(AppSpacing.sp4))
-            if (p == "ellipsis") {
-                Text(
-                    text = "...",
-                    modifier = Modifier.padding(horizontal = AppSpacing.sp2),
-                    color = AppColors.whiteA25,
-                    fontSize = AppFontSize.sm,
-                )
-            } else {
-                val page = p as Int
-                SingerDetailPageButton(
-                    active = current == page,
-                    onTap = { onGoTo(page) },
-                ) {
-                    Text(
-                        text = "$page",
-                        color = if (current == page) AppColors.white else AppColors.whiteA50,
-                        fontSize = AppFontSize.size13,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.width(AppSpacing.sp4))
-        SingerDetailPageButton(
-            enabled = current < totalPages,
-            onTap = { onGoTo(current + 1) },
-        ) {
-            SingerDetailChevronRight(modifier = Modifier.size(14.dp), tint = AppColors.glyphMid)
-        }
-    }
-}
-
-@Composable
-private fun SingerDetailPageButton(
-    enabled: Boolean = true,
-    active: Boolean = false,
-    onTap: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(AppSpacing.sp32)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.3f }
-            .clip(RoundedCornerShape(AppRadius.r8))
-            .background(if (active) AppColors.primary else AppColors.whiteA05)
-            .then(if (enabled) Modifier.clickableRipple(onTap) else Modifier),
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
-    }
-}
-
 // ================================================================================================
-// 专辑 Tab
+// 专辑页
 // ================================================================================================
-
-/** Apple 发行物子页筛选：从 overview 的「全部」进入时只看对应一段。 */
-private enum class AppleReleaseSection { singles, albums }
 
 @Composable
 private fun SingerDetailAlbums(
-    st: SingerDetailState,
+    st: SingerDetailCacheState,
     apple: Boolean,
     filter: AppleReleaseSection?,
     onSortToggle: () -> Unit,
@@ -1812,13 +1726,18 @@ private fun SingerDetailAlbumCard(
                 )
                 Spacer(modifier = Modifier.height(AppSpacing.sp4))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SingerDetailMusicNote(modifier = Modifier.size(10.dp), tint = AppColors.glyphDim)
-                    Spacer(modifier = Modifier.width(AppSpacing.sp4))
-                    Text(
-                        text = "${album.musiccnt}首",
-                        color = AppColors.white30,
-                        fontSize = AppFontSize.size10,
-                    )
+                    // 曲目数：平台没给就不画（KKBOX 的专辑列表接口没有这个字段，
+                    // 逐张 `v1/album` 去数不划算）。见 `AlbumSearchResults` 同一处注释。
+                    if (album.musiccnt.toIntOrNull()?.let { it > 0 } == true) {
+                        SingerDetailMusicNote(modifier = Modifier.size(10.dp), tint = AppColors.glyphDim)
+                        Spacer(modifier = Modifier.width(AppSpacing.sp4))
+                        Text(
+                            text = "${album.musiccnt}首",
+                            color = AppColors.white30,
+                            fontSize = AppFontSize.size10,
+                        )
+                        Spacer(modifier = Modifier.width(AppSpacing.sp4))
+                    }
                     if (album.pub.isNotEmpty()) {
                         Spacer(modifier = Modifier.width(AppSpacing.sp4))
                         Text(

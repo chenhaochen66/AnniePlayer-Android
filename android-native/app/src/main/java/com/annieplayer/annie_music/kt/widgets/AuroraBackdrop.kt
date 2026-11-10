@@ -5,10 +5,6 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Shader
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -16,17 +12,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Canvas as GfxCanvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
@@ -35,10 +29,13 @@ import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.graphics.ColorUtils
 import com.annieplayer.annie_music.kt.core.util.extractPlayerCoverPalette
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
@@ -170,18 +167,14 @@ private const val FineNoiseAlpha = 0.016f
 private const val LowFrequencyNoiseAlpha = 0.45f
 
 /**
- * 重绘间隔：15fps。色斑位移速度上限是 0.03 归一化单位/秒，呼吸周期以十秒计，
- * 30fps 与 15fps 在屏幕上没有可辨差别，但每帧要付十几层全屏混合。
+ * 烤图降采样倍率。
+ *
+ * 2 而不是 1：整片是雾，放大插值看不出来；而烤图成本与像素数成正比，
+ * 砍到 1/4 像素让换封面时的重烤从 ~30ms 掉到 ~7ms。
  */
-private const val DrawIntervalNs = 66_000_000L
+private const val LiteDownscale = 2
 
-/** 色斑颜色补间时长（切歌时）。 */
-private const val BlobFadeMs = 900
-
-/** 底色补间时长。 */
-private const val BaseFadeMs = 900
-
-/** 色相慢漂移幅度（度）。各槽位周期不同，肉眼看不出动作，只觉得"在变"。 */
+/** 色相慢漂移幅度（度）。各槽位周期不同，静止图上看不出动作。 */
 private const val HueDriftDegrees = 4f
 
 // ================================================================================================
@@ -664,94 +657,34 @@ fun CoverPaletteBackdrop(
         }
     }
 
-    // 颜色与权重的补间调用次数恒定（槽位数固定），切歌时不需要为「族数变了」特判。
+    // 极光是**一张按封面算出来的静态图**：没有补间、没有帧时钟、没有物理积分。
     //
-    // 补的是**权重本身**而不是最终的 alpha / 半径：两者都从权重派生
-    // （[_blobAlpha] / [_blobRadiusFactor]），补权重等于同时补浓度和大小，
-    // 切歌时色斑是「一起长大/缩小」而不是先变淡再变大。
-    val colorStates = List(BlobSlotCount) { i ->
-        animateColorAsState(
-            targetValue = slotColors[i],
-            animationSpec = tween(BlobFadeMs + i * 70, easing = LinearEasing),
-            label = "aurora$i",
-        )
-    }
-    val animatedColors = Array(BlobSlotCount) { i -> colorStates[i].value }
+    // 每帧重画这十来层全屏混合的代价远大于它换来的观感 —— 骁龙 680 上实测 44 ms/帧
+    // （其中 82% 是纯填充），而色相漂移幅度只有 4°、周期以十秒计，静止根本看不出来。
+    // 切歌直接换图、不做 900ms 补间：补间期间每帧都要重烤一次，等于把卡顿
+    // 精确地放在用户最容易注意到的那一刻。
+    val animatedColors = slotColors
+    val animatedWeights = slotWeights
 
-    val weightStates = List(BlobSlotCount) { i ->
-        animateFloatAsState(
-            targetValue = slotWeights[i],
-            animationSpec = tween(BlobFadeMs, easing = LinearEasing),
-            label = "auroraWeight$i",
-        )
-    }
-    val animatedWeights = FloatArray(BlobSlotCount) { i -> weightStates[i].value }
+    val base = remember(palette.primary, baseLuma) { _baseColorFor(palette.primary, baseLuma) }
 
-    val baseTarget = remember(palette.primary, baseLuma) { _baseColorFor(palette.primary, baseLuma) }
-    val base by animateColorAsState(baseTarget, tween(BaseFadeMs, easing = LinearEasing), label = "auroraBase")
-
-    // 相位种子：呼吸与色相漂移的起始相位（同一封面同一节奏）
+    // 相位种子：色相漂移的起始相位（同一封面同一形态）
     val seed = remember(coverUrl) {
         (((coverUrl?.hashCode() ?: 0) and 0xFFFF).toFloat() / 65535f) * TwoPi
     }
 
-    // 家族重心 → 色斑锚点（含斥力松弛）
+    // 家族重心 → 色斑锚点（含斥力松弛）。静态下位置直接落在锚点上
+    // （`step` 的首次调用就是「初始化到锚点」）。
     val targets = remember(families) { _familyTargets(families) }
-    // 物理循环只启动一次，所以锚点必须通过 State 传递，否则切歌后色斑永远停在旧位置
-    val currentTargets by rememberUpdatedState(targets)
-    val field = remember { AuroraField(BlobSlotCount) }
+    val field = remember(targets) { AuroraField(BlobSlotCount).also { it.step(1f, targets) } }
 
-    // 两个时钟，分开是因为**读的位置决定失效范围**：
-    //   hueTick     —— 组合期读（Skia 对象缓存 key），1 Hz
-    //   animSeconds —— 只在绘制阶段读，15 Hz
-    // 合成一个 state 的后果：整页每秒重组 15 次（5 个颜色补间 + 5 个权重补间 +
-    // 一批 remember 数组），而真正需要连续变化的只有绘制。
-    var hueTick by remember { mutableIntStateOf(0) }
-    val animSeconds = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(Unit) {
-        var startNs = 0L
-        var lastNs = 0L
-        var stepAccNs = 0L
-        while (true) {
-            withFrameNanos { now ->
-                if (startNs == 0L) {
-                    startNs = now
-                    lastNs = now
-                }
-                val dNs = now - lastNs
-                lastNs = now
-                stepAccNs += dNs
-                // 物理与重绘共用同一个节拍（各 ~15Hz，一步吃掉累计 dt）：
-                // 每帧步进的话，低端机上光是 5 个色斑的噪声场就够它烧一个核。
-                if (stepAccNs >= DrawIntervalNs) {
-                    field.step((stepAccNs / 1_000_000_000f).coerceIn(0f, 0.2f), currentTargets)
-                    stepAccNs = 0
-                    animSeconds.floatValue = (now - startNs) / 1_000_000_000f
-                }
-                val tick = ((now - startNs) / 1_000_000_000L).toInt()
-                if (tick != hueTick) hueTick = tick
-            }
-        }
-    }
-
-    // ── 昂贵的 Skia 对象按「量化色相」重建，而不是每帧新建 ──
+    // ── 昂贵的 Skia 对象按「最终色」重建 ──
     //
-    // 每帧都变的只有几何（色斑位置/半径/呼吸）；颜色是**慢变量**：
-    //   · `animatedColors` 只在切歌的 900ms 补间里变，稳态下恒定；
-    //   · 色相漂移幅度只有 [HueDriftDegrees]（4°）、周期以十秒计 —— 1 秒一档的台阶
-    //     在屏幕上完全不可辨（0.2°/秒）。
-    //
-    // 所以色相漂移量化到整秒再算颜色与 Shader：`Brush.radialGradient`（Skia 径向渐变）
-    // 和 `ColorFilter.tint` 从 30 次/秒降到约 1 次/秒。收益不在 GPU 侧，在 CPU：
-    // 原来每帧要造 ~10 个 Skia 对象 + 若干 `arrayOf(... to ...)` 数组，30fps 下
-    // 每秒近千次分配，低端机上换来的是持续的 GC 抖动（GC 一停，AAudio 写线程就可能欠载）。
-    val hueKey = hueTick
     // `animatedColors` / `slotLightnesses` 都是每次重组重建的数组，所以用**内容哈希**当 key。
-    // 五个依赖「最终色」的对象共用这一份 key：颜色、明度台阶、饱和度补偿、色相漂移、封面
+    // 四个依赖「最终色」的对象共用这一份 key：颜色、明度台阶、饱和度补偿、封面
     // 任何一个变了都要重算 —— 只拿其中一部分当 key 会留下「明度变了但色斑不动」的陈旧值。
     val tintKeys = listOf(
         animatedColors.contentHashCode(),
-        hueKey,
         saturationBoost,
         slotLightnesses.contentHashCode(),
         coverUrl,
@@ -762,8 +695,7 @@ fun CoverPaletteBackdrop(
             val slot = BlobSlots[i]
             _retint(
                 source = animatedColors[i],
-                hueDelta = sin(hueKey.toFloat() * TwoPi / slot.hueDriftPeriodSec + (seed + i * 2.1f)) *
-                    HueDriftDegrees,
+                hueDelta = sin(seed + i * 2.1f) * HueDriftDegrees,
                 saturationScale = slot.saturationScale * saturationBoost,
                 targetLightness = slotLightnesses[i],
             )
@@ -823,106 +755,177 @@ fun CoverPaletteBackdrop(
         }
     }
 
-    Box(modifier = modifier.background(base)) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .onSizeChanged { canvasSize = it },
-        ) {
-            _drawAurora(
-                mask = mask,
-                filters = slotFilters,
-                ambientBrush = ambientBrush,
-                rimBrush = rimBrush,
-                weights = animatedWeights,
-                exposure = exposure,
-                field = field,
-                seconds = animSeconds.floatValue,
-                seed = seed,
-            )
+    // 暗角 brush 只跟画布尺寸有关，两档共用一份
+    val vignetteBrush = remember(canvasSize) {
+        Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = 0.24f),
+            0.12f to Color.Transparent,
+            0.88f to Color.Transparent,
+            1f to Color.Black.copy(alpha = 0.26f),
+        )
+    }
 
-            // ④a / ④b 封面构图的明暗分离场：只给方向不给图案。
-            //
-            // 两张 alpha 蒙版而不是一张灰度图走 Overlay：Overlay 在暗底上是 `2ab`，
-            // 底色 0.06 遇上 0.7 只到 0.084（几乎没动）；而 Screen 在同样输入下是
-            // `1−(1−a)(1−b)`，能到 0.74。亮度场只有用 Screen/Multiply 才真正生效。
-            //
-            // 强度必须**压得很低**（见 [GridLumaHiAlpha] / [GridLumaLoAlpha]）：
-            // 这两种混合是在「推向白 / 减半」而不是「加一点」，满强度会直接把画面撕成
-            // 上亮下暗两半。
-            gridLuma?.let { masks ->
-                val full = IntSize(
-                    size.width.roundToInt().coerceAtLeast(1),
-                    size.height.roundToInt().coerceAtLeast(1),
-                )
-                // 亮区：alpha 蒙版 + Screen。**染色而不是纯白** —— 纯白会把画面洗成灰，
-                // 用主家族的当前色（已含明度台阶）染色，光才带着封面的色温。
-                drawImage(
-                    image = masks.hi,
-                    dstSize = full,
-                    alpha = GridLumaHiAlpha * exposure,
-                    colorFilter = gridTintFilter,
-                    blendMode = BlendMode.Screen,
-                    filterQuality = FilterQuality.Low,
-                )
-                // 暗区：黑色 alpha 蒙版 + Multiply → 按蒙版强度压暗
-                drawImage(
-                    image = masks.lo,
-                    dstSize = full,
-                    alpha = GridLumaLoAlpha,
-                    blendMode = BlendMode.Multiply,
-                    filterQuality = FilterQuality.Low,
-                )
-            }
+    val stack = AuroraStack(
+        base = base,
+        mask = mask,
+        filters = slotFilters,
+        ambientBrush = ambientBrush,
+        rimBrush = rimBrush,
+        weights = animatedWeights,
+        exposure = exposure,
+        field = field,
+        seed = seed,
+        grid = gridLuma,
+        gridTintFilter = gridTintFilter,
+        lowNoise = lowFrequencyNoise,
+        coarseNoise = coarseNoise,
+        fineNoise = fineNoise,
+        vignette = vignetteBrush,
+    )
 
-            // ④b 低频明度起伏：值噪声拉伸铺满整屏，给渐变一点「不均匀」。
-            // 这是治「数学渐变塑料感」的一层 —— 完美的线性渐变看起来是算出来的，
-            // 带一点点低频起伏才像真实的漫射光。
+    // 烤图 key 只含「换个封面才会变」的量：稳态下图不重建，一帧只有一次放大 blit
+    val bakeKeys = listOf(
+        animatedColors.contentHashCode(),
+        animatedWeights.contentHashCode(),
+        saturationBoost,
+        slotLightnesses.contentHashCode(),
+        exposure,
+        coverUrl,
+        canvasSize,
+    )
+
+    Box(
+        modifier = modifier
+            .background(base)
+            .onSizeChanged { canvasSize = it },
+    ) {
+        // 整叠（底色→色晕→色斑→网格明暗→噪声→暗角）烤成一张 1/2 分辨率的图。
+        // 每帧十余层全屏混合在这类 GPU 上是 40ms 起步（SM6225 实测 44ms/帧，
+        // 其中 82% 是纯填充），而烤图后每帧只剩一次 blit。
+        val baked = remember(bakeKeys) {
+            val w = canvasSize.width / LiteDownscale
+            val h = canvasSize.height / LiteDownscale
+            if (w <= 1 || h <= 1) null else bakeAurora(w, h) { drawAuroraStack(stack, 0f) }
+        }
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            baked ?: return@Canvas
             drawImage(
-                image = lowFrequencyNoise,
-                dstSize = IntSize(
-                    size.width.roundToInt().coerceAtLeast(1),
-                    size.height.roundToInt().coerceAtLeast(1),
-                ),
-                alpha = LowFrequencyNoiseAlpha,
-                blendMode = BlendMode.Overlay,
+                image = baked,
+                dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
                 filterQuality = FilterQuality.Low,
             )
-
-            // ⑤ 颗粒两层：粗颗粒抗色带，细颗粒给质感
-            drawRect(
-                brush = coarseNoise,
-                alpha = CoarseNoiseAlpha,
-                blendMode = BlendMode.Overlay,
-            )
-            drawRect(
-                brush = fineNoise,
-                alpha = FineNoiseAlpha,
-                blendMode = BlendMode.Softlight,
-            )
         }
-
-        // ⑥ 暗角：**只压最边上的 12%**，中间 76% 完全交给色场。
-        // 之前是「0.24 起透明、0.62 起一路压到 0.54」，等于底部 38% 屏高都在变暗，
-        // 整片色场立刻被读成「一个自上而下的渐变」——这是极光方案最怕的方向感。
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.24f),
-                        0.12f to Color.Transparent,
-                        0.88f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.26f),
-                    ),
-                ),
-        )
     }
 }
 
 // ================================================================================================
 // 绘制
 // ================================================================================================
+
+/**
+ * 一整叠背景层（底色 → 色温晕/轮廓光 → 色斑 → 网格明暗场 → 噪声 → 暗角）的输入。
+ *
+ * 打包成一份是为了让「逐帧画」和「烤成一张图」走同一段绘制代码：
+ * 两套各写一遍，视觉必然在某一档悄悄跑偏，而且没人会去比对。
+ */
+private class AuroraStack(
+    val base: Color,
+    val mask: ImageBitmap,
+    val filters: List<ColorFilter>,
+    val ambientBrush: Brush?,
+    val rimBrush: Brush?,
+    val weights: FloatArray,
+    val exposure: Float,
+    val field: AuroraField,
+    val seed: Float,
+    val grid: GridLumaMasks?,
+    val gridTintFilter: ColorFilter,
+    val lowNoise: ImageBitmap,
+    val coarseNoise: Brush,
+    val fineNoise: Brush,
+    val vignette: Brush,
+)
+
+/** 把 [AuroraStack] 整叠画到当前 DrawScope（屏幕，或 [bakeAurora] 的离屏位图）。 */
+private fun DrawScope.drawAuroraStack(s: AuroraStack, seconds: Float) {
+    val w = size.width.roundToInt().coerceAtLeast(1)
+    val h = size.height.roundToInt().coerceAtLeast(1)
+    val full = IntSize(w, h)
+
+    drawRect(color = s.base)
+
+    _drawAurora(
+        mask = s.mask,
+        filters = s.filters,
+        ambientBrush = s.ambientBrush,
+        rimBrush = s.rimBrush,
+        weights = s.weights,
+        exposure = s.exposure,
+        field = s.field,
+        seconds = seconds,
+        seed = s.seed,
+    )
+
+    // 封面构图的明暗分离场：只给方向不给图案。
+    //
+    // 两张 alpha 蒙版而不是一张灰度图走 Overlay：Overlay 在暗底上是 `2ab`，
+    // 底色 0.06 遇上 0.7 只到 0.084（几乎没动）；而 Screen 在同样输入下是
+    // `1−(1−a)(1−b)`，能到 0.74。亮度场只有用 Screen/Multiply 才真正生效。
+    //
+    // 强度必须压得很低（见 [GridLumaHiAlpha] / [GridLumaLoAlpha]）：这两种混合是在
+    // 「推向白 / 减半」而不是「加一点」，满强度会直接把画面撕成上亮下暗两半。
+    s.grid?.let { masks ->
+        // 亮区：alpha 蒙版 + Screen。染色而不是纯白 —— 纯白会把画面洗成灰，
+        // 用主家族的当前色（已含明度台阶）染色，光才带着封面的色温。
+        drawImage(
+            image = masks.hi,
+            dstSize = full,
+            alpha = GridLumaHiAlpha * s.exposure,
+            colorFilter = s.gridTintFilter,
+            blendMode = BlendMode.Screen,
+            filterQuality = FilterQuality.Low,
+        )
+        // 暗区：黑色 alpha 蒙版 + Multiply → 按蒙版强度压暗
+        drawImage(
+            image = masks.lo,
+            dstSize = full,
+            alpha = GridLumaLoAlpha,
+            blendMode = BlendMode.Multiply,
+            filterQuality = FilterQuality.Low,
+        )
+    }
+
+    // 低频明度起伏：值噪声拉伸铺满整屏，给渐变一点「不均匀」。
+    // 完美的线性渐变看起来是算出来的，带一点点低频起伏才像真实的漫射光。
+    drawImage(
+        image = s.lowNoise,
+        dstSize = full,
+        alpha = LowFrequencyNoiseAlpha,
+        blendMode = BlendMode.Overlay,
+        filterQuality = FilterQuality.Low,
+    )
+
+    // 颗粒两层：粗颗粒抗色带，细颗粒给质感
+    drawRect(brush = s.coarseNoise, alpha = CoarseNoiseAlpha, blendMode = BlendMode.Overlay)
+    drawRect(brush = s.fineNoise, alpha = FineNoiseAlpha, blendMode = BlendMode.Softlight)
+
+    // 暗角：只压最边上的 12%，中间 76% 完全交给色场。
+    // 压得太深会把整片读成「一个自上而下的渐变」——这是极光方案最怕的方向感。
+    drawRect(brush = s.vignette)
+}
+
+/** 把一段 DrawScope 绘制烤进一张 [ImageBitmap]（弱 GPU 档专用）。 */
+private fun bakeAurora(w: Int, h: Int, block: DrawScope.() -> Unit): ImageBitmap {
+    val image = ImageBitmap(w, h)
+    CanvasDrawScope().draw(
+        density = Density(1f),
+        layoutDirection = LayoutDirection.Ltr,
+        canvas = GfxCanvas(image),
+        size = Size(w.toFloat(), h.toFloat()),
+        block = block,
+    )
+    return image
+}
 
 /**
  * 画色温晕 + 画外轮廓光 + N 个极光斑。

@@ -1,5 +1,7 @@
 package com.annieplayer.annie_music.kt.core.audio.ffmpeg
 
+import com.annieplayer.annie_music.kt.core.audio.dsd.DsdTransport
+
 /**
  * 全链路**真实输出规格**的回报通道。
  *
@@ -31,6 +33,16 @@ internal object FfmpegOutputStream {
          * 的 `keepSourceRate`）。所以判断"我方要不要重采样"必须拿这个字段，不能拿 [rate]。
          */
         val dsdTargetRate: Int = 0,
+        /**
+         * **这条源是按哪种传输方式建的**（PCM / DoP / Native）。
+         *
+         * 这是"源"对传输方式的唯一声明，必须由**建源的那一方**写下来。
+         * 以前 sink 在自己的 `configure()` 里回读全局 `_dsdTransport`，而 extractor 是在
+         * `_setSource()` 里按当时的同一个全局量建源 —— 两个读者、两个时刻，中间没有同步点。
+         * 一旦翻面（反复切模式 / 失败重建），就会出现"源出 DoP 帧、sink 按 PCM 配"：
+         * 帧被当普通 PCM 送去，**没有声音**；反过来是满幅噪声。
+         */
+        val transport: DsdTransport = DsdTransport.pcm,
     )
 
     private data class Entry(val path: String, val spec: Spec)
@@ -47,11 +59,27 @@ internal object FfmpegOutputStream {
     @Volatile
     var onPublished: ((String) -> Unit)? = null
 
-    fun publish(path: String, rate: Int, bits: Int, channels: Int, dsdTargetRate: Int = 0) {
+    fun publish(
+        path: String,
+        rate: Int,
+        bits: Int,
+        channels: Int,
+        dsdTargetRate: Int = 0,
+        transport: DsdTransport = DsdTransport.pcm,
+    ) {
         if (path.isEmpty() || rate <= 0 || bits <= 0) return
-        current = Entry(path, Spec(rate, bits, channels.coerceAtLeast(1), dsdTargetRate))
+        current = Entry(path, Spec(rate, bits, channels.coerceAtLeast(1), dsdTargetRate, transport))
         onPublished?.invoke(path)
     }
+
+    /**
+     * 这条源声明的传输方式；`null` = 不是在**我方全链路**上建的源（流媒体）。
+     *
+     * sink 用它代替回读全局 `_dsdTransport`：extractor 的 `init()` 必然发生在渲染器
+     * `configure()` 之前（否则连 Format 都没有），所以走到 configure 时这里已经有值 ——
+     * 那个"两读两写"的时间窗就此消失。
+     */
+    fun transportOf(path: String): DsdTransport? = specFor(path)?.transport
 
     /** 该路径当前的真实输出规格；路径不匹配（已切歌）或还没 open 过则返回 null */
     fun specFor(path: String): Spec? {

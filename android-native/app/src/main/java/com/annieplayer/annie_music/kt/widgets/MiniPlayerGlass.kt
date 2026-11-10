@@ -1,20 +1,12 @@
 package com.annieplayer.annie_music.kt.widgets
 
 import android.graphics.Bitmap
-import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 // ================================================================================================
@@ -113,69 +105,6 @@ internal object BarGlassSpec {
     /** 封面 → 条栏背景位图。 */
     fun backdrop(source: Bitmap): Bitmap = createBarBackdrop(source)
 }
-
-/** LunaBeat 的 `Refraction` 着色器，原文照抄。 */
-private const val REFRACTION_AGSL = """
-uniform shader content;
-
-uniform float2 size;
-uniform float2 offset;
-uniform float4 cornerRadii;
-uniform float refractionHeight;
-uniform float refractionAmount;
-uniform float depthEffect;
-
-
-float radiusAt(float2 coord, float4 radii) {
-    if (coord.x >= 0.0) {
-        if (coord.y <= 0.0) return radii.y;
-        else return radii.z;
-    } else {
-        if (coord.y <= 0.0) return radii.x;
-        else return radii.w;
-    }
-}
-
-float sdRoundedRect(float2 coord, float2 halfSize, float radius) {
-    float2 cornerCoord = abs(coord) - (halfSize - float2(radius));
-    float outside = length(max(cornerCoord, 0.0)) - radius;
-    float inside = min(max(cornerCoord.x, cornerCoord.y), 0.0);
-    return outside + inside;
-}
-
-float2 gradSdRoundedRect(float2 coord, float2 halfSize, float radius) {
-    float2 cornerCoord = abs(coord) - (halfSize - float2(radius));
-    if (cornerCoord.x >= 0.0 || cornerCoord.y >= 0.0) {
-        return sign(coord) * normalize(max(cornerCoord, 0.0));
-    } else {
-        float gradX = step(cornerCoord.y, cornerCoord.x);
-        return sign(coord) * float2(gradX, 1.0 - gradX);
-    }
-}
-
-float circleMap(float x) {
-    return 1.0 - sqrt(1.0 - x * x);
-}
-
-half4 main(float2 coord) {
-    float2 halfSize = size * 0.5;
-    float2 centeredCoord = (coord + offset) - halfSize;
-    float radius = radiusAt(coord, cornerRadii);
-
-    float sd = sdRoundedRect(centeredCoord, halfSize, radius);
-    if (-sd >= refractionHeight) {
-        return content.eval(coord);
-    }
-    sd = min(sd, 0.0);
-
-    float d = circleMap(1.0 - -sd / refractionHeight) * refractionAmount;
-    float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
-    float2 grad = normalize(gradSdRoundedRect(centeredCoord, halfSize, gradRadius) + depthEffect * normalize(centeredCoord));
-
-    float2 refractedCoord = coord + d * grad;
-    return content.eval(refractedCoord);
-}
-"""
 
 // ================================================================================================
 // 背景位图
@@ -278,57 +207,28 @@ private fun boxBlur(source: Bitmap, radius: Int): Bitmap {
 }
 
 // ================================================================================================
-// 边缘折射
+// 玻璃裁剪
 // ================================================================================================
 
 /**
- * 给整块玻璃加「玻璃杯壁」边缘折射（LunaBeat `Refraction` 着色器）。
+ * 玻璃形状裁剪。
  *
- * 作用范围是**该 layer 的全部内容**（背景 + 文字 + 图标），但只在距边缘 [height] 以内生效，
- * 中心原样输出 —— 所以文字只要不贴着边就不会变形。
+ * 这里原本挂的是 LunaBeat 的 `Refraction` AGSL：整层内容过一次 RuntimeShader，
+ * 只在距边 [height] 以内把采样坐标向内偏移，做出「玻璃杯壁」的挤压感。
+ * **已全局移除** —— 它要求把整层先渲进离屏纹理再跑一遍着色器，单层就是 1–2 ms/帧，
+ * 而收益只有边缘 24dp 内的一点点变形。保留裁剪，观感退化为「盒式模糊封面 + 半透明遮罩」。
  *
- * ⚠ API < 33 只保留 `shape` + `clip`，不挂着色器：`RuntimeShader` 是 API 33 引入的。
- * 低版本观感退化为「盒式模糊封面 + 半透明遮罩」，仍然成立。
- *
- * @param shape 玻璃形状。着色器只支持圆角矩形，胶囊传 `RoundedCornerShape(percent = 50)`，
- *              四角半径按 `min(w, h) / 2` 计算。
- * @param height 折射带宽度。
- * @param amount 折射强度（内部取负值，表示向内偏移采样）。
+ * @param shape 玻璃形状。
+ * @param height 历史参数，已不再使用。
+ * @param amount 历史参数，已不再使用。
  */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 internal fun Modifier.refractionGlass(
     shape: Shape,
     height: Dp,
     amount: Dp,
-): Modifier {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-        return this.graphicsLayer {
-            this.shape = shape
-            clip = true
-        }
-    }
-    val shader = remember { RuntimeShader(REFRACTION_AGSL) }
-    val density = LocalDensity.current
-    val heightPx = with(density) { height.toPx() }
-    val amountPx = with(density) { amount.toPx() }
-
-    return this.graphicsLayer {
-        this.shape = shape
-        clip = true
-        val w = size.width
-        val h = size.height
-        if (w <= 1f || h <= 1f) return@graphicsLayer
-        // 每次都重建 RenderEffect：这个 block 只在 layer 需要重新配置时执行（不是每帧），
-        // 而 layer 可能是新建的，早退会让新 layer 丢掉折射。
-        val radius = min(w, h) / 2f
-        shader.setFloatUniform("size", w, h)
-        shader.setFloatUniform("offset", 0f, 0f)
-        shader.setFloatUniform("cornerRadii", radius, radius, radius, radius)
-        shader.setFloatUniform("refractionHeight", heightPx)
-        shader.setFloatUniform("refractionAmount", -amountPx)
-        shader.setFloatUniform("depthEffect", 0f)
-        renderEffect = RenderEffect
-            .createRuntimeShaderEffect(shader, "content")
-            .asComposeRenderEffect()
-    }
+): Modifier = this.graphicsLayer {
+    this.shape = shape
+    clip = true
 }

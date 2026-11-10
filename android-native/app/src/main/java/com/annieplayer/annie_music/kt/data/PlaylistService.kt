@@ -2,16 +2,19 @@ package com.annieplayer.annie_music.kt.data
 
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Song
+import com.annieplayer.annie_music.kt.data.sources.apple.getApplePlaylist
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getKkboxPlaylist
 import com.annieplayer.annie_music.kt.data.sources.kugou.getKugouPlaylist
 import com.annieplayer.annie_music.kt.data.sources.kuwo.getKuwoPlaylist
 import com.annieplayer.annie_music.kt.data.sources.netease.getNeteasePlaylist
+import com.annieplayer.annie_music.kt.data.sources.qobuz.getQobuzPlaylist
 import com.annieplayer.annie_music.kt.data.sources.qq.getQQPlaylist
 
 /**
  * 歌单链接解析与分发（1:1 移植 Flutter 数据层 playlist_service.dart，对齐 RN 版 services/playlistService.ts）。
  *
- * [parsePlaylistUrl] 从混合文本中识别酷我 / 网易云 / QQ / 酷狗的分享链接或纯 ID；
- * [fetchPlaylist] 按平台分发到各平台已有的歌单接口（本文件不重复实现平台函数）。
+ * [parsePlaylistUrl] 从混合文本中识别酷我 / 网易云 / QQ / 酷狗 / Qobuz / Apple Music 的分享链接
+ * 或纯 ID；[fetchPlaylist] 按平台分发到各平台已有的歌单接口（本文件不重复实现平台函数）。
  */
 
 /** 歌单获取结果（对齐 Dart `PlaylistResult`） */
@@ -39,6 +42,19 @@ object PlaylistService {
     private val _reKugouSpecial by lazy { Regex("kugou\\.com/(yy/)?special/single/(\\d+)") }
     private val _reDigits by lazy { Regex("^\\d+$") }
     private val _reGcid by lazy { Regex("gcid_([a-z0-9]+)", RegexOption.IGNORE_CASE) }
+    // Qobuz：open.qobuz.com/playlist/{id}（id 是纯数字）；也认网页版 /us-en/playlists/{id}
+    private val _reQobuzPlaylist by lazy {
+        Regex("qobuz\\.com/(?:[A-Za-z-]+/)?playlists?/([A-Za-z0-9]+)")
+    }
+    // Apple：music.apple.com/{sf}/playlist/{slug}/{id}，id 形如 `pl.` + base64url（**含 `.` `-` `_`**，
+    // 例如 `pl.u-LdbqEpgu2ZaRMqG` —— 只写 `[A-Za-z0-9]` 会在第一个 `-` 处截断成 `pl.u`）
+    private val _reApplePlaylist by lazy {
+        Regex("music\\.apple\\.com/(?:[a-z]{2}/)?playlist/(?:[^/?#]+/)?(pl\\.[A-Za-z0-9_-]+)")
+    }
+    // KKBOX：www.kkbox.com/{区}/{语}/playlist/{id}（区/语两段都可能缺；id 含 `-` `_`）
+    private val _reKkboxPlaylist by lazy {
+        Regex("kkbox\\.com/(?:[a-z]{2}/)?(?:[a-z]{2}/)?playlist/([A-Za-z0-9_-]+)")
+    }
     /**
      * 从文本中解析歌单链接，返回 [PlaylistRef]（平台 + id）；无法识别返回 null。
      *
@@ -74,6 +90,18 @@ object PlaylistService {
             return PlaylistRef(MusicPlatform.kugou, kugouSpecial.groupValues[2])
         }
 
+        // Qobuz：qobuz.com/playlist/数字
+        val qobuz = _reQobuzPlaylist.find(raw)
+        if (qobuz != null) return PlaylistRef(MusicPlatform.qobuz, qobuz.groupValues[1])
+
+        // Apple Music：music.apple.com/{sf}/playlist/{slug}/pl.xxx
+        val apple = _reApplePlaylist.find(raw)
+        if (apple != null) return PlaylistRef(MusicPlatform.apple, apple.groupValues[1])
+
+        // KKBOX：kkbox.com/{区}/{语}/playlist/{id}
+        val kkbox = _reKkboxPlaylist.find(raw)
+        if (kkbox != null) return PlaylistRef(MusicPlatform.kkbox, kkbox.groupValues[1])
+
         // 纯 ID 识别
         val clean = text.trim()
         if (_reDigits.matches(clean)) return PlaylistRef(MusicPlatform.netease, clean)
@@ -89,7 +117,8 @@ object PlaylistService {
      * 按平台拉取歌单；平台不支持或拉取失败返回 null。
      *
      * 复用各平台既有实现：酷我 [getKuwoPlaylist]、网易云 [getNeteasePlaylist]、
-     * QQ [getQQPlaylist]、酷狗 [getKugouPlaylist]。
+     * QQ [getQQPlaylist]、酷狗 [getKugouPlaylist]、Qobuz [getQobuzPlaylist]、
+     * Apple Music [getApplePlaylist]。
      */
     suspend fun fetchPlaylist(platform: MusicPlatform, id: String): PlaylistResult? = when (platform) {
         MusicPlatform.kuwo -> getKuwoPlaylist(id)?.let { result ->
@@ -128,11 +157,34 @@ object PlaylistService {
                 songs = result.songs,
             )
         }
-        // 对齐 Dart `default: return null`（kkbox / qobuz / 本地不支持歌单链接）
-        MusicPlatform.kkbox,
-        MusicPlatform.qobuz,
-        MusicPlatform.apple,
-        MusicPlatform.local,
-        -> null
+        MusicPlatform.qobuz -> getQobuzPlaylist(id)?.let { result ->
+            PlaylistResult(
+                name = result.name,
+                creator = result.creator ?: "",
+                cover = result.cover,
+                platform = MusicPlatform.qobuz,
+                songs = result.songs,
+            )
+        }
+        MusicPlatform.apple -> runCatching { getApplePlaylist(id) }.getOrNull()?.let { result ->
+            PlaylistResult(
+                name = result.name,
+                creator = result.curator,
+                cover = result.cover,
+                platform = MusicPlatform.apple,
+                songs = result.songs,
+            )
+        }
+        MusicPlatform.kkbox -> getKkboxPlaylist(id)?.let { result ->
+            PlaylistResult(
+                name = result.name,
+                creator = result.creator ?: "",
+                cover = result.cover,
+                platform = MusicPlatform.kkbox,
+                songs = result.songs,
+            )
+        }
+        // 本地没有「链接 → 歌单」这条能力
+        MusicPlatform.local -> null
     }
 }

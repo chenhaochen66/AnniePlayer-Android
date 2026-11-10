@@ -8,8 +8,6 @@ import com.annieplayer.annie_music.kt.data.network.retryUntilSuccess
 import com.annieplayer.annie_music.kt.data.sources.common.asText
 import com.annieplayer.annie_music.kt.data.sources.common.decodeHtmlEntities
 import com.annieplayer.annie_music.kt.data.sources.common.jsTruthy
-import com.annieplayer.annie_music.kt.data.sources.splitArtistIds
-import com.annieplayer.annie_music.kt.data.sources.splitArtistNames
 
 // ================================================================================================
 // 酷我专辑：曲目 + 单曲补充信息
@@ -55,11 +53,11 @@ suspend fun getAlbumSongs(albumId: String): KuwoAlbumSongs {
     val songs = songList.map { item ->
         val artistNameRaw = decodeHtmlEntities(kuwoStrOr(item["artist"], "未知歌手"))
         // 酷我专辑歌曲自带 `artistid`（单歌手）与 `allartistid`（多歌手，逗号分隔）。
-        // 必须在这里拆名并带上 id：否则 UI 层按下标配对时 id 为空，「跳歌手」会退化成
-        // 按名字联网搜索（用户反馈的「点跳转歌手要等一会儿」）。
-        val artistNames = splitArtistNames(artistNameRaw)
-        val artistIds = splitArtistIds(
-            asText(item["allartistid"]).ifEmpty { asText(item["artistid"]) },
+        // 拆不拆由 id 个数决定（见 kuwoArtistCredit）：只有一个 id 时整串是一个名字。
+        val (artistNames, artistIds) = kuwoArtistCredit(
+            rawName = artistNameRaw,
+            allArtistIds = asText(item["allartistid"]),
+            firstArtistId = asText(item["artistid"]),
         )
         AlbumSong(
             id = asText(item["id"]),
@@ -75,9 +73,8 @@ suspend fun getAlbumSongs(albumId: String): KuwoAlbumSongs {
             } else {
                 null
             },
-            artistNames = artistNames.ifEmpty { listOf(artistNameRaw) },
-            // 数量不一致时宁可不给 id（退回按名字搜索），也不要把 id 配错歌手
-            artistIds = if (artistIds.size == artistNames.size) artistIds else emptyList(),
+            artistNames = artistNames,
+            artistIds = artistIds,
             composer = asText(item["composer"]).ifEmpty { null },
             genre = asText(item["genre"]).ifEmpty { null },
         )

@@ -47,7 +47,24 @@ suspend fun fetchQQArtistBio(singerMid: String): String {
  * 模块名取自官网歌手页实际所用；老的 `music.web_singer_info_svr` 虽能返回 60 首，
  * 但 `begin` 被服务端忽略、无法翻页。每条结果为 `{ songInfo: {...} }`，歌曲对象在 `songInfo` 里。
  */
-suspend fun getQQArtistSongs(singerMid: String, page: Int = 1): ArtistSongsPage {
+suspend fun getQQArtistSongs(singerMid: String, page: Int = 1): ArtistSongsPage =
+    getQQArtistSongsRange(
+        singerMid = singerMid,
+        num = ArtistSongsPageSize,
+        begin = (page - 1) * ArtistSongsPageSize,
+    )
+
+/**
+ * 按 `num` / `begin` 直接取一段（「全部单曲」页续拉用）。
+ *
+ * **`num` 硬上限 100**：`num=300` 实测只回 100 条，所以续拉粒度就是 100。
+ * `totalNum` 是真总数（周杰伦 1013），所以 11 批才拉得完。
+ */
+suspend fun getQQArtistSongsRange(
+    singerMid: String,
+    num: Int,
+    begin: Int,
+): ArtistSongsPage {
     try {
         val payload: Map<String, Any?> = mapOf(
             "comm" to mapOf("ct" to 24, "cv" to 0),
@@ -57,8 +74,8 @@ suspend fun getQQArtistSongs(singerMid: String, page: Int = 1): ArtistSongsPage 
                 "param" to mapOf(
                     "singerMid" to singerMid,
                     "order" to 1,
-                    "begin" to (page - 1) * ArtistSongsPageSize,
-                    "num" to ArtistSongsPageSize,
+                    "begin" to begin,
+                    "num" to num.coerceIn(1, 100),
                 ),
             ),
         )

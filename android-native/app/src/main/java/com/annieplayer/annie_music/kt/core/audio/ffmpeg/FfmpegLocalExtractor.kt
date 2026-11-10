@@ -64,37 +64,10 @@ internal class FfmpegLocalExtractor(
     private val pcm = ByteArray(SAMPLE_BUFFER_BYTES)
     private val meta = LongArray(1)
 
-    /** raw 模式的输入（1-bit 载荷）与输出（打包后的 DoP / Native 帧） */
-    private val rawIn = ByteArray(SAMPLE_BUFFER_BYTES)
-    private val rawOut = ByteArray(SAMPLE_BUFFER_BYTES * 2)
-
-    /**
-     * DoP 标记相位。**必须跨块严格交替** —— 序列一断，DAC 就退回当普通 PCM 解，
-     * 那不是音质问题，是满幅噪声。所以状态挂在本对象上，跟着一次播放走。
-     */
-    private var dopMarkerHigh = false
+    /** raw 模式的输出：native 已经封装好的 DoP / Native 线格式帧 */
+    private val rawPacked = ByteArray(SAMPLE_BUFFER_BYTES * 2)
 
     private var durationUs: Long = 0L
-
-    /**
-     * 连续多少次"读到的字节凑不出一个完整帧"（DoP 6 字节 / Native 8 字节）。
-     *
-     * 这个分支以前是 `return RESULT_CONTINUE` —— 语义是"再调我一次"，于是只要底层一直
-     * 返回长度凑不出帧的字节，这里就会**无限次空转**：不产出样本、不报 EOS、也不推进
-     * `input`。上层看到的是"流开着、缓冲永远空、进度条由渲染器时钟照走"，
-     * 也就是"没有声音而一切正常"。这里给它一个上限：超了就抛，让上层按失败降级。
-     */
-    private var rawStarvedReads = 0
-
-    private fun rawStarved(kind: String, written: Int): Int {
-        if (++rawStarvedReads > MAX_RAW_STARVED_READS) {
-            throw IOException(
-                "$kind 连续 $MAX_RAW_STARVED_READS 次读到的字节凑不出一个完整帧" +
-                    "（最后一次 $written 字节）",
-            )
-        }
-        return Extractor.RESULT_CONTINUE
-    }
 
     override fun sniff(input: ExtractorInput): Boolean = true
 
@@ -109,6 +82,20 @@ internal class FfmpegLocalExtractor(
         }
         if (h == 0L) throw IOException("ffmpeg demux 打不开: $path")
         handle = h
+        // 线格式封装在 native 里做：拆声道 → 位反转 → 打 DoP / Native 帧一次完成。
+        // 封装后的字节流才是 Media3 眼里的"样本"，所以必须在这里就定下来。
+        if (dsdTransport.isRaw) {
+            NativeFfmpegDemux.configRawPack(
+                h,
+                if (dsdTransport == DsdTransport.dop) {
+                    NativeFfmpegDemux.PACK_DOP
+                } else {
+                    NativeFfmpegDemux.PACK_NATIVE
+                },
+                // `bmFormats` 的 bit31 只标"raw data"，不区分字节序，所以按设备品类定（见 nativeLittleEndian）
+                !nativeLittleEndian,
+            )
+        }
 
         val channels = info[1].takeIf { it > 0 } ?: 2
         // `info[0]` 的含义随入口而变：PCM 路径是输出网格率，raw 路径是 **1 bit 采样率**。
@@ -136,7 +123,7 @@ internal class FfmpegLocalExtractor(
         // 真实输出规格回报给播放页（「输出」胶囊据此显示，而不是拿源字段冒充）。
         // DSD 时 `sampleRate` 是**中间格式**（352800），最终率在 `dsdTargetRate` 里 ——
         // 两者一起交出去，"要不要我方重采样"由后者判（见 `Spec` 的注释）。
-        FfmpegOutputStream.publish(path, sampleRate, bits, channels, dsdTargetRate)
+        FfmpegOutputStream.publish(path, sampleRate, bits, channels, dsdTargetRate, dsdTransport)
 
         val track = output.track(0, C.TRACK_TYPE_AUDIO)
         track.format(
@@ -162,10 +149,6 @@ internal class FfmpegLocalExtractor(
         trackOutput = track
     }
 
-    /** DoP 的「位深」是帧容器的 24 位，Native 是 32 位 word */
-    private fun packetDepth(): Int =
-        if (dsdTransport == DsdTransport.dop) NativeFfmpegDemux.BITS_24 else 32
-
     private fun simpleSeekMap(): SeekMap = object : SeekMap {
         override fun isSeekable(): Boolean = true
 
@@ -183,49 +166,32 @@ internal class FfmpegLocalExtractor(
     }
 
     /**
-     * raw DSD：native 交来的是**字节交错**的 1-bit 流（每 4 字节 = 一帧左右各 2 字节），
-     * 这里按传输方式封装成 DAC 认的帧结构。
+     * raw DSD：native 交来的**已经是线格式字节**（DoP 6 B/帧 或 Native 8 B/帧），
+     * 这里只做转发，不做任何位运算。
      *
-     * 两条路径都**不产生 PCM 样本**，所以处理器链必须旁路（见 `PcmAudioSink.rawPassthrough`）
+     * 封装在 native 的 demux 里做（拆声道 → 位反转 → 打包一次完成），原因有两条：
+     * 1. 封装后的字节流才是 Media3 看到的样本，帧长决定时长与位置，必须在上游定死；
+     * 2. DoP 标记相位是"跨块必须严格交替"的易失状态，只该有一个持有者 —— 现在它是
+     *    demux handle 自己，Kotlin 侧不再有副本。
+     *
+     * 这条路径**不产生 PCM 样本**，所以处理器链必须旁路（见 `PcmAudioSink.rawPassthrough`）
      * —— r8brain 会重采样、EQ 会改最低位，而 DoP 的标记就在那些位里。
      */
     private fun readRaw(input: ExtractorInput): Int {
-        val written = NativeFfmpegDemux.read(handle, rawIn, meta)
+        val written = NativeFfmpegDemux.read(handle, rawPacked, meta)
         if (written == 0) return Extractor.RESULT_END_OF_INPUT
         if (written < 0) throw IOException("ffmpeg raw 读取失败: $written")
 
-        val outBytes = if (dsdTransport == DsdTransport.dop) {
-            val frames = DopPacker.framesOf(written)
-            // 不足一帧的尾巴丢掉：补零等于在 DSD 流里插入静音样本，会和设备时钟错位
-            if (frames <= 0) return rawStarved("DoP", written)
-            val n = DopPacker.pack(rawIn, 0, frames, rawOut, 0, dopMarkerHigh)
-            if (n < 0) throw IOException("DoP 打包失败: frames=$frames")
-            // 标记相位跨块翻转；奇数帧才会把相位翻过来
-            dopMarkerHigh = dopMarkerHigh xor (frames % 2 == 1)
-            n
-        } else {
-            val words = NativeDsdPacker.wordsOf(written)
-            if (words <= 0) return rawStarved("Native", written)
-            // `bmFormats` 的 bit31 只标"raw data"，不区分字节序，所以字节序只能按
-            // 设备品类定（见 `nativeLittleEndian` 的注释）。
-            val n = NativeDsdPacker.pack(
-                rawIn, 0, words, rawOut, 0, bigEndian = !nativeLittleEndian,
-            )
-            if (n < 0) throw IOException("Native DSD 打包失败: words=$words")
-            n
-        }
-        rawStarvedReads = 0
-
         val track = trackOutput ?: return Extractor.RESULT_END_OF_INPUT
-        track.sampleData(ParsableByteArray(rawOut, outBytes), outBytes)
+        track.sampleData(ParsableByteArray(rawPacked, written), written)
         track.sampleMetadata(
             meta[0].coerceAtLeast(0L),
             C.BUFFER_FLAG_KEY_FRAME,
-            outBytes,
+            written,
             0,
             null,
         )
-        input.skip(outBytes)
+        input.skip(written)
         return Extractor.RESULT_CONTINUE
     }
 
@@ -294,8 +260,5 @@ internal class FfmpegLocalExtractor(
          * 对 DSD（352.8k/24bit = 2.1 MB/s）这个块只有 ~0.12 秒，仍然合适。
          */
         const val SAMPLE_BUFFER_BYTES = 256 * 1024
-
-        /** 见 [rawStarved]：连续空转到这个次数就判失败，不再静默重试。 */
-        const val MAX_RAW_STARVED_READS = 64
     }
 }

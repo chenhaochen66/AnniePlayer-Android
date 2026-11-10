@@ -8,6 +8,7 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
+import com.annieplayer.annie_music.kt.core.audio.dsp.FadeAudioProcessor
 import com.annieplayer.annie_music.kt.core.audio.dsp.PcmResamplerAudioProcessor
 import com.annieplayer.annie_music.kt.core.audio.dsp.TuningAudioProcessor
 import com.annieplayer.annie_music.kt.core.diagnostics.RuntimeLog
@@ -25,6 +26,11 @@ class PcmAudioSink(
     delegate: AudioSink,
     private val tuning: TuningAudioProcessor,
     private val resampler: PcmResamplerAudioProcessor,
+    /**
+     * 淡入：换曲 30 ms、seek 80 ms。放在链的**最后**——它必须作用在最终样本上，
+     * 否则前面的 EQ / 重采样会把它算进滤波器状态里（那会让开头那 30 ms 的频响失准）。
+     */
+    private val fade: FadeAudioProcessor = FadeAudioProcessor(),
     /**
      * DSD 直出：进来的「PCM」其实是已经打包好的 DoP / raw DSD 帧。
      *
@@ -55,7 +61,7 @@ class PcmAudioSink(
      * 数学上也更对：PEQ 是线性时不变系统，与 SRC 可交换；放在转率之后，
      * 系数直接按最终率算，不用在中间率上近似。
      */
-    private val processors = arrayOf<AudioProcessor>(resampler, tuning)
+    private val processors = arrayOf<AudioProcessor>(resampler, tuning, fade)
     private var dspEnabled = false
 
     /**
@@ -190,6 +196,11 @@ class PcmAudioSink(
             tuning.queueInput(current)
             current = tuning.output
         }
+        // 淡入放在最后：它作用在最终样本上（raw 通路在 `configure` 里整链不启用）
+        if (fade.isActive) {
+            fade.queueInput(current)
+            current = fade.output
+        }
         // 处理器吃掉输入但产出为空：向 Media3 报"已消费"（输入确实被消费了）。
         // 正常不会发生 —— 处理器 onConfigure 返回 NOT_SET 时本就走不到这里。
         if (!current.hasRemaining()) return true
@@ -219,6 +230,8 @@ class PcmAudioSink(
 
     override fun flush() {
         pending = null
+        // seek 之后补一次 80 ms 淡入（`flush()` 之后 Media3 不会再调 configure）
+        fade.armSeekFade()
         processors.forEach { it.flush() }
         super.flush()
     }

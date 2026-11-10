@@ -5,6 +5,8 @@ import com.annieplayer.annie_music.kt.data.network.json
 import com.annieplayer.annie_music.kt.data.network.jsonElementToAny
 import com.annieplayer.annie_music.kt.data.network.retryUntilSuccess
 import com.annieplayer.annie_music.kt.data.sources.common.encodeComponent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
@@ -112,17 +114,21 @@ internal suspend fun kkboxApiCall(
         }
     }
 
-    val bytes = retryUntilSuccess {
-        val builder = Request.Builder().url(url)
-        headers.forEach { (k, v) -> builder.header(k, v) }
-        // 对齐 Dart：payload != null 即 POST（即使 body 为 null）
-        if (payload != null) {
-            builder.method("POST", body?.toRequestBody(null))
-        } else {
-            builder.method("GET", null)
+    // `execute()` 是阻塞调用：login 由 UI 的 Main scope 触发，不切 IO 会直接抛
+    // NetworkOnMainThreadException（登录按钮必崩，而播放/下载在后台线程触发所以看不出来）。
+    val bytes = withContext(Dispatchers.IO) {
+        retryUntilSuccess {
+            val builder = Request.Builder().url(url)
+            headers.forEach { (k, v) -> builder.header(k, v) }
+            // 对齐 Dart：payload != null 即 POST（即使 body 为 null）
+            if (payload != null) {
+                builder.method("POST", body?.toRequestBody(null))
+            } else {
+                builder.method("GET", null)
+            }
+            val resp = globalOkHttp.newCall(builder.build()).execute()
+            resp.use { r -> r.body?.bytes() ?: ByteArray(0) }
         }
-        val resp = globalOkHttp.newCall(builder.build()).execute()
-        resp.use { r -> r.body?.bytes() ?: ByteArray(0) }
     }
 
     val decrypted = kkboxRc4(kc1Key, bytes)

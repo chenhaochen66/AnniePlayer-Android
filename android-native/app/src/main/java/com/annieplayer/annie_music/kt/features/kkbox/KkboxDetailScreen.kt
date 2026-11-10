@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -50,6 +51,7 @@ import com.annieplayer.annie_music.kt.core.state.ColorViewModel
 import com.annieplayer.annie_music.kt.core.state.DownloadViewModel
 import com.annieplayer.annie_music.kt.core.state.KkboxViewModel
 import com.annieplayer.annie_music.kt.core.state.PlayerViewModel
+import com.annieplayer.annie_music.kt.core.util.downloadQualityFor
 import com.annieplayer.annie_music.kt.core.util.enqueueDownload
 import com.annieplayer.annie_music.kt.data.model.KkboxAccount
 import com.annieplayer.annie_music.kt.data.model.KkboxSession
@@ -62,6 +64,7 @@ import com.annieplayer.annie_music.kt.data.sources.kkbox.getKkboxAlbum
 import com.annieplayer.annie_music.kt.data.sources.kkbox.getPlayUrl
 import com.annieplayer.annie_music.kt.data.sources.kkbox.getSongLyrics
 import com.annieplayer.annie_music.kt.data.sources.kkbox.getSongs
+import com.annieplayer.annie_music.kt.data.sources.kkbox.kkboxTrackToSong
 import com.annieplayer.annie_music.kt.data.sources.kkbox.mapAlbumToKkboxAlbum
 import com.annieplayer.annie_music.kt.data.sources.kkbox.mapSongToKkboxTrack
 import com.annieplayer.annie_music.kt.ui.theme.AppBorder
@@ -73,7 +76,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
-import com.annieplayer.annie_music.kt.widgets.DetailCheckBox
+import com.annieplayer.annie_music.kt.widgets.SelectCheckBox
 import com.annieplayer.annie_music.kt.widgets.DetailChevronLeft
 import com.annieplayer.annie_music.kt.widgets.DetailErrorOutline
 import com.annieplayer.annie_music.kt.widgets.DownloadIconPlaceholder
@@ -163,19 +166,8 @@ fun KkboxDetailScreen(
     // 不再写入全局色板（原 SnapshotPaletteAndRestore）：详情页只用本地 palette 渲染，
 // 全局色板由 AppShell 按「当前播放歌曲」驱动；详情页写入会在退出时覆盖成陈旧值。
 
-    /** `KkboxTrack` -> `Song`（对齐 Dart 的 `kkbox:${t.id}` 构造） */
-    fun toSong(track: KkboxTrack): Song = Song(
-        id = "kkbox:${track.id}",
-        title = track.title,
-        artist = track.artist,
-        cover = track.cover,
-        album = track.album,
-        duration = track.duration,
-        platform = MusicPlatform.kkbox,
-        albumArtist = track.albumArtist,
-        trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
-        releaseDate = track.releaseDate,
-    )
+    /** `KkboxTrack` -> `Song`（与搜索 / 歌单共用同一份构造，见 `kkboxTrackToSong`） */
+    fun toSong(track: KkboxTrack): Song = kkboxTrackToSong(track)
 
     suspend fun load() {
         val account = kkboxViewModel.getActiveAccount()
@@ -254,19 +246,7 @@ fun KkboxDetailScreen(
                 val allTracks = if (st.tracks.size > 1) st.tracks else listOf(track)
                 val index = allTracks.indexOfFirst { it.id == track.id }
                 val songs = allTracks.map { t ->
-                    Song(
-                        id = "kkbox:${t.id}",
-                        title = t.title,
-                        artist = t.artist,
-                        cover = t.cover,
-                        album = t.album,
-                        duration = t.duration,
-                        platform = MusicPlatform.kkbox,
-                        playUrl = result.url,
-                        albumArtist = t.albumArtist,
-                        trackNumber = if (t.trackNumber > 0) t.trackNumber.toString() else null,
-                        releaseDate = t.releaseDate,
-                    )
+                    kkboxTrackToSong(t).copyWith(playUrl = if (t.id == track.id) result.url else null)
                 }
                 playerViewModel.setQueue(songs, if (index < 0) 0 else index)
             } catch (e: Exception) {
@@ -281,13 +261,15 @@ fun KkboxDetailScreen(
         if (account == null || session == null || !session.loggedIn) return
         val songId = "kkbox:${track.id}"
         val song = toSong(track)
+        val actual = downloadQualityFor(song, Quality.hires)
         st.downloadingId = track.id
-        downloadViewModel.addTask(song, Quality.hires)
+        downloadViewModel.addTask(song, actual)
         enqueueDownload(songId) {
             try {
                 val filePath = kkboxDetailDownloadTrack(
                     track = track,
                     songId = songId,
+                    quality = actual,
                     updateProgress = { v ->
                         downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
                     },
@@ -310,7 +292,10 @@ fun KkboxDetailScreen(
         val selected = st.tracks.filter { st.selectedIds.contains(it.id) }
         if (selected.isEmpty()) return
         st.batchDownloading = true
-        for (t in selected) downloadViewModel.addTask(toSong(t), Quality.hires)
+        for (t in selected) {
+            val s = toSong(t)
+            downloadViewModel.addTask(s, downloadQualityFor(s, Quality.hires))
+        }
         val batchId = "kkbox_batch_${System.currentTimeMillis()}"
         enqueueDownload(batchId) {
             var success = 0
@@ -324,6 +309,7 @@ fun KkboxDetailScreen(
                     val filePath = kkboxDetailDownloadTrack(
                         track = t,
                         songId = songId,
+                        quality = downloadQualityFor(song, Quality.hires),
                         updateProgress = { v ->
                             downloadViewModel.updateProgress(songId, v.coerceIn(0.0, 100.0))
                         },
@@ -372,7 +358,10 @@ fun KkboxDetailScreen(
     // `isTop` 必须是宿主的 `localTop`（栈顶且无更高层浮层）：否则被压住的页面会抢返回，
     // 而它只清掉自己的 selectMode，上层页面纹丝不动 —— 看起来就是「返回键失效」。
     BackHandler(enabled = isTop && st.selectMode) {
+        // 与顶栏「取消」走同一条退出路径：只把 selectMode 置 false 会把 selectedIds
+        // 留在内存里，下次进多选还得靠清空补一次
         st.selectMode = false
+        st.selectedIds.clear()
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -642,7 +631,7 @@ private fun KkboxDetailListHeader(st: KkboxDetailScreenState) {
 }
 
 /**
- * 曲目行：多选框 + 序号（命中时为等化器指示器）+ 标题 +（下载中环 | 下载按钮）；行底 1dp 分隔线。
+ * 曲目行：序号（命中时为等化器指示器）+ 标题 +（多选勾选框 | 下载中环 | ⋮）；行底 1dp 分隔线。
  *
  * 正在播放（[playing]，按 `kkbox:{id}` 命中当前曲）时：
  * - 行底换 [playingRowBackground]（主色 8% 圆角底 + 左侧 3dp 主色条，自绘于行节点）；
@@ -690,10 +679,6 @@ private fun KkboxDetailTrackRow(
             .padding(horizontal = KkboxDetailScreenPaddingH, vertical = AppSpacing.sp10),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (selectMode) {
-            DetailCheckBox(checked = selected, onToggle = { onToggle(track.id) })
-            Spacer(modifier = Modifier.width(AppSpacing.sp10))
-        }
         Box(modifier = Modifier.width(AppSpacing.sp24), contentAlignment = Alignment.Center) {
             if (playing) {
                 PlayingIndicator(tint = palette.readablePrimary())
@@ -716,15 +701,20 @@ private fun KkboxDetailTrackRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (downloading) {
+        // 行尾槽位：多选态 = 勾选框；常态 = 下载中环 / ⋮
+        if (selectMode) {
+            SelectCheckBox(checked = selected, onToggle = { onToggle(track.id) })
+        } else if (downloading) {
             CircularProgressIndicator(
                 modifier = Modifier.size(AppIconSize.icon20),
                 color = AppColors.primary,
                 strokeWidth = AppBorder.thick,
             )
-        } else if (!selectMode) {
+        } else {
             Box(
                 modifier = Modifier
+                    // 与多选勾选框同位同宽（48dp）：切多选时文字区不横向跳一格
+                    .minimumInteractiveComponentSize()
                     .clickableRipple { onDownload(track) }
                     .semantics {
                         contentDescription = "下载 ${track.title}"
@@ -757,20 +747,11 @@ private fun KkboxDetailTrackRow(
 private suspend fun kkboxDetailDownloadTrack(
     track: KkboxTrack,
     songId: String,
+    quality: Quality = Quality.hires,
     updateProgress: (Double) -> Unit,
 ): String = KkboxDownloader.download(
-    song = Song(
-        id = songId,
-        title = track.title,
-        artist = track.artist,
-        cover = track.cover,
-        album = track.album,
-        duration = track.duration,
-        platform = MusicPlatform.kkbox,
-        albumArtist = track.albumArtist,
-        trackNumber = if (track.trackNumber > 0) track.trackNumber.toString() else null,
-        releaseDate = track.releaseDate,
-    ),
+    song = kkboxTrackToSong(track),
+    quality = quality,
     onProgress = { p -> updateProgress(p * 100.0) },
 )
 

@@ -154,6 +154,24 @@ enum class BackTarget(
     PAGE("page"),
 
     /**
+     * 搜索页的「待下载」面板（`SearchSelectionOverlay`）。
+     *
+     * 它画在搜索结果之上、页面栈之下，所以返回优先级也排在 [PAGE] 之后：
+     * 详情页开着时先关详情，面板才轮到。排在 [SEARCH_SELECTION] **之前** ——
+     * 面板是「已选列表」的展开形态，返回先收面板，再退多选。
+     */
+    SEARCH_SELECTION_OVERLAY("searchSelectionOverlay"),
+
+    /**
+     * 搜索页的多选态（`selectedSongs` 非空）。
+     *
+     * 搜索结果的一种**形态**，不是浮层；但返回必须能退它 —— 否则勾了几首歌再按返回，
+     * 会直接把搜索态收掉（甚至弹退出确认），选中列表纹丝不动。
+     * 排在 [SEARCH] 之上：先退多选，再收搜索态。
+     */
+    SEARCH_SELECTION("searchSelection"),
+
+    /**
      * 主页的搜索态展开（`UiState.homeSearchExpanded`）。
      *
      * 搜索不是独立页面，但它**压在主页之上**，所以顺序排在 [PAGE] 之后：
@@ -210,6 +228,10 @@ data class OverlayVisibilityFlags(
     val appleService: Boolean = false,
     /** 页面栈是否非空（有子页面压在根页之上）。 */
     val page: Boolean = false,
+    /** 搜索页的「待下载」面板是否打开。 */
+    val searchSelectionOverlay: Boolean = false,
+    /** 搜索页是否处于多选态（有勾选的歌）。 */
+    val searchSelection: Boolean = false,
     /** 主页的搜索态是否展开。 */
     val searchExpanded: Boolean = false,
     /** 下载队列是否可见。 */
@@ -251,6 +273,8 @@ private val BACK_RULES: List<BackRule> = listOf(
     BackRule(BackTarget.QOBUZ_TOKEN) { it.qobuzToken },
     BackRule(BackTarget.APPLE_SERVICE) { it.appleService },
     BackRule(BackTarget.PAGE) { it.page },
+    BackRule(BackTarget.SEARCH_SELECTION_OVERLAY) { it.searchSelectionOverlay },
+    BackRule(BackTarget.SEARCH_SELECTION) { it.searchSelection },
     BackRule(BackTarget.SEARCH) { it.searchExpanded },
     BackRule(BackTarget.DOWNLOAD_QUEUE) { it.downloadQueue },
     BackRule(BackTarget.MENU_DRAWER) { it.menuDrawer },

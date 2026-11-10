@@ -30,6 +30,13 @@ data class AlbumDetailData(
     val artist: String,
     /** 所属平台（详情页按它取曲目） */
     val platform: MusicPlatform = MusicPlatform.kuwo,
+    /**
+     * 专辑歌手 id（有就「点歌手」秒开；没有就退回按名字搜索）。
+     *
+     * 从 [com.annieplayer.annie_music.kt.data.model.Album] 进来的入口能带上（酷我已读 `artistid`），
+     * 从单曲进来的入口只有单歌手时才敢认（合辑的专辑歌手≠单曲歌手）。
+     */
+    val artistId: String = "",
 )
 
 /** 歌手详情数据（对齐 Dart `SingerDetailData`） */
@@ -70,6 +77,12 @@ enum class RouteKind {
     /** 本地曲库：一级列表页（艺术家 / 专辑 / 文件夹 / 最近添加） */
     LocalSection,
 
+    /** 收藏库：一级子页（我喜欢 / 艺人 / 专辑 / 播放列表） */
+    FavSection,
+
+    /** 收藏库：自建播放列表详情（从「播放列表」子页进入） */
+    UserPlaylist,
+
     /** 本地曲库：专辑详情 */
     LocalAlbum,
 
@@ -81,6 +94,12 @@ enum class RouteKind {
 
     /** 本地曲库：歌手的「全部专辑」子页 */
     LocalArtistAlbums,
+
+    /** 流媒体歌手的「全部单曲」子页（overview 之上压一层） */
+    SingerSongs,
+
+    /** 流媒体歌手的「全部专辑」子页（Apple 从这里再分 EP/单曲 与专辑两段） */
+    SingerAlbums,
 
     /** 本地曲库：文件夹内容 */
     LocalFolder,
@@ -132,6 +151,32 @@ class AlbumRoute(val data: AlbumDetailData) : AppRoute {
 class SingerRoute(val data: SingerDetailData) : AppRoute {
     override val kind: RouteKind = RouteKind.Singer
     override val key: String = "singer:${routeSeq.incrementAndGet()}"
+}
+
+/**
+ * 歌手的「全部单曲」页（overview →「最热门 全部 ›」）。
+ *
+ * 与本地曲库的 `LocalArtistSongsRoute` 对称：子页是**独立的一层栈**，返回逐层退回。
+ * 数据不随路由携带 —— 歌曲在 `SingerDetailCache` 里按歌手缓存，两个页面共享同一份，
+ * 所以从 overview 点进来不会重新拉一次。
+ */
+class SingerSongsRoute(val data: SingerDetailData) : AppRoute {
+    override val kind: RouteKind = RouteKind.SingerSongs
+    override val key: String = "singerSongs:${routeSeq.incrementAndGet()}"
+}
+
+/**
+ * 歌手的「全部专辑」页。
+ *
+ * [section] 只在 Apple 上非空：它有「单曲 / EP」与「专辑」两段，overview 的两个「全部 ›」
+ * 各进一段；其它平台传 null（一张列表，内部按发行时间 / 名称排序）。
+ */
+class SingerAlbumsRoute(
+    val data: SingerDetailData,
+    val section: AppleReleaseSection? = null,
+) : AppRoute {
+    override val kind: RouteKind = RouteKind.SingerAlbums
+    override val key: String = "singerAlbums:${routeSeq.incrementAndGet()}"
 }
 
 /**
@@ -228,6 +273,30 @@ class LocalSectionRoute(val section: com.annieplayer.annie_music.kt.data.local.L
     override val key: String = "localSection:${routeSeq.incrementAndGet()}"
 }
 
+/**
+ * 收藏库的子页面（我喜欢 / 艺人 / 专辑 / 播放列表）。
+ *
+ * 与本地曲库同样并进**这一条栈**：收藏库里点专辑会 push `AlbumRoute`、点艺人会 push
+ * `SingerRoute`，两条栈并存会让返回裁决分裂。
+ */
+class FavoriteSectionRoute(
+    val section: com.annieplayer.annie_music.kt.data.favorites.FavSection,
+) : AppRoute {
+    override val kind: RouteKind = RouteKind.FavSection
+    override val key: String = "favSection:${routeSeq.incrementAndGet()}"
+}
+
+/**
+ * 自建播放列表详情页。
+ *
+ * 只带 id、不带歌单内容：歌单是可编辑的（加歌 / 删歌），页面必须每次从
+ * `FavoriteViewModel.snapshot` 现取，否则「加完歌返回上一层再进来」看到的是旧列表。
+ */
+class UserPlaylistRoute(val playlistId: String) : AppRoute {
+    override val kind: RouteKind = RouteKind.UserPlaylist
+    override val key: String = "userPlaylist:${routeSeq.incrementAndGet()}"
+}
+
 class LocalAlbumRoute(val albumKey: String) : AppRoute {
     override val kind: RouteKind = RouteKind.LocalAlbum
     override val key: String = "localAlbum:${routeSeq.incrementAndGet()}"
@@ -283,6 +352,13 @@ data class UiState(
     /** ⋮ 歌曲操作面板是否可见 */
     val songActionsVisible: Boolean = false,
     val songActionsSong: Song? = null,
+    /**
+     * 打开 ⋮ 面板时所在的自建歌单（null = 不在自建歌单里）。
+     *
+     * 只有它非空时面板才多出「从本歌单移除」。**必须能被清空**，所以
+     * [UiViewModel.setSongActionsVisible] 用 `copy()` 写它而不是 `copyWith`。
+     */
+    val songActionsFromUserPlaylistId: String? = null,
     /** 多歌手选择面板是否可见 */
     val artistPickerVisible: Boolean = false,
     val pickerSong: Song? = null,
@@ -348,6 +424,7 @@ data class UiState(
         pickerVisible: Boolean? = null,
         songActionsVisible: Boolean? = null,
     songActionsSong: Song? = null,
+        songActionsFromUserPlaylistId: String? = null,
         artistPickerVisible: Boolean? = null,
         pickerSong: Song? = null,
         contactVisible: Boolean? = null,
@@ -373,6 +450,8 @@ data class UiState(
         pickerVisible = pickerVisible ?: this.pickerVisible,
         songActionsVisible = songActionsVisible ?: this.songActionsVisible,
         songActionsSong = songActionsSong ?: this.songActionsSong,
+        songActionsFromUserPlaylistId = songActionsFromUserPlaylistId
+            ?: this.songActionsFromUserPlaylistId,
         artistPickerVisible = artistPickerVisible ?: this.artistPickerVisible,
         pickerSong = pickerSong ?: this.pickerSong,
         contactVisible = contactVisible ?: this.contactVisible,
@@ -419,9 +498,24 @@ class UiViewModel : ViewModel() {
         _state.value = _state.value.copyWith(pickerVisible = visible, pickerSong = song)
     }
 
-    /** ⋮ 歌曲操作面板（[song] 为本次要操作的歌；任意页面行尾都能呼出） */
-    fun setSongActionsVisible(visible: Boolean, song: Song? = null) {
-        _state.value = _state.value.copyWith(songActionsVisible = visible, songActionsSong = song)
+    /**
+     * ⋮ 歌曲操作面板（[song] 为本次要操作的歌；任意页面行尾都能呼出）。
+     *
+     * [fromUserPlaylistId] 只有「从自建歌单详情页」打开时才传 —— 面板据此多出
+     * 「从本歌单移除」。这里**用 `copy()` 而不是 `copyWith()`**：后者对 null 走
+     * `?: this.x` 回退，关面板时清不掉，下次在别的页面打开还会看到那一行。
+     */
+    fun setSongActionsVisible(
+        visible: Boolean,
+        song: Song? = null,
+        fromUserPlaylistId: String? = null,
+    ) {
+        val cur = _state.value
+        _state.value = cur.copy(
+            songActionsVisible = visible,
+            songActionsSong = song ?: cur.songActionsSong,
+            songActionsFromUserPlaylistId = fromUserPlaylistId,
+        )
     }
 
     /**
@@ -548,6 +642,14 @@ fun UiState.toOverlayFlags(
     translatePicker: Boolean = false,
     /** `SearchScreenState.sourcePickerVisible` —— 同上。 */
     sourcePicker: Boolean = false,
+    /** 搜索页「待下载」面板是否打开（`SearchSelectionViewModel.state.overlayVisible`）—— 同上。 */
+    searchSelectionOverlay: Boolean = false,
+    /**
+     * 搜索页是否处于多选态（`selectedSongs` 非空）—— 同上。
+     *
+     * 它是搜索结果的一种**形态**，不是浮层：返回时先退它、再收搜索态（见 `BACK_RULES`）。
+     */
+    searchSelection: Boolean = false,
 ): OverlayVisibilityFlags = OverlayVisibilityFlags(
     songActions = songActionsVisible,
     artistPicker = artistPickerVisible,
@@ -566,6 +668,8 @@ fun UiState.toOverlayFlags(
     qobuzToken = qobuzTokenVisible,
     appleService = appleServiceVisible,
     page = pageStack.isNotEmpty(),
+    searchSelectionOverlay = searchSelectionOverlay,
+    searchSelection = searchSelection,
     searchExpanded = homeSearchExpanded,
     downloadQueue = downloadQueueVisible,
     menuDrawer = drawerVisible,

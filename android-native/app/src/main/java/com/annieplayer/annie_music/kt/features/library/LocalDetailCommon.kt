@@ -17,7 +17,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,8 +60,10 @@ import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
 import com.annieplayer.annie_music.kt.ui.theme.LocalAmbientCoverUrl
 import com.annieplayer.annie_music.kt.ui.theme.LocalCoverThemePalette
 import com.annieplayer.annie_music.kt.widgets.CoverPaletteBackdrop
+import com.annieplayer.annie_music.kt.widgets.SelectCheckBox
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.SongMoreButton
+import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
 import com.annieplayer.annie_music.kt.widgets.clickableRipple
 import com.annieplayer.annie_music.kt.widgets.playingRowBackground
 import kotlinx.coroutines.launch
@@ -82,6 +88,8 @@ import kotlinx.coroutines.launch
  *
  * [content] 拿到的是 `requestClose`：页面里的返回键 / 顶栏 chevron 都用它，
  * 这样每条关闭路径都会播完滑出动画（直接调 `onClose` 会硬切）。
+ *
+ * 本壳只画不挡：整屏的指针拦截由宿主页面栈统一做（`AppShell` 的 `pageStack`）。
  */
 @Composable
 internal fun LocalOverlayFrame(
@@ -149,7 +157,7 @@ internal fun LocalStaticBackdrop(modifier: Modifier = Modifier) {
     )
 }
 
-/** 顶部返回条：chevron + 标题 + 数量 + 右侧纯文字动作（照 `SingerDetailHeader`） */
+/** 顶部返回条：chevron + 标题 + 数量 + 右侧动作（文字 [action] 或图标 [onAdd]） */
 @Composable
 internal fun LocalDetailTopBar(
     title: String,
@@ -158,6 +166,21 @@ internal fun LocalDetailTopBar(
     count: String? = null,
     action: String? = null,
     onAction: (() -> Unit)? = null,
+    /**
+     * 第二个文字动作，画在 [action] **左边**（多选态的「全选」+「完成」）。
+     *
+     * 只有自建歌单详情页用得到：那里同时需要「全选」和「退出多选」，
+     * 而 [action] 一个位置放不下两个。
+     */
+    actionSecondary: String? = null,
+    onActionSecondary: (() -> Unit)? = null,
+    /**
+     * 右侧的「+」图标动作（播放列表页 / 自建歌单详情页用）。
+     *
+     * 与文字 [action] 是同一个位置，两者都给时**图标优先** —— 一页里不会同时需要
+     * 「文字动作」和「加号」。
+     */
+    onAdd: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -179,26 +202,49 @@ internal fun LocalDetailTopBar(
             LocalChevronLeft(modifier = Modifier.size(AppIconSize.icon22), tint = AppColors.textSecondary)
         }
         Spacer(modifier = Modifier.width(AppSpacing.sp8))
-        Text(
-            text = title,
-            modifier = Modifier.weight(1f, fill = false),
-            color = AppColors.textPrimary,
-            fontSize = AppFontSize.size17,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (!count.isNullOrEmpty()) {
-            Spacer(modifier = Modifier.width(AppSpacing.sp6))
+        // 「标题 + 计数」包成一组占满剩余宽度：
+        // 直接给标题 `weight(fill = false)` 会让**未使用的份额留在原地**（Compose 不会重分配），
+        // 于是右侧动作浮在半空 —— 截图里「+」停在屏宽 78% 处就是这个原因。
+        // 现在外层 Row 吃满剩余，内层标题按内容宽度、计数紧跟在它后面，多余空白全留在组尾。
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = count,
-                color = AppColors.whiteA40,
-                fontSize = AppFontSize.size13,
-                fontWeight = FontWeight.Medium,
+                text = title,
+                modifier = Modifier.weight(1f, fill = false),
+                color = AppColors.textPrimary,
+                fontSize = AppFontSize.size17,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+            if (!count.isNullOrEmpty()) {
+                Spacer(modifier = Modifier.width(AppSpacing.sp6))
+                Text(
+                    text = count,
+                    color = AppColors.whiteA40,
+                    fontSize = AppFontSize.size13,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
         }
-        Spacer(modifier = Modifier.weight(1f))
+        if (actionSecondary != null && onActionSecondary != null) {
+            Box(
+                modifier = Modifier
+                    .clickableRipple(onActionSecondary)
+                    .padding(AppSpacing.sp4),
+            ) {
+                Text(
+                    text = actionSecondary,
+                    color = AppColors.primary,
+                    fontSize = AppFontSize.size13,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            Spacer(modifier = Modifier.width(AppSpacing.sp8))
+        }
         if (action != null && onAction != null) {
             Box(
                 modifier = Modifier
@@ -210,6 +256,23 @@ internal fun LocalDetailTopBar(
                     color = AppColors.primary,
                     fontSize = AppFontSize.size13,
                     fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+        if (onAdd != null) {
+            // 与 Qobuz Token 管理页那一枚「+」同款（主色 / 24dp / 无波纹），位置也照它：
+            // 右侧只留 Row 的 sp12 + 自身 sp4 = 16dp —— 正好和下面搜索框的右边缘同一条竖线。
+            Box(
+                modifier = Modifier
+                    .clickableNoRipple(onAdd)
+                    .padding(AppSpacing.sp4),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "新建",
+                    tint = AppColors.primary,
+                    modifier = Modifier.size(AppIconSize.icon24),
                 )
             }
         }
@@ -433,6 +496,15 @@ internal fun LocalSongRow(
      * （为了不让右侧露出被吃掉），若不补这 4dp，封面会比上下相邻的货架更靠左。
      */
     leadingSpace: Dp = AppSpacing.sp12,
+    /**
+     * 多选模式：点击整行 = 切换选中（不播放），行尾的 ⋮ 换成勾选框（序号列不变）。
+     *
+     * 只有「自建歌单详情（本地）」用它做批量移除；其余页面（专辑 / 歌手 / 文件夹 /
+     * 最近播放）保持默认 false，行为一字不变。
+     */
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -445,14 +517,17 @@ internal fun LocalSongRow(
                 .weight(1f)
                 .height(AppSize.detailRowHeight)
                 .then(
-                    if (isActive) {
-                        // 竖条贴行左边界（内缩 2dp），与封面之间留出 10dp 空隙
-                        Modifier.playingRowBackground(tint = playingTint, startInset = 2.dp)
-                    } else {
-                        Modifier
+                    when {
+                        isActive -> {
+                            // 竖条贴行左边界（内缩 2dp），与封面之间留出 10dp 空隙
+                            Modifier.playingRowBackground(tint = playingTint, startInset = 2.dp)
+                        }
+                        // 多选选中态：与专辑详情同一档（primary 8%）
+                        selected -> Modifier.background(AppColors.primaryA08)
+                        else -> Modifier
                     },
                 )
-                .clickableRipple(onPlay)
+                .clickableRipple { if (selectionMode) onToggleSelect?.invoke() else onPlay() }
                 .padding(
                     start = leadingSpace,
                     end = AppSpacing.sp12,
@@ -466,8 +541,10 @@ internal fun LocalSongRow(
                     modifier = Modifier.width(AppSpacing.sp28),
                     contentAlignment = Alignment.Center,
                 ) {
+                    // 序号列在两种模式下**语义不变**：多选只有一个入口，就是行尾的勾选框
                     if (isActive) {
-                        com.annieplayer.annie_music.kt.widgets.PlayingIndicator(tint = playingTint)
+                        com.annieplayer.annie_music.kt.widgets
+                            .PlayingIndicator(tint = playingTint)
                     } else {
                         Text(
                             text = trackLabel.ifEmpty { "${index + 1}" },
@@ -552,7 +629,15 @@ internal fun LocalSongRow(
                 LocalQualityBadge(label = meta.qualityChip)
             }
         }
-        SongMoreButton(onClick = onMore)
+        // 行尾槽位：多选态 = 勾选框（⋮ 不渲染 —— 多选时打开全局面板没有意义）；
+        // 常态 = ⋮（点开全局歌曲操作）
+        val toggle = onToggleSelect
+        if (selectionMode && toggle != null) {
+            SelectCheckBox(checked = selected, onToggle = toggle)
+        } else {
+            // 命中区与勾选框同位同宽（48dp）：切多选时文字区不横向跳一格
+            SongMoreButton(onClick = onMore, modifier = Modifier.minimumInteractiveComponentSize())
+        }
     }
 }
 
@@ -572,7 +657,7 @@ internal fun LocalQualityBadge(label: String, modifier: Modifier = Modifier) {
 
 /**
  * 专辑卡（照 `SingerDetailAlbumCard`）：封面边长 = 卡宽 − 12dp，文字区两行 + 底部一行
- * 「音符 · N 首 · 类型 · 发行年」（末项与流媒体一样右对齐加粗）。
+ * 「音符 · N 首 · 类型 · 发行日期」（末项与流媒体一样右对齐加粗）。
  *
  * 用在「专辑列表页」的 2 列网格、「歌手详情」的横滑架、以及歌手详情的「全部专辑」页，
  * 四处同一尺寸语言。
@@ -585,10 +670,17 @@ internal fun LocalAlbumGridCard(
     count: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    /** 发行年（没有就不显示） */
-    year: Int? = null,
+    /** 发行日期（`yyyy-MM-dd` / `yyyy-MM` / `yyyy`，见 [normalizeReleaseDate]；没有就不显示） */
+    date: String? = null,
     /** 专辑类型：单曲 / EP / 专辑（见 [localAlbumType]） */
     type: String? = null,
+    /**
+     * 直接当 Coil model 用的封面（在线专辑的 https 地址）。
+     *
+     * 非空时**不看 [coverPath]**：那个是裸本地路径、会自动补 `file://`，
+     * 而收藏库的专辑两边混着放，模型已经是完整地址（本地是 `file:///…`、在线是 `https://…`）。
+     */
+    coverModel: String? = null,
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -612,15 +704,16 @@ internal fun LocalAlbumGridCard(
                         .background(AppColors.whiteA03),
                     contentAlignment = Alignment.Center,
                 ) {
-                    var coverFailed by remember(coverPath) { mutableStateOf(false) }
-                    if (coverPath == null || coverFailed) {
+                    var coverFailed by remember(coverModel, coverPath) { mutableStateOf(false) }
+                    val model = coverModel ?: coverPath?.let { "file://$it" }
+                    if (model == null || coverFailed) {
                         MusicNoteGlyph(
                             modifier = Modifier.size(AppIconSize.icon40),
                             tint = AppColors.white10,
                         )
                     } else {
                         AsyncImage(
-                            model = "file://$coverPath",
+                            model = model,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             onError = { coverFailed = true },
@@ -648,13 +741,17 @@ internal fun LocalAlbumGridCard(
                 )
                 Spacer(modifier = Modifier.height(AppSpacing.sp4))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    MusicNoteGlyph(modifier = Modifier.size(10.dp), tint = AppColors.glyphDim)
-                    Spacer(modifier = Modifier.width(AppSpacing.sp4))
-                    Text(
-                        text = "${count}首",
-                        color = AppColors.white30,
-                        fontSize = AppFontSize.size10,
-                    )
+                    // 曲目数是本地曲库算出来的；在线专辑（收藏里没有曲目数）传 0，
+                    // 整个「♪ N首」就省掉 —— 不画一个「0首」
+                    if (count > 0) {
+                        MusicNoteGlyph(modifier = Modifier.size(10.dp), tint = AppColors.glyphDim)
+                        Spacer(modifier = Modifier.width(AppSpacing.sp4))
+                        Text(
+                            text = "${count}首",
+                            color = AppColors.white30,
+                            fontSize = AppFontSize.size10,
+                        )
+                    }
                     if (!type.isNullOrEmpty()) {
                         Spacer(modifier = Modifier.width(AppSpacing.sp4))
                         Text(
@@ -663,10 +760,10 @@ internal fun LocalAlbumGridCard(
                             fontSize = AppFontSize.size10,
                         )
                     }
-                    if (year != null && year > 0) {
+                    if (!date.isNullOrEmpty()) {
                         Spacer(modifier = Modifier.width(AppSpacing.sp4))
                         Text(
-                            text = "$year",
+                            text = date,
                             modifier = Modifier.weight(1f, fill = false),
                             color = AppColors.white70,
                             fontSize = AppFontSize.size10,

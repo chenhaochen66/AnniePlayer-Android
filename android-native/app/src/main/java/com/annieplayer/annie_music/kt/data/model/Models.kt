@@ -121,7 +121,13 @@ data class Song(
     val releaseDate: String? = null,
     /** 歌手名列表（多歌手逐个列出；单歌手为 1 个元素） */
     val artistNames: List<String> = emptyList(),
-    /** 歌手 id 列表（与 [artistNames] 按下标对应；平台拿不到时为空列表） */
+    /**
+     * 歌手 id 列表（与 [artistNames] 按下标对应；平台拿不到时为空列表）。
+     *
+     * 唯一例外：酷我的合并串拆不准时（`Pet Shop Boys&Years & Years` → 2 个 id / 3 段名字），
+     * [artistNames] 只放整串、[artistIds] 仍是全部 id —— 两者不等长，**此时不要按下标配对**，
+     * 由 `resolveKuwoArtistNames` 按 id 补齐名字。
+     */
     val artistIds: List<String> = emptyList(),
     /** 作曲 / 词曲作者（有则写 tag） */
     val composer: String? = null,
@@ -237,6 +243,17 @@ data class ArtistSongsPage(
     val total: Int,
 )
 
+/**
+ * 「全部单曲」页续拉的一批。
+ *
+ * [hasMore] 由各平台自己的终止信号决定：有 `total` 的比 `offset + size < total`，
+ * 有 `next` 的（Apple）看 `next` 在不在，两者都没有的退化成「满批就还有」。
+ */
+data class ArtistSongsBatch(
+    val songs: List<Song>,
+    val hasMore: Boolean,
+)
+
 /** 下载任务状态 */
 @Serializable
 enum class DownloadStatus {
@@ -291,6 +308,12 @@ data class Album(
     val albumid: String,
     val name: String,
     val artist: String,
+    /**
+     * 歌手 id（专辑卡片 / 专辑详情「点歌手」用它秒开；平台没给就为空，退回按名字搜索）。
+     *
+     * 酷我 `ft=album` 与 `stype=albumlist` 都给 `artistid`，以前没读。
+     */
+    val artistId: String = "",
     /** 所属平台（专辑搜索 / 专辑详情按它分发） */
     val platform: MusicPlatform = MusicPlatform.kuwo,
     val musiccnt: String = "0",
@@ -321,7 +344,7 @@ data class AlbumSong(
     val qualitySizes: Map<Quality, Long> = emptyMap(),
     /** 歌手名列表（多歌手逐个列出） */
     val artistNames: List<String> = emptyList(),
-    /** 歌手 id 列表（与 [artistNames] 按下标对应；平台拿不到时为空） */
+    /** 歌手 id 列表（与 [artistNames] 按下标对应；平台拿不到时为空。酷我的不等长例外见 [Song.artistIds]） */
     val artistIds: List<String> = emptyList(),
     /** 作曲 / 词曲作者 */
     val composer: String? = null,

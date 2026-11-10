@@ -79,6 +79,8 @@ import com.annieplayer.annie_music.kt.core.audio.AudioRoute
 import com.annieplayer.annie_music.kt.core.audio.AudioTone
 import com.annieplayer.annie_music.kt.core.audio.khzText
 import com.annieplayer.annie_music.kt.core.audio.outputPillText
+import com.annieplayer.annie_music.kt.core.compose.activityViewModel
+import com.annieplayer.annie_music.kt.core.state.FavoriteViewModel
 import com.annieplayer.annie_music.kt.core.state.PlaybackProgress
 import com.annieplayer.annie_music.kt.core.state.PlayerState
 import com.annieplayer.annie_music.kt.core.state.UiState
@@ -93,6 +95,7 @@ import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.ui.theme.ColorPalette
+import com.annieplayer.annie_music.kt.widgets.HeartGlyph
 import com.annieplayer.annie_music.kt.widgets.MovingText
 import com.annieplayer.annie_music.kt.widgets.MusicNoteGlyph
 import com.annieplayer.annie_music.kt.widgets.clickableNoRipple
@@ -193,6 +196,13 @@ fun PlayerScreen(
     val displayCover = coverUrl.ifEmpty { song.cover }
     val displayFallback = fallbackCoverUrl.ifEmpty { song.cover }
     LaunchedEffect(song.id, displayCover) { onCoverChanged(displayCover) }
+
+    // 单曲收藏（爱心在 ⋮ 左边）：读 snapshot 才能在点击后立刻变
+    val favoriteViewModel: FavoriteViewModel = activityViewModel()
+    val favoriteSnapshot by favoriteViewModel.snapshot.collectAsState()
+    val songLiked = remember(favoriteSnapshot, song.id, song.platform) {
+        favoriteViewModel.isSongLiked(song)
+    }
 
     // 封面进入动画：切歌时 500ms 淡入 + 轻微放大
     val coverEntry = remember(song.id) { Animatable(0f) }
@@ -416,6 +426,18 @@ fun PlayerScreen(
                             fontSize = AppFontSize.size20,
                             fontWeight = AppFontWeight.bold,
                         ),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clickableNoRipple { favoriteViewModel.toggleSong(song) }
+                        .padding(AppSpacing.sp8),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    HeartGlyph(
+                        modifier = Modifier.size(AppIconSize.icon24),
+                        tint = if (songLiked) AppColors.heart else AppColors.glyphStrong,
+                        filled = songLiked,
                     )
                 }
                 Box(

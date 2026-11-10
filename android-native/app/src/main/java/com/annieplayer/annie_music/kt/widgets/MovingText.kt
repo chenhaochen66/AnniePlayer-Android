@@ -16,7 +16,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -34,11 +33,16 @@ import kotlinx.coroutines.delay
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+/** 跑马灯位移的刷新间隔：33ms（30fps）。文字速度只有 40px/s，30fps 看不出台阶。 */
+private const val MarqueeFrameMs = 33L
+
 /**
- * 按帧推进一次线性平移：从 [from] 走到 [to] 用 [moveMs]，每帧把插值交给 [setOffset]。
+ * 用定时器推进一次线性平移：从 [from] 走到 [to] 用 [moveMs]，每隔 [MarqueeFrameMs]
+ * 把插值交给 [setOffset]。
  *
- * 写成顶层函数是因为两个跑马灯都要用；节奏本身（hold 用 `delay`、move 用帧时钟）
- * 由调用方决定，这里只管一段匀速位移。
+ * **不用帧时钟**：`withFrameNanos` 每帧都会唤醒，而 Compose 的任一 state 变化都会把
+ * 整个 AndroidComposeView 标脏 —— 一条滚动标题就能让整窗持续满帧重绘，且切到桌面后
+ * 照跑（动画不感知可见性）。骁龙 680 上实测：暂停 + 退到桌面后仍有 44 fps。
  */
 private suspend fun slideFrames(
     moveMs: Float,
@@ -46,12 +50,12 @@ private suspend fun slideFrames(
     to: Float,
     setOffset: (Float) -> Unit,
 ) {
-    val startNs = withFrameNanos { it }
+    val startNs = System.nanoTime()
     while (true) {
-        val nowNs = withFrameNanos { it }
-        val f = (nowNs - startNs) / 1_000_000f / moveMs
+        val f = (System.nanoTime() - startNs) / 1_000_000f / moveMs
         if (f >= 1f) break
         setOffset(from + (to - from) * f)
+        delay(MarqueeFrameMs)
     }
     setOffset(to)
 }

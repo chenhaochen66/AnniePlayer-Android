@@ -35,7 +35,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
@@ -180,25 +179,10 @@ fun LocalLibraryScreen(
                 .fillMaxSize()
                 .systemBarsPadding(),
         ) {
-            // ── 顶栏（不改动：菜单 + 大标题；角标从「建设中」换成真实统计）──
+            // ── 顶栏（菜单 + 大标题；标题旁不再挂角标，数量在下面的统计行里）──
             AppTopBar(
                 title = "本地曲库",
                 onOpenMenu = onOpenMenu,
-                titleAdornment = {
-                    Box(
-                        modifier = Modifier
-                            .background(AppColors.primaryA15, RoundedCornerShape(AppRadius.pill))
-                            .padding(horizontal = AppSpacing.sp8, vertical = AppSpacing.sp2),
-                    ) {
-                        Text(
-                            text = if (st.tracks.isEmpty()) "扫描中" else "${st.tracks.size} 首",
-                            color = AppColors.primary,
-                            fontSize = AppFontSize.size10,
-                            fontWeight = AppFontWeight.semiBold,
-                            letterSpacing = 0.3.sp,
-                        )
-                    }
-                },
             )
 
             // 列表 + 右侧字母索引条（索引条只在按字母排序时出现）

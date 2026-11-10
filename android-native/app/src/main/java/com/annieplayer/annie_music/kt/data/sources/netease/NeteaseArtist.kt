@@ -43,12 +43,27 @@ suspend fun fetchNeteaseArtistBio(artistId: String): String {
  * 旧实现走 `/api/v1/artist/{id}` 的 `hotSongs`：只有热门约 50 首、且不带总数，
  * 导致详情页「歌曲 N」和翻页全错。该接口同时返回真实总数 `total`。
  */
-suspend fun getNeteaseArtistSongs(artistId: String, page: Int = 1): ArtistSongsPage {
+suspend fun getNeteaseArtistSongs(artistId: String, page: Int = 1): ArtistSongsPage =
+    getNeteaseArtistSongsRange(
+        artistId = artistId,
+        limit = ArtistSongsPageSize,
+        offset = (page - 1) * ArtistSongsPageSize,
+    )
+
+/**
+ * 按 `limit` / `offset` 直接取一段（「全部单曲」页续拉用）。
+ *
+ * **`limit` 硬上限 200**：`limit=500` / `1000` 实测都只回 200 条，所以续拉粒度就是 200。
+ */
+suspend fun getNeteaseArtistSongsRange(
+    artistId: String,
+    limit: Int,
+    offset: Int,
+): ArtistSongsPage {
     return try {
-        val offset = (page - 1) * ArtistSongsPageSize
         val data = httpGetJson(
             "https://music.163.com/api/v1/artist/songs?id=$artistId" +
-                "&limit=$ArtistSongsPageSize&offset=$offset",
+                "&limit=${limit.coerceIn(1, 200)}&offset=$offset",
             neteaseApiHeaders,
         )
         val songsRaw = data["songs"]

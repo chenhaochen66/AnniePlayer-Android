@@ -35,7 +35,7 @@ import com.annieplayer.annie_music.kt.data.local.LocalGroup
 import com.annieplayer.annie_music.kt.data.local.LocalLibraryStore
 import com.annieplayer.annie_music.kt.data.local.LocalSection
 import com.annieplayer.annie_music.kt.data.local.LocalTrackMeta
-import com.annieplayer.annie_music.kt.data.local.albumYearOf
+import com.annieplayer.annie_music.kt.data.local.localAlbumDateOf
 import com.annieplayer.annie_music.kt.data.local.groupTracks
 import com.annieplayer.annie_music.kt.data.local.localAlbumType
 import com.annieplayer.annie_music.kt.data.local.localAlphabetComparator
@@ -56,7 +56,8 @@ import com.annieplayer.annie_music.kt.widgets.shortScrollbar
  * 卡片尺寸 `cardWidth = (屏宽 − 16 − 10) / 2`、`cardHeight = cardWidth + 68dp`
  * （那 68dp 是文字区，含专辑名 / 艺术家 / 首数三行）。
  *
- * 与流媒体一致：**背景固定色板、不跟封面变色**；排序用本地 tag 里的发行年（`year`），
+ * 与流媒体一致：**背景固定色板、不跟封面变色**；排序用本地 tag 里的发行日期（`year`，
+ * 经 `localAlbumDateOf` 规范成 `yyyy-MM-dd`），
  * 没有年份的排最后 —— 这一页没有云端 `pub` 字段可用。
  */
 @Composable
@@ -105,17 +106,19 @@ fun LocalAlbumListScreen(
             }
             AlbumSort.songCount -> visibleGroups.sortedWith { a, b -> dir(a.count.compareTo(b.count)) }
             AlbumSort.released -> {
-                val withYear = visibleGroups.map { g -> g to yearOf(g.tracks) }
-                withYear.sortedWith { a, b ->
-                    val (ga, ya) = a
-                    val (gb, yb) = b
+                // 日期是 `yyyy[-MM[-dd]]` 字符串，字典序即时间序；`"2023" < "2023-05-12"`，
+                // 所以同一年里「只有年」的会排在有完整日期的前面（视为更旧），可接受
+                val withDate = visibleGroups.map { g -> g to localAlbumDateOf(g.tracks) }
+                withDate.sortedWith { a, b ->
+                    val (ga, da) = a
+                    val (gb, db) = b
                     when {
-                        // 没年份的永远排在最后（不随升降序翻面）
-                        ya == null && yb == null -> dir(text.compare(ga.title, gb.title))
-                        ya == null -> 1
-                        yb == null -> -1
-                        ya == yb -> dir(text.compare(ga.title, gb.title))
-                        else -> dir(ya.compareTo(yb))
+                        // 没日期的永远排在最后（不随升降序翻面）
+                        da == null && db == null -> dir(text.compare(ga.title, gb.title))
+                        da == null -> 1
+                        db == null -> -1
+                        da == db -> dir(text.compare(ga.title, gb.title))
+                        else -> dir(da.compareTo(db))
                     }
                 }.map { it.first }
             }
@@ -200,8 +203,8 @@ fun LocalAlbumListScreen(
                                     count = group.count,
                                     onClick = { onOpenAlbum(group.key) },
                                     modifier = Modifier.height(cardHeight),
-                                    // 与流媒体专辑卡同一行信息：N 首 · 类型 · 发行年
-                                    year = albumYearOf(group.tracks),
+                                    // 与流媒体专辑卡同一行信息：N 首 · 类型 · 发行日期
+                                    date = localAlbumDateOf(group.tracks),
                                     type = localAlbumType(group.count),
                                 )
                             }
@@ -213,9 +216,6 @@ fun LocalAlbumListScreen(
         }
     }
 }
-
-/** 专辑默认排序用的发行年（与 `albumYearOf` 同一套规则，只是空值在这里参与比较） */
-private fun yearOf(tracks: List<LocalTrackMeta>): Int? = albumYearOf(tracks)
 
 /**
  * 专辑列表的排序模式；每种都能切升降序（`defaultAscending` 是切换模式时的初始方向）。

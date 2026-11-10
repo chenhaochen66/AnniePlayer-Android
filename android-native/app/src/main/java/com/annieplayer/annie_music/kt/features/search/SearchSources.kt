@@ -24,7 +24,7 @@ const val kAppleSearchPageSize: Int = 25
 /**
  * 搜索支持的平台（单曲 / 专辑 / 歌手**共用这一份**，顺序即「搜索选择」面板的行序）。
  *
- * KKBOX 暂不列入：单曲搜索未接入（会返回空列表），专辑 / 歌手也不在搜索结果里给。
+ * KKBOX 需要登录账号（令牌由 AppShell 注入 `kkboxSidProvider`）；未登录时它的搜索结果为空。
  */
 val searchPlatforms: List<MusicPlatform> = listOf(
     MusicPlatform.kuwo,
@@ -33,6 +33,7 @@ val searchPlatforms: List<MusicPlatform> = listOf(
     MusicPlatform.kugou,
     MusicPlatform.qobuz,
     MusicPlatform.apple,
+    MusicPlatform.kkbox,
 )
 
 /** 默认平台（[searchPlatforms] 第一项）；不持久化，重启即回到它。 */

@@ -140,26 +140,6 @@ internal fun SingerDetailErrorOutline(
     }
 }
 
-/** check：选中态对勾（本页统一 2dp 圆头端点 / 圆角连接） */
-@Composable
-internal fun SingerDetailCheckMark(modifier: Modifier = Modifier, tint: Color = AppColors.white) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = SingerDetailIconStroke.toPx()
-        val path = Path().apply {
-            moveTo(w * 0.22f, h * 0.52f)
-            lineTo(w * 0.43f, h * 0.73f)
-            lineTo(w * 0.78f, h * 0.28f)
-        }
-        drawPath(
-            path = path,
-            color = tint,
-            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
-        )
-    }
-}
-
 /** album：封面兜底（描边圆 + 圆心实点，本页统一 2dp 圆环） */
 @Composable
 internal fun SingerDetailAlbumGlyph(modifier: Modifier = Modifier, tint: Color = AppColors.white10) {

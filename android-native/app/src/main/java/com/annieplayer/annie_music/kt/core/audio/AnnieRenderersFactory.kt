@@ -41,30 +41,17 @@ class AnnieRenderersFactory(context: Context) : DefaultRenderersFactory(context)
     var onAaudioFailure: ((String, String) -> Unit)? = null
 
     /**
-     * 当前这一首的传输标签（方式@档位）。sink 只在 `configure()` 里读一次并保存，
-     * 失败时把**那次的值**回传，用于按方式+档位记失败记忆。
+     * **这一次 configure 要什么**（通路意图 / DSD 传输方式 / 要不要 raw alt / 传输标签）。
+     *
+     * 以前这里是三个独立的 lambda（`dsdTransportTag` / `rawDsdActive` / `nativeDsdActive`），
+     * 各读各的全局量，sink 又在 configure 里读了好几次 —— 两次读之间主线程翻面就会
+     * 让同一首歌的两半走不同 alt。现在只给一个**取值函数**，由 sink 在 configure 开头
+     * 取一次快照（见 [OutputRequest]）。
      */
-    var dsdTransportTag: (() -> String)? = null
+    var outputRequest: (() -> OutputRequest)? = null
 
     /** 实际生效通路 / 降级原因 / 端点位深：播放层写进 `AudioOutputStatus` */
     var onSinkRouting: ((OutputPath, DowngradeNotice?, Int) -> Unit)? = null
-
-    /**
-     * 当前这首是不是 **DSD 直出**（送的是 DoP / raw 帧，不是 PCM）。
-     *
-     * 是的话整条处理器链必须旁路：r8brain 会重采样、EQ 会改最低位，
-     * 而 DoP 的帧标记就在那些位里。
-     */
-    var rawDsdActive: (() -> Boolean)? = null
-
-    /**
-     * 当前这首是不是 **Native DSD**（裸 1-bit，走设备的 raw alt）。
-     *
-     * 与 [rawDsdActive] 的区别：后者表示"送的不是 PCM 样本"（DoP 也算），
-     * 用来旁路 DSP 链；这个只表示"要选 raw alt"（只有 Native 算）。
-     * 混用会让 DoP 被塞进 raw alt，DAC 按 1-bit 解 24 bit 帧 → 不出声。
-     */
-    var nativeDsdActive: (() -> Boolean)? = null
 
     /**
      * 播放器此刻**想不想播**（`Player.playWhenReady`）。
@@ -185,7 +172,10 @@ class AnnieRenderersFactory(context: Context) : DefaultRenderersFactory(context)
                 com.annieplayer.annie_music.kt.core.audio.dsp.NativeAaudio.isAvailable()) ||
             UsbAudioDirect.platformReady()
         ) {
-            val aaudio = AaudioSink(
+            // 这一次 configure 的输入：sink 与 PcmAudioSink 共用同一个快照来源。
+            // 两者各自在 configure 开头取一次，因此**同一次 configure 内是一致的**。
+            val request = { outputRequest?.invoke() ?: OutputRequest.Conservative }
+            val sink = AnnieAudioSink(
                 systemSinkFactory = { delegate },
                 exclusiveWanted = {
                     // 新模型：**看通路 + 看路由**（用户选了「AAudio 独占」、且当前不是蓝牙）。
@@ -233,26 +223,21 @@ class AnnieRenderersFactory(context: Context) : DefaultRenderersFactory(context)
                         else -> DowngradeReason.UsbOpenFailed
                     }
                 },
-                // 只有 Native DSD 需要设备的 raw alt；DoP 留在 PCM alt（24 bit 帧）
-                nativeRawAlt = { nativeDsdActive?.invoke() == true },
-                // DoP 与 Native 都不能过 mixer：回落系统通路时由 sink 显式判失败
-                rawFlowActive = { rawDsdActive?.invoke() == true },
+                // 这一次 configure 的全部意图：raw alt / 帧类型 / 传输标签，一个快照
+                request = request,
                 // 独占通路的音量：绕开 mixer 后 `setVolume` 没有接收方，只能由我方施加。
                 // 它自己处理"非独占 / DSD 直出 → 1f"，这里不做判断。
                 exclusiveGain = { ExclusiveVolume.linear },
                 // "上游还想不想播"：自愈与故障重建的唯一许可（见 `AaudioSink.playIntent`）
                 playIntent = { playIntent?.invoke() == true },
-                // 失败时要按"这条流是用什么方式开的"记，所以这里给的是**取值函数**，
-                // 由 sink 在 configure 那一刻快照（见 `AaudioSink.openedTransportTag`）
-                transportTag = { dsdTransportTag?.invoke().orEmpty() },
             )
             return PcmAudioSink(
-                aaudio,
+                sink,
                 tuning,
                 resampler,
-                rawPassthrough = { rawDsdActive?.invoke() == true },
+                rawPassthrough = { request().rawFrames },
                 // 出口用**源**位深去挑端点格式，而不是调音后的 float 容器
-                onSourceBits = { aaudio.wireBitsHint = it },
+                onSourceBits = { sink.wireBitsHint = it },
             )
         }
         return PcmAudioSink(delegate, tuning, resampler)

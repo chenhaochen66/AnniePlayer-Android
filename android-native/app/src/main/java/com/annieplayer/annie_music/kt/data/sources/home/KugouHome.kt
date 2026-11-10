@@ -245,7 +245,7 @@ private fun _kugouStyleSong(raw: Any?): Song? {
         cover = jsonStr(m["sizable_cover"]).replace("{size}", "400"),
         album = decodeHtmlEntities(jsonStr(m["album_name"])),
         albumId = albumId.takeIf { it.isNotEmpty() && it != "0" },
-        duration = jsonLong(m["timelength_320"]).toInt(),
+        duration = _kugouTimelengthSeconds(m["timelength_320"]),
         platform = MusicPlatform.kugou,
         qualities = getKuGouQualities(m),
         qualitySizes = getKuGouQualitySizes(m),
@@ -270,12 +270,24 @@ private fun _kugouDiscoveredSong(raw: Any?): Song? {
         cover = jsonStr(m["album_cover"]).replace("{size}", "400"),
         album = decodeHtmlEntities(jsonStr(m["album_name"])),
         albumId = albumId.takeIf { it.isNotEmpty() && it != "0" },
-        duration = jsonLong(m["timelength_320"]).toInt(),
+        duration = _kugouTimelengthSeconds(m["timelength_320"]),
         platform = MusicPlatform.kugou,
         qualities = getKuGouQualities(m),
         qualitySizes = getKuGouQualitySizes(m),
         albumArtist = artist,
     )
+}
+
+/**
+ * 酷狗聚合接口的 `timelength_320` 是**毫秒**（4 分钟的歌是 240000 左右）。
+ *
+ * 直接当秒用会渲染成 `4000:00` 这种，同一个列表里就出现「有的歌是分秒、有的是天文数字」。
+ * `< 10000` 视作已经是秒，防的是少数字段给的是秒、或者字段本身是异常小值。
+ */
+private fun _kugouTimelengthSeconds(raw: Any?): Int {
+    val value = jsonLong(raw)
+    if (value <= 0L) return 0
+    return if (value < 10_000L) value.toInt() else (value / 1000L).toInt()
 }
 
 /**

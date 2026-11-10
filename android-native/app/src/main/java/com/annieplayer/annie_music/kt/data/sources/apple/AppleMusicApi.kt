@@ -175,6 +175,32 @@ data class AppleArtistSongs(
     val total: Int,
 )
 
+/**
+ * `view/top-songs` 的一页。
+ *
+ * [hasMore] 取自响应里有没有 `next` —— 末页没有；`offset` 越过末尾直接返回 404，
+ * 那种情况在这里被吞成「没有更多」。
+ */
+data class AppleArtistSongsPage(
+    val songs: List<Song>,
+    val hasMore: Boolean,
+)
+
+/**
+ * 歌手曲目视图单页上限。**101 就 400**（实测），不是 100 只是个巧合数字。
+ */
+internal const val AppleArtistSongsPageLimit = 100
+
+/**
+ * `fields[songs]=` 投影：只留 [appleSongOf] 真正会读的属性。
+ *
+ * 实测单页从 125 KB 压到 79.6 KB。**改 [appleSongOf] 读新属性时必须同步加到这里**，
+ * 否则该字段会静默变空（`AppleSongFieldsTest` 盯着这件事）。
+ */
+internal const val AppleSongFields =
+    "name,artistName,albumArtistName,albumName,artwork,durationInMillis,trackNumber," +
+        "discNumber,releaseDate,composerName,genreNames,isrc,url,audioTraits"
+
 /** 专辑曲目结果。 */
 data class AppleAlbumSongs(
     val songs: List<AlbumSong>,
@@ -206,7 +232,7 @@ suspend fun fetchAppleStorefronts(): List<AppleStorefront> {
 }
 
 suspend fun searchAppleMusic(query: String, page: Int = 1, limit: Int = 30): List<Song> =
-    _search("songs", "song", query, page, limit).mapNotNull(::_songOf)
+    _search("songs", "song", query, page, limit).mapNotNull(::appleSongOf)
 
 suspend fun searchAppleAlbums(query: String, page: Int = 1, limit: Int = 30): List<Album> =
     _search("albums", "album", query, page, limit).mapNotNull(::_albumOf)
@@ -237,6 +263,44 @@ suspend fun getAppleAlbumSongs(albumId: String): AppleAlbumSongs {
     )
 }
 
+/** Apple 歌单（catalog playlist）的元数据 + 曲目。 */
+data class ApplePlaylist(
+    val name: String,
+    val curator: String,
+    val cover: String,
+    val songs: List<Song>,
+)
+
+/**
+ * 歌单详情（`/v1/catalog/{sf}/playlists/{id}`）。
+ *
+ * 只覆盖**公开的 catalog 歌单**（`pl.xxx`）；用户自己的资料库歌单要登录，catalog 里没有。
+ * 曲目用 [_paged] 翻完 —— 歌单动辄上百首，一页默认 100 条。
+ */
+suspend fun getApplePlaylist(playlistId: String): ApplePlaylist {
+    val id = _rawAppleId(playlistId)
+    val data = _appleGet(
+        "/v1/catalog/$appleMusicStorefront/playlists/$id",
+        mapOf(
+            "platform" to "web",
+            "include" to "tracks",
+            // 与专辑同理：曲目自己的 relationships 不被顶层 include 覆盖，要嵌套点名
+            "include[playlists:tracks]" to "artists",
+            "limit[playlists:tracks]" to "100",
+            "l" to _catalogLang(),
+        ),
+    )
+    val item = _map(_list(data["data"]).firstOrNull())
+    val attrs = _map(item["attributes"])
+    val tracks = _paged(_map(_map(item["relationships"])["tracks"]))
+    return ApplePlaylist(
+        name = _str(attrs["name"]),
+        curator = _str(attrs["curatorName"]),
+        cover = _artwork(attrs["artwork"]),
+        songs = tracks.mapNotNull(::appleSongOf),
+    )
+}
+
 /**
  * 专辑级版权声明（`albums/{id}.attributes.copyright`）。
  *
@@ -262,22 +326,104 @@ suspend fun fetchAppleAlbumCopyright(albumId: String?): String? {
 
 private const val ALBUM_COPYRIGHT_TTL_MS = 24 * 60 * 60 * 1000L
 
-suspend fun getAppleArtistSongs(artistId: String): AppleArtistSongs {
+/**
+ * 歌手曲目分页（`/v1/catalog/{sf}/artists/{id}/view/top-songs`）。
+ *
+ * 旧的嵌入形态 `artists/{id}?views=top-songs&limit[artists:top-songs]=50` **上限 50**；
+ * 独立视图形态支持 `limit`（硬上限 [AppleArtistSongsPageLimit]）+ `offset`，能一路翻到该歌手的
+ * 全部曲目 —— 实测 Taylor Swift 678 首（7 页）、Canozan 75 首（1 页）。
+ *
+ * 三个必须知道的边界：
+ * - `offset` 越过末尾返回 **404**（不是空数组），这里吞成「没有更多」；
+ * - 末页响应**不带 `next`**，`hasMore` 就靠它判断；
+ * - 没有 `total` 字段，想要「共 N 首」只能一直翻到底。
+ *
+ * 不加 `relate[songs]=artists`：它只给 id 不给 name（+17 KB/页），多歌手仍由
+ * [_fillAppleSongArtists] 补 —— 那一支走 `songs?ids=…&include=artists` 才拿得到名字。
+ */
+suspend fun getAppleArtistSongsPage(
+    artistId: String,
+    offset: Int,
+    limit: Int = AppleArtistSongsPageLimit,
+): AppleArtistSongsPage {
     val id = _rawAppleId(artistId)
-    val data = _appleGet(
-        "/v1/catalog/$appleMusicStorefront/artists/$id",
-        mapOf(
-            "platform" to "web",
-            "views" to "top-songs",
-            "limit[artists:top-songs]" to "50",
-            "l" to _catalogLang(),
-        ),
-    )
-    val artist = _map(_list(data["data"]).firstOrNull())
-    val view = _map(_map(artist["views"])["top-songs"])
-    val songs = _list(view["data"]).mapNotNull(::_songOf)
-    val total = _int(_map(view["meta"])["total"]).takeIf { it > 0 } ?: songs.size
-    return AppleArtistSongs(songs, total)
+    val resp = runCatching {
+        _appleGet(
+            "/v1/catalog/$appleMusicStorefront/artists/$id/view/top-songs",
+            mapOf(
+                "limit" to limit.coerceIn(1, AppleArtistSongsPageLimit).toString(),
+                "offset" to offset.coerceAtLeast(0).toString(),
+                "fields[songs]" to AppleSongFields,
+            ),
+        )
+    }.getOrNull() ?: return AppleArtistSongsPage(emptyList(), false)
+    val songs = _list(resp["data"]).mapNotNull(::appleSongOf)
+    return AppleArtistSongsPage(songs, hasMore = _str(resp["next"]).isNotEmpty())
+}
+
+/**
+ * 歌手「热门曲目」首屏（一页 100 首）。
+ *
+ * 这里**不报 `total`**：`view/top-songs` 没有总数，而 `artists/{id}` 的 `meta.total` 是
+ * 全站曲目数（会显示「共 300 首」却只能翻 50 首）。所以 `total` 就是本页拿到的条数，
+ * 「还有更多」由 [getAppleArtistSongsPage] 的 `hasMore` 表达。
+ */
+suspend fun getAppleArtistSongs(artistId: String): AppleArtistSongs {
+    val page = getAppleArtistSongsPage(artistId, offset = 0)
+    val songs = _fillAppleSongArtists(page.songs)
+    return AppleArtistSongs(songs, songs.size)
+}
+
+/**
+ * 给「歌手热门歌曲」补多歌手结构。
+ *
+ * `top-songs` 这一路**不返回 `relationships.artists`**（实测带
+ * `include[artists:top-songs]=artists` 也一样），曲目只有合并后的 `artistName`：
+ * 以 Tyla 为例，50 首里有 20 首是 `Tyla, Gunna & Skillibeng` 这种串。
+ * 拿不到 id 的后果是点歌手只能整串去搜索，跳不到 Gunna / Skillibeng。
+ *
+ * 补法是一次批量：`/v1/catalog/{sf}/songs?ids=a,b,c…&include=artists`
+ * （实测 3 首一次请求就能拿到 `1552925732=Tyla, 1236267297=Gunna, 1036011142=Skillibeng`）。
+ * 一页 100 个 id 的 URL 约 1100 字符，一个 RTT；`fields[songs]=id` + `fields[artists]=name`
+ * 把这条响应从 457 KB 压到 255 KB（实测）。失败就原样返回 —— 不能因为这步让歌手页开不出来。
+ *
+ * 只对**首屏那一页**调用：后面续拉的页各自再补一次就是每页多一个 RTT，不值；
+ * 那些行拿不到结构化歌手时由 `DetailNavigator.openArtistDetail` 的 `enrichAppleSong` 按需补。
+ */
+private suspend fun _fillAppleSongArtists(songs: List<Song>): List<Song> {
+    if (songs.isEmpty()) return songs
+    val ids = songs.joinToString(",") { it.id.removePrefix("apple:") }
+    val resp = runCatching {
+        _appleGet(
+            "/v1/catalog/$appleMusicStorefront/songs",
+            mapOf(
+                "ids" to ids,
+                "include" to "artists",
+                "fields[songs]" to "id",
+                "fields[artists]" to "name",
+                "platform" to "web",
+                "l" to _catalogLang(),
+            ),
+        )
+    }.getOrNull() ?: return songs
+
+    val resolved = HashMap<String, Pair<List<String>, List<String>>>(songs.size)
+    for (raw in _list(resp["data"])) {
+        val item = _map(raw)
+        val sid = _str(item["id"])
+        if (sid.isEmpty()) continue
+        val pairs = _list(_map(_map(item["relationships"])["artists"])["data"])
+            .map { _map(it) }
+            .map { _str(it["id"]) to _str(_map(it["attributes"])["name"]) }
+            .filter { (artistId, artistName) -> artistId.isNotEmpty() && artistName.isNotEmpty() }
+        if (pairs.isEmpty()) continue
+        resolved[sid] = pairs.map { it.second } to pairs.map { it.first }
+    }
+    if (resolved.isEmpty()) return songs
+    return songs.map { song ->
+        val pair = resolved[song.id.removePrefix("apple:")] ?: return@map song
+        song.copy(artistNames = pair.first, artistIds = pair.second)
+    }
 }
 
 /** 歌手发行物：Apple 把专辑、EP/单曲、最新发行分在不同 view。 */
@@ -468,13 +614,16 @@ private suspend fun _artistView(artistId: String, view: String): List<Any?> {
     }
     val data = _appleGet("/v1/catalog/$appleMusicStorefront/artists/$artistId", params)
     val artist = _map(_list(data["data"]).firstOrNull())
-    var page = _map(_map(artist["views"])[view])
-    val items = _list(page["data"]).toMutableList()
-    var next = _str(page["next"])
+    return _paged(_map(_map(artist["views"])[view]))
+}
+
+/** 取完一个带 `next` 的资源列表（`data` + 连续翻页，上限 20 页） */
+private suspend fun _paged(node: Map<String, Any?>): List<Any?> {
+    val items = _list(node["data"]).toMutableList()
+    var next = _str(node["next"])
     var guard = 0
     while (next.isNotEmpty() && guard < 20) {
-        val more = _appleGet(next)
-        page = _map(more)
+        val page = _appleGet(next)
         items.addAll(_list(page["data"]))
         next = _str(page["next"])
         guard++
@@ -533,7 +682,7 @@ private suspend fun _appleGet(path: String, params: Map<String, String?> = empty
     }
 }
 
-private fun _songOf(raw: Any?): Song? {
+internal fun appleSongOf(raw: Any?): Song? {
     val item = _map(raw)
     val id = _str(item["id"])
     if (id.isEmpty()) return null
@@ -541,8 +690,14 @@ private fun _songOf(raw: Any?): Song? {
     val rel = _map(item["relationships"])
     val albumRel = _map(_list(_map(rel["albums"])["data"]).firstOrNull())
     val artistData = _list(_map(rel["artists"])["data"]).map { _map(it) }
-    val relNames = artistData.map { _str(_map(it["attributes"])["name"]) }.filter { it.isNotEmpty() }
-    val artistIds = artistData.map { _str(it["id"]) }.filter { it.isNotEmpty() }
+    // id 与 name 必须**成对**过滤：有的歌手资源没有本地化 name（实测 `FIFA Sound`
+    // 在 `Tyla, Gunna & Skillibeng` 之外的那首里 id 非空、name 为空串）。
+    // 两边各过滤一次会让数量错位，下游「数量对不上就整组丢掉」直接把多歌手变成没有。
+    val artistPairs = artistData
+        .map { _str(it["id"]) to _str(_map(it["attributes"])["name"]) }
+        .filter { (artistId, artistName) -> artistId.isNotEmpty() && artistName.isNotEmpty() }
+    val relNames = artistPairs.map { it.second }
+    val artistIds = artistPairs.map { it.first }
     val albumArtist = _str(attrs["albumArtistName"])
     val artist = _str(attrs["artistName"]).ifEmpty { albumArtist }
     return Song(
@@ -577,8 +732,11 @@ private fun _albumSongOf(raw: Any?): AlbumSong? {
     val attrs = _map(item["attributes"])
     // 曲目自己的 relationships.artists 靠 `include[albums:tracks]=artists` 带过来
     val artistData = _list(_map(_map(item["relationships"])["artists"])["data"]).map { _map(it) }
-    val names = artistData.map { _str(_map(it["attributes"])["name"]) }.filter { it.isNotEmpty() }
-    val ids = artistData.map { _str(it["id"]) }.filter { it.isNotEmpty() }
+    val pairs = artistData
+        .map { _str(it["id"]) to _str(_map(it["attributes"])["name"]) }
+        .filter { (artistId, artistName) -> artistId.isNotEmpty() && artistName.isNotEmpty() }
+    val names = pairs.map { it.second }
+    val ids = pairs.map { it.first }
     return AlbumSong(
         id = "apple:$id",
         name = _str(attrs["name"]).ifEmpty { "未知歌曲" },

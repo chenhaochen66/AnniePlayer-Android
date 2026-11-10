@@ -43,6 +43,17 @@ constexpr int kMaxSourceRate = 192000;
 constexpr int kOutChannels = 2;
 constexpr int kMaxFramesPerConvert = 16384;
 
+/**
+ * raw DSD 的**线格式封装**模式。
+ *
+ * 封装必须在 native、而且必须在喂给 Media3 **之前**做完：封装后的字节流才是
+ * Media3 眼里的"样本"（DoP 6 B/帧 @ 176.4k、Native 8 B/帧 @ 88.2k）。
+ * 放到 sink 里封装，Media3 会按错的帧长算时长与位置，进度条与 seek 全都跟着错。
+ */
+constexpr int kPackOff = 0;      /** 裸交错（L0 R0 L1 R1…），不分装 */
+constexpr int kPackDop = 1;      /** DoP：4 字节 → 6 字节，帧标记 0x05/0xFA 交替 */
+constexpr int kPackNative = 2;   /** Native DSD：8 字节 → 2 个 32-bit word */
+
 // ── 动态符号表 ──
 using PFN_open_input = int (*)(AVFormatContext **, const char *, const AVInputFormat *, AVDictionary **);
 using PFN_find_stream_info = int (*)(AVFormatContext *, AVDictionary **);
@@ -238,6 +249,29 @@ struct DemuxState {
      * 拿反了不会报错：整段变成「低频轮廓还在、高频全错」的沙沙声。
      */
     bool rawBitReverse = false;
+
+    // ── raw DSD 的线格式封装状态（见 `kPackDop` / `kPackNative`）──
+
+    /** 封装模式；0 = 裸交错。由 `configRawPack` 在 `openRaw` 之后设置 */
+    int packMode = kPackOff;
+    /** Native DSD 的 word 字节序：true = `DSD_U32_BE`（字节顺序 = 时间顺序） */
+    bool packBigEndian = true;
+    /**
+     * DoP 帧标记的相位。**必须跨块严格交替** —— 序列一断，DAC 就退回当普通 PCM 解，
+     * 那不是音质问题，是满幅噪声。状态挂在这里而不是 Kotlin：一次播放一个 handle，
+     * 少一处跨语言易失状态。
+     */
+    bool dopMarkerHigh = false;
+    /**
+     * 凑不满一个封装单元（DoP 4 字节 / Native 8 字节）的尾巴。
+     *
+     * **必须留到下一次**，不能丢：丢掉 4 字节会让之后的左右映射整体翻转
+     * （`[L0 R0 L1 R1 L2 R2 L3 R3]` 少一半 → 偶数位变奇数位），听感是噪声，
+     * 而且完全看不出原因。
+     */
+    std::vector<uint8_t> packCarry;
+    /** 封装后的输出暂存（与 `pcm` 分开：后者是拆声道后的交错源） */
+    std::vector<uint8_t> packed;
     std::vector<uint8_t> swrOut;
     std::vector<uint8_t> pcm;
     std::mutex lock;
@@ -276,6 +310,123 @@ void splitChannels(DemuxState *state, const uint8_t *p, size_t len) {
     state->rawRight.insert(
         state->rawRight.end(), p + (ch >= 2 ? per : 0), p + (ch >= 2 ? 2 * per : per)
     );
+}
+
+/**
+ * 把 raw DSD 解到 `state->pcm`（**字节交错** `L0 R0 L1 R1 …`），最多 [maxBytes]。
+ *
+ * 只做拆声道 + 可选位反转，不做线格式封装 —— 封装见 `packDop` / `packNativeWords`。
+ * 产出恒为 4 的整数倍；不足的部分留在 `rawLeft` / `rawRight` 里等下一包。
+ */
+void fillRawInterleaved(DemuxState *state, int maxBytes) {
+    // 一次至少留 8 字节位置：以下的交付粒度是 4 的整数倍
+    while (static_cast<int>(state->pcm.size()) + 8 <= maxBytes) {
+        // 攒齐一对（L + R）block
+        while ((state->rawLeft.empty() || state->rawRight.empty()) && !state->eof) {
+            const int ret = g_api.read_frame(state->fmt, state->packet);
+            if (ret == AVERROR_EOF) {
+                state->eof = true;
+                break;
+            }
+            if (ret < 0) break;
+            if (state->packet->stream_index != state->audioIndex) {
+                g_api.packet_unref(state->packet);
+                continue;
+            }
+            if (state->packet->pts != AV_NOPTS_VALUE) {
+                const int64_t us = g_api.rescale_q(
+                    state->packet->pts, state->timeBase, AVRational{1, 1000000}
+                );
+                // 只有"这一对之前两侧都空"才是新一段的起点
+                if (state->rawLeft.empty() && state->rawRight.empty()) {
+                    state->rawPtsUs = us;
+                }
+                state->lastPtsUs = us;
+            }
+            // 空 packet 不能推进任何状态
+            const size_t len = static_cast<size_t>(state->packet->size);
+            if (len > 0) {
+                splitChannels(state, state->packet->data, len);
+            }
+            g_api.packet_unref(state->packet);
+        }
+        if (state->rawLeft.empty() || state->rawRight.empty()) break;
+
+        const size_t room = static_cast<size_t>(maxBytes - state->pcm.size()) / 2;
+        // **必须按 4 字节的整数倍交付**：封装单元是 4（DoP）或 8（Native），余数交给
+        // 调用方当 carry 留着，下次接着用 —— 丢掉会整体错位（见 `packCarry`）。
+        size_t n = std::min(std::min(state->rawLeft.size(), state->rawRight.size()), room);
+        n -= n % 4;
+        if (n == 0) break;
+        for (size_t i = 0; i < n; i++) {
+            const uint8_t l = state->rawLeft[i];
+            const uint8_t r = state->rawRight[i];
+            if (state->rawBitReverse) {
+                state->pcm.push_back(reverseBits8(l));
+                state->pcm.push_back(reverseBits8(r));
+            } else {
+                state->pcm.push_back(l);
+                state->pcm.push_back(r);
+            }
+        }
+        state->rawLeft.erase(state->rawLeft.begin(), state->rawLeft.begin() + n);
+        state->rawRight.erase(state->rawRight.begin(), state->rawRight.begin() + n);
+    }
+}
+
+/**
+ * DoP 封装：4 个交错字节 → 6 字节 `[L1 L0 M][R1 R0 M]`。
+ *
+ * 时间上更早的那个 DSD 字节进 16 位数据字段的**高** 8 位，也就是小端存储的第二个字节；
+ * `M` 逐帧在 `0x05` / `0xFA` 之间交替，序列一断 DAC 就退回当 PCM 解（满幅噪声）。
+ */
+void packDop(DemuxState *state, const uint8_t *in, size_t inBytes, uint8_t *out) {
+    const size_t frames = inBytes / 4;
+    bool high = state->dopMarkerHigh;
+    for (size_t i = 0, o = 0; i < frames; i++, o += 6) {
+        const uint8_t *p = in + i * 4;
+        const uint8_t marker = high ? 0xFA : 0x05;
+        out[o + 0] = p[2];
+        out[o + 1] = p[0];
+        out[o + 2] = marker;
+        out[o + 3] = p[3];
+        out[o + 4] = p[1];
+        out[o + 5] = marker;
+        high = !high;
+    }
+    state->dopMarkerHigh = high;
+}
+
+/**
+ * Native DSD 封装：8 个交错字节 → `[L0 L1 L2 L3][R0 R1 R2 R3]`（每个 word 32 个样本）。
+ *
+ * `DSD_U32_BE` 要求字节顺序 = 时间顺序；`DSD_U32_LE` 是每 4 字节反转。
+ * 写错方向不报错，只会让 DAC 解出噪声 —— 与"标记不对"完全同症状。
+ */
+void packNativeWords(DemuxState *state, const uint8_t *in, size_t inBytes, uint8_t *out) {
+    const size_t pairs = inBytes / 8;
+    for (size_t i = 0, o = 0; i < pairs; i++, o += 8) {
+        const uint8_t *p = in + i * 8;
+        if (state->packBigEndian) {
+            out[o + 0] = p[0];
+            out[o + 1] = p[2];
+            out[o + 2] = p[4];
+            out[o + 3] = p[6];
+            out[o + 4] = p[1];
+            out[o + 5] = p[3];
+            out[o + 6] = p[5];
+            out[o + 7] = p[7];
+        } else {
+            out[o + 0] = p[6];
+            out[o + 1] = p[4];
+            out[o + 2] = p[2];
+            out[o + 3] = p[0];
+            out[o + 4] = p[7];
+            out[o + 5] = p[5];
+            out[o + 6] = p[3];
+            out[o + 7] = p[1];
+        }
+    }
 }
 
 void writeSample(uint8_t *out, int index, int outBits, float value) {
@@ -587,6 +738,35 @@ Java_com_annieplayer_annie_1music_kt_core_audio_ffmpeg_NativeFfmpegDemux_openRaw
 }
 
 /**
+ * 设置 raw DSD 的**线格式封装**。必须在 `openRaw` 之后、第一次 `read` 之前调用。
+ *
+ * @param mode `0` = 裸交错（不分装）、`1` = DoP、`2` = Native DSD
+ * @param bigEndian 只对 Native 有效：`true` = `DSD_U32_BE`（字节顺序 = 时间顺序）
+ *
+ * 为什么不做成 `openRaw` 的参数：JNI 签名一旦两边产物不一致，native 会按错位读参数
+ * 直接崩（这个坑踩过一次）。独立入口让签名永远不变，老 APK 配新 so 也只是分装模式
+ * 停留在 0，不会崩。
+ */
+JNIEXPORT void JNICALL
+Java_com_annieplayer_annie_1music_kt_core_audio_ffmpeg_NativeFfmpegDemux_configRawPack(
+    JNIEnv *,
+    jobject,
+    jlong handle,
+    jint mode,
+    jboolean bigEndian
+) {
+    auto *state = reinterpret_cast<DemuxState *>(handle);
+    if (state == nullptr) return;
+    std::lock_guard<std::mutex> guard(state->lock);
+    state->packMode = mode == kPackDop ? kPackDop : (mode == kPackNative ? kPackNative : kPackOff);
+    state->packBigEndian = bigEndian == JNI_TRUE;
+    // 换模式等于换线格式：相位与尾巴都必须从零开始，否则第一帧标记可能与上一段错相
+    state->dopMarkerHigh = false;
+    state->packCarry.clear();
+    LOGI("configRawPack mode=%d be=%d", state->packMode, state->packBigEndian ? 1 : 0);
+}
+
+/**
  * 读一段 PCM。
  *
  * @param out  目标缓冲（容量即上限）
@@ -608,70 +788,50 @@ Java_com_annieplayer_annie_1music_kt_core_audio_ffmpeg_NativeFfmpegDemux_read(
     const jint capacity = env->GetArrayLength(out);
     if (capacity <= 0) return 0;
 
-    // ── 原始 DSD：只解封装，把 1-bit 载荷按**字节交错**吐出去 ──
+    // ── 原始 DSD：拆声道 + 位反转 + **线格式封装**，一次做完 ──
     //
-    // DSF 的 packet 是 planar：一个 packet 里 `[ch0][ch1]…` 各连续一段（见 `splitChannels`）。
-    // DoP / Native 要的是 `L0 R0 L1 R1…`，所以要在一个 packet **内部**拆声道再交错。
+    // 封装放在这里而不是输出层，是因为封装后的字节流才是 Media3 眼里的"样本"
+    // （DoP 6 B/帧 @176.4k、Native 8 B/帧 @88.2k）；在 sink 里封装，Media3 会按错的
+    // 帧长算时长与位置，进度条与 seek 全部跟着错。
     if (state->rawDsd) {
-        state->pcm.clear();
-        // 一次至少留 8 字节位置：交付粒度见下面的 `n -= n % 4`
-        while (static_cast<int>(state->pcm.size()) + 8 <= capacity) {
-            // 攒齐一对（L + R）block
-            while ((state->rawLeft.empty() || state->rawRight.empty()) && !state->eof) {
-                const int ret = g_api.read_frame(state->fmt, state->packet);
-                if (ret == AVERROR_EOF) {
-                    state->eof = true;
-                    break;
-                }
-                if (ret < 0) break;
-                if (state->packet->stream_index != state->audioIndex) {
-                    g_api.packet_unref(state->packet);
-                    continue;
-                }
-                if (state->packet->pts != AV_NOPTS_VALUE) {
-                    const int64_t us = g_api.rescale_q(
-                        state->packet->pts, state->timeBase, AVRational{1, 1000000}
-                    );
-                    // 只有"这一对之前两侧都空"才是新一段的起点
-                    if (state->rawLeft.empty() && state->rawRight.empty()) {
-                        state->rawPtsUs = us;
-                    }
-                    state->lastPtsUs = us;
-                }
-                // 空 packet 不能推进任何状态
-                const size_t len = static_cast<size_t>(state->packet->size);
-                if (len > 0) {
-                    splitChannels(state, state->packet->data, len);
-                }
-                g_api.packet_unref(state->packet);
-            }
-            if (state->rawLeft.empty() || state->rawRight.empty()) break;
+        const bool nativePack = state->packMode == kPackNative;
+        const bool dopPack = state->packMode == kPackDop;
+        // 一个封装单元吃多少交错字节、产出多少字节（未封装时恒等）
+        const size_t unitIn = nativePack ? 8 : 4;
+        const size_t unitOut = nativePack ? 8 : (dopPack ? 6 : 4);
+        const size_t units = static_cast<size_t>(capacity) / unitOut;
+        const size_t maxIn = units * unitIn;
+        if (maxIn == 0) return 0;
 
-            const size_t room = static_cast<size_t>(capacity - state->pcm.size()) / 2;
-            // **必须按 8 字节的整数倍交付**。上游 DoP 按 4 字节、Native 按 8 字节切帧，
-            // 余数会被它们丢掉；丢掉 2 / 4 / 6 字节就等于把之后整条流挪了位 ——
-            // 从此全是噪声且完全看不出原因。余数留在 rawLeft/rawRight 里，下次接着用。
-            size_t n = std::min(std::min(state->rawLeft.size(), state->rawRight.size()), room);
-            n -= n % 4;
-            if (n == 0) break;
-            for (size_t i = 0; i < n; i++) {
-                const uint8_t l = state->rawLeft[i];
-                const uint8_t r = state->rawRight[i];
-                if (state->rawBitReverse) {
-                    state->pcm.push_back(reverseBits8(l));
-                    state->pcm.push_back(reverseBits8(r));
-                } else {
-                    state->pcm.push_back(l);
-                    state->pcm.push_back(r);
-                }
-            }
-            state->rawLeft.erase(state->rawLeft.begin(), state->rawLeft.begin() + n);
-            state->rawRight.erase(state->rawRight.begin(), state->rawRight.begin() + n);
+        state->pcm.clear();
+        // 上次凑不满一个单元的尾巴放回最前面。**绝不能丢**：丢掉 4 字节会让之后的
+        // 左右映射整体翻转（`[L0 R0 L1 R1 …]` 少一半 → 偶数位变奇数位），听感是噪声。
+        if (!state->packCarry.empty()) {
+            state->pcm.insert(state->pcm.end(), state->packCarry.begin(), state->packCarry.end());
+            state->packCarry.clear();
         }
-        const int rawTotal = static_cast<int>(state->pcm.size());
-        if (rawTotal > 0) {
+        fillRawInterleaved(state, static_cast<int>(maxIn));
+        if (state->pcm.size() < unitIn) {
+            state->packCarry.assign(state->pcm.begin(), state->pcm.end());
+            return 0;
+        }
+        const size_t usable = state->pcm.size() - state->pcm.size() % unitIn;
+        if (usable < state->pcm.size()) {
+            state->packCarry.assign(state->pcm.begin() + usable, state->pcm.end());
+        }
+        const size_t outBytes = usable / unitIn * unitOut;
+        state->packed.resize(outBytes);
+        if (nativePack) {
+            packNativeWords(state, state->pcm.data(), usable, state->packed.data());
+        } else if (dopPack) {
+            packDop(state, state->pcm.data(), usable, state->packed.data());
+        } else {
+            state->packed.assign(state->pcm.begin(), state->pcm.begin() + usable);
+        }
+        if (outBytes > 0) {
             env->SetByteArrayRegion(
-                out, 0, rawTotal, reinterpret_cast<const jbyte *>(state->pcm.data())
+                out, 0, static_cast<jsize>(outBytes),
+                reinterpret_cast<const jbyte *>(state->packed.data())
             );
         }
         if (meta != nullptr && env->GetArrayLength(meta) >= 1) {
@@ -679,12 +839,13 @@ Java_com_annieplayer_annie_1music_kt_core_audio_ffmpeg_NativeFfmpegDemux_read(
             env->SetLongArrayRegion(meta, 0, 1, &pts);
             // 1-bit 流的时间轴按**比特**走：每字节 8 个采样点，一个立体声帧是 2 字节。
             // 不推进就会让每一块都报同一个 pts —— Media3 会判时间轴停滞。
-            if (state->rawBitRate > 0 && rawTotal > 0) {
-                state->rawPtsUs += static_cast<int64_t>(rawTotal / 2) * 8 * 1000000LL /
+            // 按**吃掉**的交错字节推进（carry 还没吐出去，所以不算）。
+            if (state->rawBitRate > 0 && usable > 0) {
+                state->rawPtsUs += static_cast<int64_t>(usable / 2) * 8 * 1000000LL /
                     state->rawBitRate;
             }
         }
-        return rawTotal;
+        return static_cast<jint>(outBytes);
     }
 
     state->pcm.clear();

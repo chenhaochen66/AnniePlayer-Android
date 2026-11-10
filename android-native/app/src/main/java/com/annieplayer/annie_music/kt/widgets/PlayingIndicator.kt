@@ -62,12 +62,12 @@ private const val PlayingRowTintAlpha = 0.08f
  * 「正在播放」等化器指示器（详情页 / 队列行共用）。
  *
  * - 三条 2.5dp 宽圆角竖条，以 `graphicsLayer.scaleY` 在 6dp ⇄ 16dp 之间伸缩；
- *   **只做 transform 缩放，不动布局尺寸**（避免每帧 relayout）。
+ *   **只做 transform 缩放，不动布局尺寸**。
  * - 三条竖条共用 [AppDuration.playingBarPulse] 周期、依次延迟 1/3 周期 → 错相位「呼吸」。
  * - 系统动画缩放为 0 时静止在中间态（见 [rememberSystemAnimationsEnabled]）。
  * - 纯装饰元素：不产生无障碍语义节点（语义由所在行的文本 / 点击承载）。
  *
- * 缩放值以 `State` 形式一路传到 `graphicsLayer`，**组合期不读**：
+ * 缩放值以 `State` 形式一路传到 `graphicsLayer`，**组合期不读** ——
  * 读在组合期的话，这个无限动画每一帧都会让所在行重组一次。
  *
  * @param tint 竖条颜色（通常传 `Annie.palette.primary`）。

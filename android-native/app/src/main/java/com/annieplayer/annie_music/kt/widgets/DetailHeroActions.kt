@@ -84,3 +84,28 @@ internal fun DetailRoundIconButton(
         content(tint)
     }
 }
+
+/**
+ * 详情页 Hero 的收藏按钮：圆底 + 爱心两态。
+ *
+ * 位置约定是「播放胶囊**左边**」（专辑 / 歌单 / 歌手 / 本地详情页四处一致）——
+ * 收藏是次级操作，但比下载常用，所以排在播放旁边而不是行尾。
+ *
+ * 已收藏用主色实心，未收藏用与其它圆按钮一致的白色描边：两态共用同一条路径
+ * （见 [HeartGlyph]），只换填充方式，点下去不会「换个形状」。
+ */
+@Composable
+internal fun DetailHeartButton(
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    DetailRoundIconButton(onClick = onClick, modifier = modifier, enabled = enabled) { tint ->
+        HeartGlyph(
+            modifier = Modifier.size(AppIconSize.icon20),
+            tint = if (selected) AppColors.heart else tint,
+            filled = selected,
+        )
+    }
+}

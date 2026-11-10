@@ -23,7 +23,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.ContentMetadata
-import androidx.media3.datasource.cache.NoOpCacheEvictor
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -163,30 +163,70 @@ class MediaPlayerBackend(
     private var _serviceStarted: Boolean = false
     private var _lastAudioInfo: AudioInfo? = null
 
+    /**
+     * 当前这一首走"我方全链路"（本地 ffmpeg 解封装）的**路径**；空 = 不是全链路源。
+     *
+     * 存在的唯一理由：sink 要拿它去问 `FfmpegOutputStream` "这条源声明的传输方式是什么"。
+     * 以前 sink 回读全局 `_dsdTransport`，与建源那一侧各读一次 —— 翻面就是 DoP→PCM 没声。
+     */
+    private var _fullChainPath: String = ""
+
     /** 上一次下发过的「会改变 AudioSink configure」的计划指纹；变了就重建一次音源 */
     private var _lastPlanKey: String? = null
 
     /**
-     * **实际生效**的通路（`AaudioSink` 上报）。与 `MoreSettings.outputPath`（意图）分开：
-     * 降级只改这里，设置里的选择永远不动 —— 换回支持的设备就自动恢复。
-     */
-    private var _effectivePath: OutputPath = OutputPath.systemMix
-    private var _downgradeNotice: DowngradeNotice? = null
-
-    /**
-     * 实测通路是否已经上报过。
+     * **实际生效的通路**（`AaudioSink` 上报的唯一事实源）。`null` = 还没上报过。
      *
-     * 没上报时 `_effectivePath` 还是初值，不能拿它定计划；上报之后**必须**用它 ——
+     * 与 `MoreSettings.outputPath`（意图）分开：降级只改这里，设置里的选择永远不动 ——
+     * 换回支持的设备就自动恢复。
+     *
+     * 通路 / 降级原因 / 端点位深是**同一件事的三个字段**，所以它们是不可分的一个值。
+     * 以前是三个可变字段加一个 `_routingKnown` 布尔，四处各自更新：任意一处漏写就是
+     * "界面说独占、实际在 mixer"，或者反过来的假 Bit Perfect。
+     *
+     * 没上报时 `_effectivePath` 是 `systemMix`，**不能拿它定计划**；上报之后必须用它 ——
      * 否则"意图 USB 独占、实际 AudioTrack"会按独占算计划（`sampleRate = 0`，我方不转），
      * 那次 88.2→48 就落回系统 mixer，而用户看到的是一个没有「我方 SRC」的输出胶囊。
      */
-    private var _routingKnown: Boolean = false
+    private data class SinkRouting(
+        val path: OutputPath,
+        val notice: DowngradeNotice?,
+        val depth: Int,
+    )
+
+    private var _routing: SinkRouting? = null
+
+    /**
+     * 上一次上报是否已经**作废**（用户刚改了通路）。
+     *
+     * 注意它不是"通路"的第四个副本 —— 它记的是**可信度**，不是值：通路本身只有
+     * `_routing` 一份。作废时保留旧值用于展示，但决策一律回到意图
+     * （`if (_routingKnown) _effectivePath else 意图`）。
+     */
+    private var _routingStale = false
+
+    private val _effectivePath: OutputPath get() = _routing?.path ?: OutputPath.systemMix
+    private val _downgradeNotice: DowngradeNotice? get() = _routing?.notice
 
     /** 独占端点上真正跑的位深（USB 的 subslot / AAudio 的 HAL 格式）；0 = 未知 */
-    private var _streamDepth: Int = 0
+    private val _streamDepth: Int get() = _routing?.depth ?: 0
 
-    /** 排查用：上一次写进 `audio-status.txt` 的那一行（相同就不重复写） */
+    /** 实测通路是否**可信**（上报过、且没被"用户改了通路"作废） */
+    private val _routingKnown: Boolean get() = _routing != null && !_routingStale
+
+    /** 用户改了通路 → 上一次实测结论作废，下一次上报即便数值相同也要重新走一遍 */
+    private fun _invalidateRouting() {
+        if (_routing != null) _routingStale = true
+    }
+
+    /** 排查用：上一次写进 `audio-status.txt` 的那一行（相同就不重复写，除非换了曲目） */
     private var _lastStatusLine: String? = null
+
+    /** 上一次写状态行时的 `AudioInfo`；换实例 = 换曲目 → 无论内容相同都留一行 */
+    private var _lastStatusInfo: AudioInfo? = null
+
+    /** 状态行的时间戳格式（复用同一个实例，避免每曲新建） */
+    private val _statusClock = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
 
     /** 是否已经关掉音频焦点处理（独占生效时为 true） */
     private var _focusSuppressed: Boolean = false
@@ -476,12 +516,31 @@ class MediaPlayerBackend(
             }
             _mainHandler.post { runCatching { _reloadCurrentSource() } }
         }
-        // 见 `onAaudioFailure`：让 sink 在 configure 那一刻取一次标签并留存
-        renderersFactory.dsdTransportTag = { _transportKey(_dsdTransport, _activeDsdLevel) }
-        // DSD 直出时整条处理器链旁路（数据是已打包的 DoP / raw 帧）
-        renderersFactory.rawDsdActive = { _dsdTransport.isRaw }
-        // Native 才走 raw alt；DoP 的帧本身是 24 bit PCM，必须留在 PCM alt
-        renderersFactory.nativeDsdActive = { _dsdTransport == DsdTransport.native }
+        // **本次 configure 的全部意图，一个值。** sink 在 `configure()` 开头取一次快照，
+        // 之后整条 configure 只读那份快照。
+        //
+        // 以前这里是三个独立 lambda（传输标签 / 是否直出 / 是否 Native），各读各的全局量，
+        // 而 sink 又在不同时刻读了好几次 —— 两次读之间主线程翻面，同一首歌的两半就会走
+        // 不同的 alt：PCM 字节进 raw alt 时发得出去、进度照走、**完全没有声音**。
+        renderersFactory.outputRequest = {
+            // **首选源自己声明的传输方式**，而不是回读全局 `_dsdTransport`。
+            //
+            // extractor 的 `init()` 必然发生在渲染器 `configure()` 之前（否则连 Format 都没有），
+            // 所以走到这里时声明已经在 `FfmpegOutputStream` 里 —— 建源与配流读的是**同一个值**，
+            // 那个"两读两写"的时间窗从结构上消失。流媒体源不是全链路，返回 null，退回全局量
+            // （那时它恒为 pcm，`_setSource` 开头已归零）。
+            val declared = FfmpegOutputStream.transportOf(_fullChainPath)
+            val transport = declared ?: _dsdTransport
+            OutputRequest(
+                pathIntent = MoreSettings.outputPath.value,
+                transport = transport,
+                // Native 才走 raw alt；DoP 的帧本身是 24 bit PCM，必须留在 PCM alt
+                rawAlt = transport == DsdTransport.native,
+                // DoP 与 Native 送的都是帧，不能被 DSP 碰、也不能过 mixer
+                rawFrames = transport.isRaw,
+                transportTag = _transportKey(transport, _activeDsdLevel),
+            )
+        }
         // "用户到底按没按暂停"。`AaudioSink` 那条自愈（数据还在来就 resume）只看 sink 自己的
         // `playRequested`，而那个标志会与播放器失步；这里给它一票否决，否则手动暂停后
         // 管线里剩下的那几块数据会在约一秒后把声音重新拉起来。
@@ -491,14 +550,14 @@ class MediaPlayerBackend(
         _playWhenReady = _player?.playWhenReady == true
         renderersFactory.playIntent = { _playWhenReady }
         // 实际生效通路：与设置里的「意图」分开记。降级是事实，不能写回设置。
+        // 三个字段一次性换成一个值 —— 不存在"改了 path 没改 notice"这种中间态。
         renderersFactory.onSinkRouting = { path, notice, depth ->
-            if (path != _effectivePath || notice != _downgradeNotice ||
-                depth != _streamDepth || !_routingKnown
-            ) {
-                _effectivePath = path
-                _downgradeNotice = notice
-                _streamDepth = depth
-                _routingKnown = true
+            val next = SinkRouting(path, notice, depth)
+            // 作废后即便数值与上次相同也要重新走一遍：那时"可信"本身就是新信息，
+            // 通路第一次落到 USB 直连要借这一次去读 DAC 能力、重建音源。
+            if (next != _routing || _routingStale) {
+                _routing = next
+                _routingStale = false
                 _mainHandler.post {
                     runCatching {
                         // 通路第一次落到 USB 直连时读一次 DAC 能力：DoP / Native 的成立与否
@@ -1145,10 +1204,21 @@ class MediaPlayerBackend(
             _dsdTransport = DsdTransport.pcm
             _dsdTransportNotice = null
             _activeDsdLevel = null
+            // 每首先归零；只有"走全链路"那条分支会把它填上（见下）
+            _fullChainPath = ""
             val apple = item["platform"] == "apple"
             // 本地文件（file:// / content://）：**不能**过 CacheDataSource —— 它会把整首歌
             // 再复制一份进播放缓存（本地上百首无损直接吃掉几个 G），且没有任何收益。
             val localFile = url.startsWith("file://") || url.startsWith("content://")
+            // KKBOX 高音质交给播放器的是本机代理地址（`http://127.0.0.1:PORT/play`），
+            // 而它的源文件已经落在 `cacheDir/kkbox_play` —— 那一份**本身就是**磁盘缓存。
+            // 再过一遍 CacheDataSource 等于把同一首歌复制第二份：一首 Hi-Res FLAC 31MB，
+            // 磁盘上占 62MB，每次播放还多一次 31MB 的本地拷贝（这是「听 KKBOX 下载量很大」
+            // 的直接原因之一）。Apple 的本地分片要保留缓存：每片独立解密，代价高得多，
+            // 且 `ApplePlaybackServer` 自带稳定 cache key。
+            val localProxyNoCache = !apple &&
+                (url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:"))
+            val bypassDiskCache = localFile || localProxyNoCache
             // 解码：本地与流媒体统一走 ffmpeg 软解（见 FfmpegAudioRenderer.supportsFormatInternal），
             // 不再按平台分流 —— 本地 FLAC 也拿 24bit，不落到 MediaCodec 的 16bit 截断。
             // 本地曲库「最近播放」：以队列项 id 为准（`local:<原始路径>`），
@@ -1161,9 +1231,19 @@ class MediaPlayerBackend(
             // Apple 的本机分片自带稳定 key（`apple:{id}:{tier}:seg:{n}`，见
             // ApplePlaybackServer.cacheKeyFor）；其余平台按「歌曲身份」登记，
             // 这样插件换直链（带时间戳/签名）也命中同一份缓存。
-            if (!apple && !localFile) _cacheKeyByUrl[url] = _cacheKeyOf(item)
+            if (!apple && !bypassDiskCache) _cacheKeyByUrl[url] = _cacheKeyOf(item)
             if (!apple && !localFile) ApplePlaybackServer.stop()
-            val factory = if (localFile) {
+            // 切歌时的「谁该全速下载」：KKBOX 高音质由我们自己的代理预读，不走 ExoPlayer 的
+            // LoadControl，所以要在这里显式指定前台会话 —— 否则「100MB 的歌听到一半切走，
+            // 旧会话还在全速拉剩下的 60MB」，新歌的首包被挤到超时（界面表现「加载失败」）。
+            if (item["platform"] == "kkbox") {
+                com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxPlayServer
+                    .markForegroundByUrl(url)
+            } else {
+                com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxPlayServer
+                    .markAllBackground()
+            }
+            val factory = if (bypassDiskCache) {
                 _plainSourceFactory ?: _cachedSourceFactory
             } else {
                 _cachedSourceFactory ?: _plainSourceFactory
@@ -1193,6 +1273,8 @@ class MediaPlayerBackend(
                     _activeDsdLevel = dsdLevel
                     _dsdTransport = transport
                     _dsdTransportNotice = dsdDecision.reason
+                    // 记下"这条源是按哪种传输方式建的"：snapshot 要拿它去问 sink 那边对不对得上
+                    _fullChainPath = localPath
                     androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(
                         // 数据由 native 按路径自己读，Media3 侧的 input 只用来推进位置
                         // （它是 `ProgressiveMediaPeriod` 唯一的流量节流信号），见 PositionOnlyDataSource
@@ -1527,7 +1609,7 @@ class MediaPlayerBackend(
                     // 新 configure 起来后才报回 usbDirect，于是计划又变一次、再重建一次。
                     // 播放中切换通路的代价就是一次断音，多付一次等于断两次。
                     if (MoreSettings.outputPath.value != _effectivePath) {
-                        _routingKnown = false
+                        _invalidateRouting()
                     }
                     val plan = _currentPlan()
                     val key = _planKeyOf(plan)
@@ -1851,14 +1933,23 @@ class MediaPlayerBackend(
         }
         // 一次性排查：把决定胶囊文案的每个输入写一行（每首歌一次，播放线程，不碰音频线程）
         runCatching {
-            val line = "want=${MoreSettings.outputPath.value.key} eff=${_effectivePath.key} " +
+            val line = "at=${_statusClock.format(java.util.Date())} " +
+                "want=${MoreSettings.outputPath.value.key} eff=${_effectivePath.key} " +
                 "planPath=${plan.path.key} planRate=${plan.sampleRate} srcRate=${plan.sourceRate} " +
                 "planTier=${plan.tier} decoded=$decodedRate willResample=$willResample " +
                 "downgrade=${_downgradeNotice?.reason?.name} tier=$tier " +
                 "infoRate=${info?.sampleRate} pipeline=$pipelineRate " +
-                "deliv=${plan.deliveredRate} native=$nativeRate"
-            if (line != _lastStatusLine) {
+                "deliv=${plan.deliveredRate} native=$nativeRate " +
+                "raw=${_dsdTransport.key} tag=${_transportKey(_dsdTransport, _activeDsdLevel)}"
+            // **换曲必须留一行**，哪怕内容与上一首一字不差。
+            //
+            // 只按「字符串相同就不写」去重会骗人：连播两首同为 176.4k 的曲目时，
+            // 状态行的每个字段都一样，于是新曲一行都没有 —— 文件 mtime 停在上一首，
+            // 事后看会以为"状态没更新"（这个坑真踩过一次）。
+            // 所以判据加上"AudioInfo 换了实例"，并在行首打上时刻。
+            if (line != _lastStatusLine || info !== _lastStatusInfo) {
                 _lastStatusLine = line
+                _lastStatusInfo = info
                 java.io.File(_context.filesDir, "audio-status.txt").appendText(line + "\n")
             }
         }
@@ -2784,7 +2875,16 @@ class MediaPlayerBackend(
         const val _loadControlMinBufferMs: Int = 20_000
         const val _loadControlMaxBufferMs: Int = 30_000
         const val _loadControlBufferForPlaybackMs: Int = 1_000
-        const val _loadControlBufferForPlaybackAfterRebufferMs: Int = 2_000
+
+        /**
+         * seek 之后若掉进 BUFFERING，要等这么多音频才恢复播放。
+         *
+         * 这是**拉进度条手感**的直接决定项：目标区间没命中缓存时（跳到没听过的地方），
+         * 这一条决定了"松手到出声"的等待。2000 → 1000 等于把这段等待砍半；
+         * 1 秒音频在 1 Mbps 的 FLAC 上只有 125KB，命中本地缓存时这点量瞬间就到，
+         * 所以弱网反复卡的风险很小。
+         */
+        const val _loadControlBufferForPlaybackAfterRebufferMs: Int = 1_000
 
         /**
          * 后缓冲 **10 s**：让"反复回拖同一段"（对比段落、扒谱、A/B 试音）命中内存。
@@ -2822,7 +2922,7 @@ class MediaPlayerBackend(
                 _sharedCache?.let { return it }
                 val dir = File(context.cacheDir, _cacheDirName)
                 if (!dir.exists()) dir.mkdirs()
-                val created = SimpleCache(dir, NoOpCacheEvictor())
+                val created = SimpleCache(dir, LeastRecentlyUsedCacheEvictor(_maxCacheBytes))
                 _sharedCache = created
                 return created
             }
@@ -2830,7 +2930,14 @@ class MediaPlayerBackend(
         const val _userAgent: String = "AnnieMusic/1.0 (Android)"
 
         /**
-         * 顺序模式往后预热的曲目数。
+         * 播放缓存上限。
+         *
+         * 原来是 `NoOpCacheEvictor`（永不淘汰、无上限）—— 听得多就一路涨，实测已到 45MB 且只增不减。
+         * 512MB 够放十几首无损的流式缓存，又不至于把 `cacheDir` 撑爆（KKBOX 解密缓存另有自己的上限）。
+         */
+        const val _maxCacheBytes: Long = 512L * 1024 * 1024
+
+        /** 顺序模式往后预热的曲目数。
          *
          * 只留 2：Apple 每首都要打 `/parse/song`（Cloudflare 后面）+ 2 次 CDN + init + key，
          * 5 首在弱网下纯浪费流量；实际使用里连跳两首以上极少见。

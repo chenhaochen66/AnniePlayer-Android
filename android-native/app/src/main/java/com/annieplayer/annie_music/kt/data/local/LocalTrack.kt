@@ -306,11 +306,42 @@ fun localAlbumType(count: Int): String = when {
     else -> "专辑"
 }
 
-/** 专辑发行年：组里第一首非空 `year` 的前四位数字，没有返回 null */
-fun albumYearOf(tracks: List<LocalTrackMeta>): Int? =
-    tracks.firstNotNullOfOrNull { t ->
-        t.year?.take(4)?.filter { it.isDigit() }?.takeIf { it.length == 4 }?.toIntOrNull()
-    }
+/**
+ * 发行日期的形态：`2023` / `2023-05` / `2023-05-12`，后面跟什么都不管。
+ *
+ * 只认「开头是四位年」，因为 tag 里的日期还会带时间（`2023-05-12T00:00:00`）、
+ * 带时区、或者被第三方工具写成 `2023-5-12`（月日不补零）。
+ */
+private val ReleaseDateRegex = Regex("""^(\d{4})(?:[-/.](\d{1,2})(?:[-/.](\d{1,2}))?)?""")
+
+/**
+ * 发行日期规范化 → `yyyy` / `yyyy-MM` / `yyyy-MM-dd`；认不出返回 null。
+ *
+ * 曲库里的日期 tag 取决于**谁写的**：本项目的打标写 `releaseDate`（`yyyy-MM-dd`），
+ * 下载站给的常常只有年，第三方工具还有 `2023/05/12`、`2023-05-12T00:00:00` 这些。
+ * 显示要统一（本地曲库现在一律显示到年月日）、排序又要能直接按字符串比，
+ * 所以在这里一次性收口 —— **只有年就只给年**，月日无法凭空补出来，宁短不错。
+ */
+fun normalizeReleaseDate(raw: String?): String? {
+    val s = raw?.trim().orEmpty()
+    if (s.isEmpty()) return null
+    val m = ReleaseDateRegex.find(s) ?: return null
+    val year = m.groupValues[1].toIntOrNull() ?: return null
+    val month = m.groupValues[2].toIntOrNull()
+    if (month == null || month !in 1..12) return "%04d".format(year)
+    val day = m.groupValues[3].toIntOrNull()
+    if (day == null || day !in 1..31) return "%04d-%02d".format(year, month)
+    return "%04d-%02d-%02d".format(year, month, day)
+}
+
+/**
+ * 专辑发行日期：组里第一条能规范化的 [LocalTrackMeta.year]。
+ *
+ * 取「第一条非空」而不是「最多的那个」：同一张专辑的曲目日期本来就该一致，
+ * 不一致时（合集 / 再版）用第一首的，行为可预测。
+ */
+fun localAlbumDateOf(tracks: List<LocalTrackMeta>): String? =
+    tracks.firstNotNullOfOrNull { normalizeReleaseDate(it.year) }
 
 /** 文件夹分组的键（空路径归到根 `/`） */
 fun folderGroupKey(t: LocalTrackMeta): String = t.folderName.ifBlank { "/" }

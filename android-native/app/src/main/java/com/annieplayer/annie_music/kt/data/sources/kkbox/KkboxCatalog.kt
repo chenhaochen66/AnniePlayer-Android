@@ -14,7 +14,7 @@ suspend fun getSongs(sid: String, ids: List<String>): List<Map<String, Any?>> {
         params = mapOf("sid" to sid),
         payload = mapOf(
             "ids" to ids.joinToString(","),
-            "fields" to "song_id,song_name,artist_name,album_name,artist_role,song_idx," +
+            "fields" to "song_id,encrypted_song_id,song_name,artist_name,album_name,artist_role,song_idx," +
                 "album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url," +
                 "genre_name,is_lyrics,audio_quality,album_date",
         ),
@@ -83,7 +83,13 @@ suspend fun enrichKkboxSong(songId: String, albumId: String): KkboxEnrich {
     return try {
         val data = getKkboxAlbum(sid, albumId)
         val rawId = songId.removePrefix("kkbox:")
-        val matched = data.songs.firstOrNull { (it["song_id"] ?: "").toString() == rawId }
+        // 传进来的可能是加密 id（`song_more_url` 末段），而 `v1/album` 的曲目三种 id 都有：
+        // 只比 `song_id`（数字）永远匹配不上，曲目号 / 发行时间会整批丢掉。
+        val matched = data.songs.firstOrNull {
+            kkboxStr(it["encrypted_song_id"]) == rawId ||
+                (it["song_id"] ?: "").toString() == rawId ||
+                kkboxStr(it["song_more_url"]).substringAfterLast('/') == rawId
+        }
         KkboxEnrich(
             trackNumber = matched?.let { kkboxInt(it["song_idx"]) }?.takeIf { it > 0 }?.toString(),
             discNumber = null,

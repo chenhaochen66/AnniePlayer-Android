@@ -1,7 +1,12 @@
 package com.annieplayer.annie_music.kt.core.audio.dsd
 
 /**
- * Native DSD（UAC2 raw）打包：32 个 1-bit 样本装进一个 32-bit word。
+ * Native DSD（UAC2 raw）打包 —— **线格式的参考实现**。
+ *
+ * 生产路径已经不在 Kotlin 里打包：`native-ffmpeg-demux.cpp` 的 `packNativeWords()`
+ * 做同一件事，Kotlin 只转发字节。这里保留一份是因为帧布局不能靠听感验
+ * （字节序写错只会让 DAC 解出噪声，与"标记不对"完全同症状），`NativeDsdPackerTest`
+ * 逐字节断言的就是规范。**改这里必须同时改 native 的 `packNativeWords()`。**
  *
  * ## 为什么必须重排
  *

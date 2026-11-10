@@ -38,6 +38,8 @@ import com.annieplayer.annie_music.kt.data.sources.apple.wrapper.AppleFixedKey
 import com.annieplayer.annie_music.kt.data.sources.apple.wrapper.AppleServiceSettings
 import com.annieplayer.annie_music.kt.data.sources.apple.wrapper.AppleWrapperRegistry
 import com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxDownloader
+import com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxPlayCache
+import com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxPlayServer
 import com.annieplayer.annie_music.kt.data.source.LxPluginRegistry
 import com.annieplayer.annie_music.kt.features.search.SearchSettings
 import com.annieplayer.annie_music.kt.features.shell.AppShell
@@ -101,6 +103,8 @@ class MainActivity : ComponentActivity() {
         DownloadService.init(applicationContext)
         // KKBOX 下载要 app cacheDir 放 DRM 解密中间文件
         KkboxDownloader.init(applicationContext)
+        KkboxPlayCache.init(applicationContext)
+        KkboxPlayServer.init(applicationContext)
         AppleMusicSettings.init(applicationContext)
         AppleFixedKey.init(applicationContext)
         // Apple 的非官方接口：本机 WrapperLite（开关）↔ 用户自填的远程 wrapper 地址，二选一
@@ -120,6 +124,8 @@ class MainActivity : ComponentActivity() {
         BluetoothCodec.init(applicationContext)
         // 本地曲库缓存（index.json + 抽出的封面）
         com.annieplayer.annie_music.kt.data.local.LocalLibraryStore.init(applicationContext)
+        // 收藏媒体库（filesDir/favorites/）
+        com.annieplayer.annie_music.kt.data.favorites.FavoriteStore.init(applicationContext)
 
         // Android 13+ 媒体通知需要 POST_NOTIFICATIONS
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

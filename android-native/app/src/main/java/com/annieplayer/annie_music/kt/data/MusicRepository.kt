@@ -16,13 +16,25 @@ import com.annieplayer.annie_music.kt.data.sources.apple.fetchAppleArtistAvatar
 import com.annieplayer.annie_music.kt.data.sources.apple.fetchAppleArtistBio
 import com.annieplayer.annie_music.kt.data.sources.apple.getAppleAlbumSongs
 import com.annieplayer.annie_music.kt.data.sources.apple.getAppleArtistAlbums
+import com.annieplayer.annie_music.kt.data.sources.apple.AppleArtistSongsPageLimit
 import com.annieplayer.annie_music.kt.data.sources.apple.getAppleArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.apple.getAppleArtistSongsPage
+import com.annieplayer.annie_music.kt.data.model.ArtistSongsBatch
 import com.annieplayer.annie_music.kt.data.sources.apple.searchAppleAlbums
 import com.annieplayer.annie_music.kt.data.sources.apple.searchAppleArtists
 import com.annieplayer.annie_music.kt.data.sources.apple.searchAppleMusic
 import com.annieplayer.annie_music.kt.data.sources.kkbox.enrichKkboxSong
 import com.annieplayer.annie_music.kt.data.sources.kkbox.fetchKkboxPlayUrl
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getKkboxAlbum
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getKkboxArtistPage
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getKkboxArtistProfile
+import com.annieplayer.annie_music.kt.data.sources.kkbox.getKkboxArtistSongs
 import com.annieplayer.annie_music.kt.data.sources.kkbox.getSongLyrics
+import com.annieplayer.annie_music.kt.data.sources.kkbox.kkboxQualitiesOf
+import com.annieplayer.annie_music.kt.data.sources.kkbox.kkboxSidProvider
+import com.annieplayer.annie_music.kt.data.sources.kkbox.mapAlbumToKkboxAlbum
+import com.annieplayer.annie_music.kt.data.sources.kkbox.searchKkboxAlbums
+import com.annieplayer.annie_music.kt.data.sources.kkbox.searchKkboxArtists
 import com.annieplayer.annie_music.kt.data.sources.kugou.enrichKuGouSong
 import com.annieplayer.annie_music.kt.data.sources.kugou.fetchKugouArtistInfo
 import com.annieplayer.annie_music.kt.data.sources.kugou.getKugouAlbumSongs
@@ -36,6 +48,7 @@ import com.annieplayer.annie_music.kt.data.sources.kuwo.fetchKuwoArtistBio
 import com.annieplayer.annie_music.kt.data.sources.kuwo.getAlbumSongs
 import com.annieplayer.annie_music.kt.data.sources.kuwo.getArtistAlbums
 import com.annieplayer.annie_music.kt.data.sources.kuwo.getArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.kuwo.getArtistSongsRange
 import com.annieplayer.annie_music.kt.data.sources.kuwo.searchAlbum
 import com.annieplayer.annie_music.kt.data.sources.kuwo.searchArtist
 import com.annieplayer.annie_music.kt.data.sources.lyric.LyricRequest
@@ -47,6 +60,7 @@ import com.annieplayer.annie_music.kt.data.sources.netease.fetchNeteaseArtistBio
 import com.annieplayer.annie_music.kt.data.sources.netease.getNeteaseAlbumSongs
 import com.annieplayer.annie_music.kt.data.sources.netease.getNeteaseArtistAlbums
 import com.annieplayer.annie_music.kt.data.sources.netease.getNeteaseArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.netease.getNeteaseArtistSongsRange
 import com.annieplayer.annie_music.kt.data.sources.netease.searchNeteaseAlbum
 import com.annieplayer.annie_music.kt.data.sources.netease.searchNeteaseArtist
 import com.annieplayer.annie_music.kt.data.sources.qq.enrichQQSong
@@ -54,6 +68,7 @@ import com.annieplayer.annie_music.kt.data.sources.qq.fetchQQArtistBio
 import com.annieplayer.annie_music.kt.data.sources.qq.getQQAlbumSongs
 import com.annieplayer.annie_music.kt.data.sources.qq.getQQArtistAlbums
 import com.annieplayer.annie_music.kt.data.sources.qq.getQQArtistSongs
+import com.annieplayer.annie_music.kt.data.sources.qq.getQQArtistSongsRange
 import com.annieplayer.annie_music.kt.data.sources.qq.searchQQAlbum
 import com.annieplayer.annie_music.kt.data.sources.qq.searchQQArtist
 import com.annieplayer.annie_music.kt.data.sources.qobuz.fetchQobuzArtistPicture
@@ -117,8 +132,6 @@ data class RepoAlbumSongs(
 data class RepoArtistSongs(
     val songs: List<Song>,
     val total: Int,
-    /** 该平台能否翻页；为 false 时详情页只显示已取回的一页，不渲染页码控件 */
-    val pageable: Boolean = true,
 )
 
 private val _builtinProvider by lazy { BuiltinSourceProvider() }
@@ -175,7 +188,7 @@ private suspend fun resolvePlayUrl(song: Song): String = when (song.platform) {
         requireLxPlugin(song)
         _lxProvider.resolvePlayUrl(song, MoreSettings.qualityFor(song.platform))
     }
-    MusicPlatform.kkbox -> fetchKkboxPlayUrl(song.id)
+    MusicPlatform.kkbox -> fetchKkboxPlayUrl(song)
     MusicPlatform.qobuz -> _builtinProvider.resolvePlayUrl(song, MoreSettings.qualityFor(song.platform))
     MusicPlatform.local -> song.playUrl
     MusicPlatform.apple -> error("Apple Music 播放走 ApplePlaybackServer，不经直链解析")
@@ -234,14 +247,20 @@ suspend fun fetchPlayUrlForBackend(item: Map<String, String>): String {
  * 规则与 `LxPluginSourceProvider.pickQuality` 逐条相同（同一个 `effectivePlayQuality`）：
  * 配了档位就按歌夹档，选「自动」就取这首歌的最高档，未知才退 320k。
  *
- * 只有国内四平台走这套；Apple / KKBOX / Qobuz 的档位另有来源（Apple 是 `alac/hires/...`），
- * 保持改造前的 `配置档 ?: 320k`，避免无谓地把它们的缓存 key 改掉。
+ * 国内四平台与 KKBOX 走这套；Apple / Qobuz 的档位另有来源（Apple 是 `alac/hires/...`），
+ * 保持改造前的 `配置档 ?: 320k`。KKBOX 的高音质档要先解密成文件才能播，档位本身就是
+ * 解密目标，因此它也按「配置档 → 按歌夹档；自动 → 歌曲最高档」来算。
  */
 internal fun effectivePlayQualityOf(item: Map<String, String>): Quality {
     val platform = MusicPlatform.entries.firstOrNull { it.name == item["platform"] } ?: MusicPlatform.kuwo
     val configured = MoreSettings.qualityFor(platform)
     return when (platform) {
-        MusicPlatform.netease, MusicPlatform.qq, MusicPlatform.kugou, MusicPlatform.kuwo -> {
+        MusicPlatform.netease,
+        MusicPlatform.qq,
+        MusicPlatform.kugou,
+        MusicPlatform.kuwo,
+        MusicPlatform.kkbox,
+        -> {
             val qualities = item["qualities"].orEmpty()
                 .split(',')
                 .mapNotNull { Quality.fromValue(it.trim().ifEmpty { null }) }
@@ -253,20 +272,21 @@ internal fun effectivePlayQualityOf(item: Map<String, String>): Quality {
 }
 
 /**
- * 该平台「默认播放音质」可选档位（高→低，不含「自动」；**KKBOX 暂不提供**）。
+ * 该平台「默认播放音质」可选档位（高→低，不含「自动」）。
  *
  * 网易 `hr`、酷狗 `hash_high`（签名接口）都有真 Hi-Res；QQ（`hires` 被接口映射成 `lossless`）
- * 与酷我实测**无损封顶**；Qobuz 走自己的三档（无 128k）。
+ * 与酷我实测**无损封顶**；Qobuz 走自己的三档（无 128k）；
+ * KKBOX 四档齐全（128k 明文流，320k / FLAC 16 / FLAC 24 走票据解密）。
  */
 fun playQualityTiersOf(platform: MusicPlatform): List<Quality> = when (platform) {
-    MusicPlatform.netease, MusicPlatform.kugou ->
+    MusicPlatform.netease, MusicPlatform.kugou, MusicPlatform.kkbox ->
         listOf(Quality.hires, Quality.flac, Quality.k320k, Quality.k128k)
     MusicPlatform.qobuz -> listOf(Quality.hires, Quality.flac, Quality.k320k)
     MusicPlatform.qq, MusicPlatform.kuwo ->
         listOf(Quality.flac, Quality.k320k, Quality.k128k)
     MusicPlatform.apple -> listOf(Quality.atmos, Quality.hires, Quality.alac, Quality.aac256)
     // 本地文件没有「音质档位」可选：文件本身就是最终档，选档界面不出现
-    MusicPlatform.kkbox, MusicPlatform.local -> emptyList()
+    MusicPlatform.local -> emptyList()
 }
 
 /** 档位显示名：Qobuz / Apple 用自己的档位命名，其余用通用 [Quality.label] */
@@ -288,10 +308,14 @@ fun playQualityAutoLabelOf(platform: MusicPlatform): String = when (platform) {
     MusicPlatform.qobuz -> "自动（FLAC Hires Max）"
     // Apple 的「自动」= ALAC 超高解析，曲目没有该档时按 ALAC 无损 → AAC 256 降级
     MusicPlatform.apple -> "自动（ALAC 超高解析）"
-    MusicPlatform.netease, MusicPlatform.qq, MusicPlatform.kugou, MusicPlatform.kuwo ->
-        playQualityTiersOf(platform).firstOrNull()
-            ?.let { "自动（${playQualityLabelOf(platform, it)}）" }
-            ?: "自动（320k）"
+    MusicPlatform.netease,
+    MusicPlatform.qq,
+    MusicPlatform.kugou,
+    MusicPlatform.kuwo,
+    MusicPlatform.kkbox,
+    -> playQualityTiersOf(platform).firstOrNull()
+        ?.let { "自动（${playQualityLabelOf(platform, it)}）" }
+        ?: "自动（320k）"
     else -> "自动（320k）"
 }
 
@@ -350,8 +374,8 @@ suspend fun searchAlbumByPlatform(
         offset = (page - 1) * pageSize,
     )
     MusicPlatform.apple -> searchAppleAlbums(query, page = page, limit = pageSize)
-    MusicPlatform.kuwo, MusicPlatform.kkbox ->
-        searchAlbum(query, page = page, pageSize = pageSize)
+    MusicPlatform.kkbox -> searchKkboxAlbums(query, page = page, limit = pageSize)
+    MusicPlatform.kuwo -> searchAlbum(query, page = page, pageSize = pageSize)
     // 本地曲库不做云端专辑搜索
     MusicPlatform.local -> emptyList()
 }
@@ -388,9 +412,31 @@ suspend fun fetchAlbumSongsByPlatform(
             qobuzQualitySpec(a),
         )
     }
-    MusicPlatform.kuwo, MusicPlatform.kkbox -> {
+    MusicPlatform.kuwo -> {
         val r = getAlbumSongs(albumId)
         RepoAlbumSongs(r.songs, r.pub)
+    }
+    // KKBOX 只走自己的专辑接口：它的 encrypted_album_id 在酷我根本不存在
+    MusicPlatform.kkbox -> {
+        val sid = kkboxSidProvider()
+            ?: throw IllegalStateException("KKBOX 需要先在设置里登录账号")
+        val data = getKkboxAlbum(sid, albumId)
+        val album = mapAlbumToKkboxAlbum(data.album, data.songs)
+        RepoAlbumSongs(
+            songs = album.tracks.map { t ->
+                AlbumSong(
+                    id = "kkbox:${t.id}",
+                    name = t.title,
+                    artistName = t.artist,
+                    duration = t.duration,
+                    track = if (t.trackNumber > 0) t.trackNumber else null,
+                    albumArtist = album.artist,
+                    qualities = kkboxQualitiesOf(t.qualities),
+                    artistNames = listOf(t.artist).filter { it.isNotEmpty() },
+                )
+            },
+            pub = album.year,
+        )
     }
     MusicPlatform.apple -> getAppleAlbumSongs(albumId).let {
         RepoAlbumSongs(it.songs, it.pub)
@@ -419,10 +465,10 @@ suspend fun fetchArtistAvatarByPlatform(
         }
     MusicPlatform.kugou -> fetchKugouArtistInfo(artistId).avatar
     MusicPlatform.netease -> fetchNeteaseArtistAvatar(artistId)
-    MusicPlatform.kuwo -> fetchKuwoArtistAvatar(name)
+    MusicPlatform.kuwo -> fetchKuwoArtistAvatar(artistId, name)
     MusicPlatform.qobuz -> fetchQobuzArtistPicture(artistId)
     MusicPlatform.apple -> fetchAppleArtistAvatar(artistId, name)
-    MusicPlatform.kkbox -> ""
+    MusicPlatform.kkbox -> getKkboxArtistProfile(artistId)?.picture.orEmpty()
     MusicPlatform.local -> ""
 }
 
@@ -440,9 +486,10 @@ suspend fun fetchArtistBioByPlatform(
     MusicPlatform.netease -> fetchNeteaseArtistBio(artistId)
     MusicPlatform.qq -> fetchQQArtistBio(artistId)
     MusicPlatform.kugou -> fetchKugouArtistInfo(artistId).intro
-    MusicPlatform.kuwo -> fetchKuwoArtistBio(name)
+    MusicPlatform.kuwo -> fetchKuwoArtistBio(artistId, name)
     MusicPlatform.apple -> fetchAppleArtistBio(artistId, name)
-    MusicPlatform.qobuz, MusicPlatform.kkbox -> ""
+    MusicPlatform.kkbox -> getKkboxArtistProfile(artistId)?.bio.orEmpty()
+    MusicPlatform.qobuz -> ""
     MusicPlatform.local -> ""
 }
 
@@ -484,9 +531,23 @@ suspend fun searchArtistByPlatform(
     MusicPlatform.kugou -> searchKugouArtist(query)
     MusicPlatform.qobuz -> searchQobuzArtists(query)
     MusicPlatform.apple -> searchAppleArtists(query)
-    MusicPlatform.kuwo, MusicPlatform.kkbox -> searchArtist(query)
+    MusicPlatform.kkbox -> searchKkboxArtists(query)
+    MusicPlatform.kuwo -> searchArtist(query)
     MusicPlatform.local -> emptyList()
 }
+
+/**
+ * 歌手页的「先出一页」：拿到就立刻渲染，全量再慢慢补。
+ *
+ * 只有 KKBOX 有这条路 —— `v3/artist` 单请求就带回 20 首热门（约 2 秒），
+ * 而它的「全部歌曲」要靠搜索索引扫 800 条（约 7 秒）。先摆 20 首，
+ * 用户点开就有内容，剩下的在后台替换。其它平台的首屏本来就是一次请求，返回 null。
+ */
+suspend fun fetchArtistSongsQuick(platform: MusicPlatform, artistId: String): List<Song>? =
+    when (platform) {
+        MusicPlatform.kkbox -> getKkboxArtistProfile(artistId)?.hotSongs?.takeIf { it.isNotEmpty() }
+        else -> null
+    }
 
 /** 歌手单曲（按平台分发） */
 suspend fun fetchArtistSongsByPlatform(
@@ -508,17 +569,97 @@ suspend fun fetchArtistSongsByPlatform(
     }
     MusicPlatform.qobuz -> {
         val p = getQobuzArtistPage(artistId)
-        RepoArtistSongs(p.songs, p.songs.size, pageable = false)
+        RepoArtistSongs(p.songs, p.songs.size)
     }
-    MusicPlatform.kuwo, MusicPlatform.kkbox -> {
+    MusicPlatform.kkbox -> {
+        // `v3/artist` 的 hot_song 只有 20 首（写不出「共 N 首」），全量走搜索索引：
+        // 见 `KkboxArtistSongs` 里为什么这么取。
+        val r = getKkboxArtistSongs(artistId, page)
+        RepoArtistSongs(r.songs, r.total)
+    }
+    MusicPlatform.kuwo -> {
         val r = getArtistSongs(artistId, page)
         RepoArtistSongs(r.songs, r.total)
     }
     MusicPlatform.apple -> {
+        // 这里只给「一页」（100 首，见 `getAppleArtistSongs`）；`total` 就是这一页的真实条数，
+        // 因为 `view/top-songs` 没有总数。剩下的由 `fetchArtistSongsBatch` 续拉。
         val r = getAppleArtistSongs(artistId)
-        RepoArtistSongs(r.songs, r.total, pageable = false)
+        RepoArtistSongs(r.songs, r.total)
     }
-    MusicPlatform.local -> RepoArtistSongs(emptyList(), 0, pageable = false)
+    MusicPlatform.local -> RepoArtistSongs(emptyList(), 0)
+}
+
+/**
+ * 「全部单曲」页的续拉粒度（每批条数）；**0 = 该平台一次就给全，不需要续拉**。
+ *
+ * 数字都是实测的单请求硬上限，不是拍脑袋：酷我 `rn=1000`、网易 `limit` 200、QQ `num` 100、
+ * Apple `limit` 100、KKBOX 200、酷狗签名参数 `pagesize` 固定 30。
+ * Qobuz 没有歌手曲目分页接口（`artist/get` 一次返回全部），所以是 0。
+ */
+fun artistSongsBatchSize(platform: MusicPlatform): Int = when (platform) {
+    MusicPlatform.kuwo -> 1000
+    MusicPlatform.netease -> 200
+    MusicPlatform.qq -> 100
+    MusicPlatform.apple -> AppleArtistSongsPageLimit
+    MusicPlatform.kkbox -> 200
+    MusicPlatform.kugou -> 30
+    MusicPlatform.qobuz, MusicPlatform.local -> 0
+}
+
+/**
+ * 从 [offset] 起取一批歌手曲目（「全部单曲」页续拉用）。
+ *
+ * [offset] 必须是 [artistSongsBatchSize] 的整数倍 —— 酷狗 / KKBOX 只有页码、没有 offset，
+ * 是按 `offset / size` 换算的。调用方（详情页）从 0 开始、每次加「本批真实条数」推进，
+ * 所以这一点自然成立。
+ */
+suspend fun fetchArtistSongsBatch(
+    platform: MusicPlatform,
+    artistId: String,
+    offset: Int,
+): ArtistSongsBatch {
+    val size = artistSongsBatchSize(platform)
+    if (size <= 0) return ArtistSongsBatch(emptyList(), false)
+    val o = offset.coerceAtLeast(0)
+    return when (platform) {
+        MusicPlatform.kuwo -> {
+            val p = getArtistSongsRange(artistId, rn = size, pn = o / size)
+            ArtistSongsBatch(p.songs, artistSongsHasMore(o, p.songs.size, p.total, size))
+        }
+        MusicPlatform.netease -> {
+            val p = getNeteaseArtistSongsRange(artistId, limit = size, offset = o)
+            ArtistSongsBatch(p.songs, artistSongsHasMore(o, p.songs.size, p.total, size))
+        }
+        MusicPlatform.qq -> {
+            val p = getQQArtistSongsRange(artistId, num = size, begin = o)
+            ArtistSongsBatch(p.songs, artistSongsHasMore(o, p.songs.size, p.total, size))
+        }
+        MusicPlatform.kugou -> {
+            val p = getKugouArtistSongs(artistId, o / size + 1)
+            ArtistSongsBatch(p.songs, artistSongsHasMore(o, p.songs.size, p.total, size))
+        }
+        MusicPlatform.kkbox -> {
+            val p = getKkboxArtistSongs(artistId, o / size + 1, size)
+            ArtistSongsBatch(p.songs, artistSongsHasMore(o, p.songs.size, p.total, size))
+        }
+        MusicPlatform.apple -> {
+            val p = getAppleArtistSongsPage(artistId, offset = o, limit = size)
+            ArtistSongsBatch(p.songs, p.hasMore)
+        }
+        MusicPlatform.qobuz, MusicPlatform.local -> ArtistSongsBatch(emptyList(), false)
+    }
+}
+
+/**
+ * 还有没有下一批。
+ *
+ * 平台给了 `total` 就比 `total`；没给（0）就退化成「满批说明可能还有」。
+ * **空批一律算到底** —— 否则某个平台 total 虚高时会变成无限请求。
+ */
+internal fun artistSongsHasMore(offset: Int, got: Int, total: Int, size: Int): Boolean {
+    if (got <= 0) return false
+    return if (total > 0) offset + got < total else got >= size
 }
 
 /**
@@ -536,7 +677,8 @@ suspend fun fetchArtistAlbumsByPlatform(
     MusicPlatform.kugou -> getKugouArtistAlbums(artistId)
     MusicPlatform.qobuz -> getQobuzArtistPage(artistId).albums
     MusicPlatform.apple -> getAppleArtistAlbums(artistId)
-    MusicPlatform.kuwo, MusicPlatform.kkbox -> getArtistAlbums(artistId)
+    MusicPlatform.kkbox -> getKkboxArtistPage(artistId)?.albums ?: emptyList()
+    MusicPlatform.kuwo -> getArtistAlbums(artistId)
     MusicPlatform.local -> emptyList()
 }
 

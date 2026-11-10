@@ -1,7 +1,12 @@
 package com.annieplayer.annie_music.kt.core.audio.dsd
 
 /**
- * DoP（DSD over PCM）打包。
+ * DoP（DSD over PCM）打包 —— **线格式的参考实现**。
+ *
+ * 生产路径已经不在 Kotlin 里打包：`native-ffmpeg-demux.cpp` 的 `packDop()` 做同一件事
+ * （拆声道 → 位反转 → 打包一次完成），Kotlin 只转发字节。这里保留一份，是因为
+ * 帧布局本身是这个项目里**唯一不能靠听感验**的东西（标记写错与字节序写错，症状都是噪声），
+ * `DopPackerTest` 逐字节断言的就是规范。**改这里必须同时改 native 的 `packDop()`。**
  *
  * ## 帧结构
  *

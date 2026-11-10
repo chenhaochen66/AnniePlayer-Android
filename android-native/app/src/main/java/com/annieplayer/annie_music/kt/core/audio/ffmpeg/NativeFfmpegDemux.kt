@@ -38,8 +38,8 @@ internal object NativeFfmpegDemux {
     ): Long
 
     /**
-     * 打开成 **raw DSD**：只解封装，不解码。`read` 吐出的是**按字节交错**的 1-bit 流
-     * （每 2 字节 = 一个立体声时间采样），交给 DoP / Native 的 packer 再封装。
+     * 打开成 **raw DSD**：只解封装，不解码。`read` 吐出的是**已经封装好的线格式字节**
+     * （由 [configRawPack] 决定 DoP 6 B/帧还是 Native 8 B/帧）。
      *
      * 独立入口而不是给 [open] 加参数：JNI 签名一旦两边产物不一致，native 会按错位
      * 读参数直接崩 —— 这个坑踩过一次。
@@ -49,8 +49,28 @@ internal object NativeFfmpegDemux {
      */
     external fun openRaw(path: String, info: IntArray): Long
 
+    /** [configRawPack] 的 `mode`：不做封装，`read` 吐裸交错字节 */
+    const val PACK_OFF = 0
+
+    /** [configRawPack] 的 `mode`：DoP（24 bit 帧，标记 0x05/0xFA 逐帧交替） */
+    const val PACK_DOP = 1
+
+    /** [configRawPack] 的 `mode`：Native DSD（每声道 32 bit word） */
+    const val PACK_NATIVE = 2
+
     /**
-     * 读一段 PCM（交错小端）。
+     * 设置 raw DSD 的**线格式封装**，`openRaw` 之后、第一次 `read` 之前调用。
+     *
+     * 封装在 native 里做（拆声道 → 位反转 → 打包一次完成）：这样只是少一次跨语言往返
+     * 与一份 Kotlin 位运算；**更重要的是**它把 DoP 标记相位这种"跨块必须严格交替"
+     * 的易失状态留在唯一的持有者（demux handle）里，不再有第二个副本。
+     *
+     * 独立入口而不是给 [openRaw] 加参数：签名一变，老 APK 配新 so 会按错位读参数崩。
+     */
+    external fun configRawPack(handle: Long, mode: Int, bigEndian: Boolean)
+
+    /**
+     * 读一段 PCM（或封装后的 DSD 线格式字节）。
      *
      * @param out 目标缓冲，容量即单次上限
      * @param meta 回填 `[0] = 这段第一个样本的 pts（微秒）`

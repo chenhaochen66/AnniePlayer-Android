@@ -23,6 +23,7 @@ import com.annieplayer.annie_music.kt.data.resolveDownloadLyric
 import com.annieplayer.annie_music.kt.data.sources.apple.enrichAppleSong
 import com.annieplayer.annie_music.kt.data.sources.apple.AppleDownloader
 import com.annieplayer.annie_music.kt.data.sources.kkbox.KkboxDownloader
+import com.annieplayer.annie_music.kt.data.sources.kuwo.resolveKuwoArtistNames
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -107,7 +108,11 @@ suspend fun downloadOneAndRegister(
                 onProgress = onProgress,
             )
             // KKBOX 的高音质全是 DRM，必须走官方票据 + 解密，不能把直链丢给通用下载器
-            MusicPlatform.kkbox -> KkboxDownloader.download(song = song, onProgress = onProgress)
+            MusicPlatform.kkbox -> KkboxDownloader.download(
+                song = song,
+                quality = quality,
+                onProgress = onProgress,
+            )
             else -> {
                 val url = fetchDownloadUrlBySong(song, quality)
                 val extra = enrichSong(song)
@@ -198,7 +203,15 @@ class DownloadOrchestrator(
      */
     fun openActions(song: Song) {
         uiViewModel.setSongActionsVisible(true, song)
-        if (song.platform != MusicPlatform.apple) return
+        when (song.platform) {
+            MusicPlatform.apple -> enrichAppleArtists(song)
+            MusicPlatform.kuwo -> enrichKuwoArtists(song)
+            else -> Unit
+        }
+    }
+
+    /** Apple：搜索结果只有 `artistName` 合并串，补单曲详情拿 `relationships.artists`。 */
+    private fun enrichAppleArtists(song: Song) {
         // 已经带结构化歌手了（搜索/专辑接口现在都会带），就一次网络都不用发
         if (song.artistNames.isNotEmpty() || song.artistIds.isNotEmpty()) return
         scope.launch {
@@ -207,6 +220,26 @@ class DownloadOrchestrator(
                 enriched.artistIds != song.artistIds ||
                 enriched.albumId != song.albumId
             if (changed) uiViewModel.updateSongActionsSong(song.id, enriched)
+        }
+    }
+
+    /**
+     * 酷我：名字拆不准时按 id 补名字。
+     *
+     * `Pet Shop Boys&Years & Years` 是 2 个 id / 3 段名字（第二段自己带 `&`），
+     * 字符串层面无法判定哪个 `&` 是分隔符，只能拿 id 去 `artistinfo` 反查。
+     * 只在「id 数 > 1 且与名字数不等」时触发 —— 单个 id 的名字压根不拆（见 `kuwoArtistCredit`），
+     * 所以绝大多数歌一次请求都不发。
+     */
+    private fun enrichKuwoArtists(song: Song) {
+        if (song.artistIds.size <= 1) return
+        if (song.artistIds.size == song.artistNames.size) return
+        val ids = song.artistIds
+        scope.launch {
+            val names = runCatching { resolveKuwoArtistNames(ids) }.getOrDefault(emptyList())
+            if (names.size == ids.size) {
+                uiViewModel.updateSongActionsSong(song.id, song.copy(artistNames = names))
+            }
         }
     }
 
@@ -243,6 +276,7 @@ class DownloadOrchestrator(
                         // KKBOX 高音质全是 DRM：官方票据 + 解密，不经通用直链下载
                         KkboxDownloader.download(
                             song = song,
+                            quality = quality,
                             onProgress = { p -> downloadViewModel.updateProgress(songId, p * 100) },
                         )
                     } else {

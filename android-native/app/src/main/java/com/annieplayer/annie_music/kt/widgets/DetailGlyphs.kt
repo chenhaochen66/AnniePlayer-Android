@@ -45,6 +45,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -194,7 +195,18 @@ internal fun DetailErrorSolid(modifier: Modifier = Modifier, tint: Color = AppCo
  * 及 [CheckSquareIcon] 使用同一套笔画参数；勾形与 [CheckSquareIcon] 完全一致。
  */
 @Composable
-internal fun DetailCheckMark(modifier: Modifier = Modifier, tint: Color = AppColors.white) {
+internal fun DetailCheckMark(
+    modifier: Modifier = Modifier,
+    tint: Color = AppColors.white,
+    /**
+     * 0..1 的「书写进度」：按 `PathMeasure` 截取勾的前一段再画，1 = 完整。
+     *
+     * 多选用它做勾选动画（勾是一笔写上去的，不是整只淡入）。<= 0 时整段不绘制 ——
+     * 取消勾选时进度回落到 0，勾就是原路缩回去，不需要额外的显隐状态。
+     */
+    progress: Float = 1f,
+) {
+    if (progress <= 0f) return
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
@@ -204,8 +216,15 @@ internal fun DetailCheckMark(modifier: Modifier = Modifier, tint: Color = AppCol
             lineTo(w * 0.43f, h * 0.73f)
             lineTo(w * 0.78f, h * 0.28f)
         }
+        val drawPath = if (progress >= 1f) {
+            path
+        } else {
+            val measure = PathMeasure()
+            measure.setPath(path, false)
+            Path().also { measure.getSegment(0f, measure.length * progress, it, true) }
+        }
         drawPath(
-            path = path,
+            path = drawPath,
             color = tint,
             style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
         )

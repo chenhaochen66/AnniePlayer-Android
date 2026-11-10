@@ -11,7 +11,6 @@ import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Song
 import com.annieplayer.annie_music.kt.data.resolveArtist
 import com.annieplayer.annie_music.kt.data.sources.apple.enrichAppleSong
-import com.annieplayer.annie_music.kt.data.sources.kugou.fetchKugouSongAuthors
 import com.annieplayer.annie_music.kt.widgets.SongArtistRef
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -60,13 +59,6 @@ class DetailNavigator(
                 }
                 if (idx < 0 && enriched.artistIds.size == 1) idx = 0
                 if (idx >= 0) knownId = enriched.artistIds.getOrNull(idx)
-            }
-            // 酷狗的专辑/歌单都不带歌手 id：这里按歌曲 hash 逐曲补一次
-            // （接口单曲限，结果落盘缓存 → 二次及以后秒开）
-            if (knownId == null && song.platform == MusicPlatform.kugou) {
-                knownId = fetchKugouSongAuthors(song.id.removePrefix("kugou:"))
-                    .firstOrNull { it.name == artist.name }
-                    ?.id
             }
             val resolved = resolveArtist(
                 song.platform,
@@ -117,6 +109,8 @@ class DetailNavigator(
                     name = song.album ?: "",
                     artist = song.albumArtist ?: song.artist,
                     platform = song.platform,
+                    // 单歌手才敢认：合辑里「专辑歌手」不是单曲歌手，配错 id 会跳到别人页面
+                    artistId = song.artistIds.singleOrNull().orEmpty(),
                 ),
             ),
         )

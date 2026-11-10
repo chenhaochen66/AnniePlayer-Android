@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.annieplayer.annie_music.kt.core.platform.MediaStoreScan
+import com.annieplayer.annie_music.kt.data.favorites.FavoriteStore
 import com.annieplayer.annie_music.kt.data.local.LocalFastProbe
 import com.annieplayer.annie_music.kt.data.local.LocalHeaderProbe
 import com.annieplayer.annie_music.kt.data.local.LocalLibraryStore
@@ -316,6 +317,11 @@ class LocalLibraryViewModel : ViewModel() {
                 runCatching { MediaStoreScan.deleteFromMediaStore(path) }
                 runCatching { File(path).delete() }
                 runCatching { LocalLibraryStore.coverFileFor(path).delete() }
+                // 删了文件 = 用户不要这首歌了：把收藏与自建歌单里的引用一起撤掉。
+                // 不撤的话「我喜欢」会留一条点不开的幽灵（曲库和磁盘都没有这个文件了），
+                // 而且列表行没有爱心，用户想移除它还得先去播放页。
+                // 只从曲库移除（`deleteFile = false`）时不撤 —— 文件还在，收藏仍然有效。
+                runCatching { FavoriteStore.removeLocalSong(path) }
             }
             // 「最近播放」里那条要走，否则留下一条点不开的死链
             LocalLibraryStore.removeRecentPlay(path)

@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.annieplayer.annie_music.kt.data.local.LocalLibraryStore
 import com.annieplayer.annie_music.kt.data.local.LocalTrackMeta
 import com.annieplayer.annie_music.kt.data.local.albumGroupKey
-import com.annieplayer.annie_music.kt.data.local.albumYearOf
+import com.annieplayer.annie_music.kt.data.local.localAlbumDateOf
 import com.annieplayer.annie_music.kt.data.local.artistGroupKeys
 import com.annieplayer.annie_music.kt.data.local.localAlbumType
 import com.annieplayer.annie_music.kt.data.local.localAlphabetComparator
@@ -184,7 +184,8 @@ private data class ArtistAlbum(
     val title: String,
     val artist: String,
     val tracks: List<LocalTrackMeta>,
-    val year: Int?,
+    /** 发行日期（`yyyy[-MM[-dd]]`）；没有日期为 null */
+    val date: String?,
 ) {
     val count: Int get() = tracks.size
 
@@ -195,7 +196,7 @@ private data class ArtistAlbum(
  * **全部专辑**（歌手详情 → 「专辑」段的「全部 ›」）。
  *
  * 2 列网格，卡片与专辑列表页 / overview 横滑架同一个 [LocalAlbumGridCard]
- * （N 首 · 类型 · 年份）；排序行支持 发行时间 / 专辑名 / 歌曲数 + 升降序。
+ * （N 首 · 类型 · 发行日期）；排序行支持 发行时间 / 专辑名 / 歌曲数 + 升降序。
  */
 @Composable
 fun LocalArtistAlbumsScreen(
@@ -217,7 +218,7 @@ fun LocalArtistAlbumsScreen(
                     title = key.substringBefore(" · "),
                     artist = key.substringAfter(" · ", list.first().artistDisplay),
                     tracks = list,
-                    year = albumYearOf(list),
+                    date = localAlbumDateOf(list),
                 )
             }
     }
@@ -234,15 +235,16 @@ fun LocalArtistAlbumsScreen(
             ArtistAlbumSort.byName -> albums.sortedWith { a, b -> dir(text.compare(a.title, b.title)) }
             ArtistAlbumSort.songCount -> albums.sortedWith { a, b -> dir(a.count.compareTo(b.count)) }
             ArtistAlbumSort.released -> albums.sortedWith { a, b ->
-                val ya = a.year
-                val yb = b.year
+                // 日期字符串字典序即时间序；`"2023" < "2023-05-12"`，只有年的视为更旧
+                val da = a.date
+                val db = b.date
                 when {
-                    // 没年份的永远排最后，不随升降序翻面
-                    ya == null && yb == null -> dir(text.compare(a.title, b.title))
-                    ya == null -> 1
-                    yb == null -> -1
-                    ya == yb -> dir(text.compare(a.title, b.title))
-                    else -> dir(ya.compareTo(yb))
+                    // 没日期的永远排最后，不随升降序翻面
+                    da == null && db == null -> dir(text.compare(a.title, b.title))
+                    da == null -> 1
+                    db == null -> -1
+                    da == db -> dir(text.compare(a.title, b.title))
+                    else -> dir(da.compareTo(db))
                 }
             }
         }
@@ -312,7 +314,7 @@ fun LocalArtistAlbumsScreen(
                                 count = album.count,
                                 onClick = { onOpenAlbum(album.key) },
                                 modifier = Modifier.height(cardHeight),
-                                year = album.year,
+                                date = album.date,
                                 type = localAlbumType(album.count),
                             )
                         }

@@ -3,277 +3,137 @@ package com.annieplayer.annie_music.kt.data.sources.kugou
 import com.annieplayer.annie_music.kt.data.model.MusicPlatform
 import com.annieplayer.annie_music.kt.data.model.Playlist
 import com.annieplayer.annie_music.kt.data.model.Song
-import com.annieplayer.annie_music.kt.data.network.httpGetJson
 import com.annieplayer.annie_music.kt.data.sources.common.decodeHtmlEntities
-import com.annieplayer.annie_music.kt.data.sources.common.firstTruthy
-import com.annieplayer.annie_music.kt.data.sources.common.signParams
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlin.math.ceil
-import kotlin.math.floor
 
 // ================================================================================================
-// 酷狗歌单入口（GCID 路径 / 数字 id 路径）
+// 酷狗歌单入口（gcid 短码 / 数字 specialid / 纯数字 id）
 // ================================================================================================
+//
+// 取数只有一条路，见 [fetchKugouPlaylistDetail]：`get_other_list_file_nofilt` 的响应里
+// - `list_info` 给歌单名 / 封面 / 创建者 / 曲目数，
+// - `songs[]` 给曲目，且每首都带 **`singerinfo[]`（歌手 id / 名 / 头像）**、纯歌名、
+//   `album_id` + `albuminfo.name` + `cover`。
+//
+// 所以这里只做「data → Playlist」的映射，不碰网络；映射全是纯函数，可离线单测。
+//
+// ## 音质
+// 这条接口**不提供分档**（没有 `320hash` / `sqhash` / `*filesize`，`bitrate` 恒 128），
+// 所以 [getKuGouQualities] 只会给出 128k，必须靠 [enrichKugouQualities] 按 hash 批量补
+// `audio_info`。补不到就退回 128k，不影响播放 —— 与老接口的处境一样（Hi-Res 一直靠补）。
 
-private fun parseSongDuration(durRaw: Any?): Int {
-    if (durRaw is Number) {
-        if (durRaw.toDouble() > 10000) {
-            return floor(durRaw.toDouble() / 1000).toInt()
-        }
-        return durRaw.toInt()
+/** `list_info` 里能落进现有模型的字段。 */
+internal data class KugouPlaylistMeta(
+    val name: String,
+    val cover: String,
+    val creator: String,
+)
+
+/**
+ * 获取酷狗歌单；失败返回 null。
+ *
+ * [input] 可以是四种形态，都归一成 `(global_collection_id, specialid)` 里的一个：
+ * - `collection_…`（已经是 global_collection_id，直接用）
+ * - `gcid_xxx` / 长串 → [decodeGcid] 换 `collection_…`
+ * - 纯数字 → 直接当 `specialid`
+ */
+suspend fun getKugouPlaylist(input: String): Playlist? {
+    val raw = input.trim()
+    if (raw.isEmpty()) return null
+
+    val isCollectionId = raw.startsWith("collection_")
+    val looksLikeGcid = !isCollectionId &&
+        (raw.contains("gcid_") || (!kugouReDigits.containsMatchIn(raw) && raw.length > 15))
+    val globalCollectionId = when {
+        isCollectionId -> raw
+        looksLikeGcid -> runCatching {
+            decodeGcid(kugouReGcid.find(raw)?.groupValues?.getOrNull(1) ?: raw)
+        }.getOrNull().orEmpty()
+        else -> ""
     }
-    return 0
+    val specialId = if (isCollectionId || looksLikeGcid) "" else raw.replace(kugouReNonDigit, "")
+    if (globalCollectionId.isEmpty() && specialId.isEmpty()) return null
+
+    val data = fetchKugouPlaylistDetail(globalCollectionId, specialId) ?: return null
+    val songs = enrichKugouQualities(kugouPlaylistSongsOf(data))
+    if (songs.isEmpty()) return null
+    val meta = kugouPlaylistMetaOf(data)
+    return Playlist(
+        id = input,
+        name = meta.name,
+        creator = meta.creator,
+        cover = meta.cover,
+        platform = MusicPlatform.kugou,
+        songs = songs,
+        songCount = songs.size,
+    )
 }
 
-suspend fun getKugouPlaylist(input: String): Playlist? {
-    try {
-        var songs: List<Song> = emptyList()
-        var name = ""
-        var cover = ""
+/** `data.list_info` → 歌单名 / 封面 / 创建者；缺什么给什么默认值。 */
+internal fun kugouPlaylistMetaOf(data: Map<String, Any?>): KugouPlaylistMeta {
+    val info = kugouAsMap(data["list_info"]) ?: emptyMap()
+    return KugouPlaylistMeta(
+        name = decodeHtmlEntities(kugouFirstNonEmpty(listOf(info["name"], "酷狗歌单"))),
+        // `pic` 是 `{size}` 模板；没有就退回空串（UI 侧有唱片占位）
+        cover = kugouFirstNonEmpty(listOf(info["pic"], info["cover"])).replace("{size}", "800"),
+        creator = decodeHtmlEntities((info["list_create_username"] ?: "").toString()),
+    )
+}
 
-        // GCID 路径
-        if (input.contains("gcid_") ||
-            (!kugouReDigits.containsMatchIn(input) && input.length > 15)
-        ) {
-            val gcidMatch = kugouReGcid.find(input)
-            val gcid = (gcidMatch?.groupValues?.getOrNull(1) ?: input).lowercase()
-            val globalId = decodeGcid(gcid)
+/** `data.songs[]` → [Song]；单条缺 hash / 歌名的直接丢。 */
+internal fun kugouPlaylistSongsOf(data: Map<String, Any?>): List<Song> {
+    val list = data["songs"] as? List<*> ?: return emptyList()
+    return list.mapNotNull { it as? Map<*, *> }.mapNotNull(::kugouPlaylistSongOf)
+}
 
-            coroutineScope {
-                val infoDeferred = async { fetchPlaylistInfo(globalId) }
-                val pageDeferred = async { fetchSongPage(globalId, 1, 300) }
-                val info = infoDeferred.await()
-                val firstPage = pageDeferred.await()
+/**
+ * 单条曲目 → [Song]。
+ *
+ * `singerinfo[]` 是这条接口相对老接口的核心差异：**多歌手的 id 一并给到**，
+ * 所以 `artistIds` 从此不再是空的（老接口连歌手字段都没有）。
+ * id 与 name 成对过滤 —— 只有一个时不完整，宁可整组不要，也不留半截映射。
+ */
+internal fun kugouPlaylistSongOf(item: Map<*, *>): Song? {
+    val hash = (item["hash"] ?: "").toString().uppercase()
+    if (hash.isEmpty()) return null
+    val title = decodeHtmlEntities((item["name"] ?: "").toString())
+    if (title.isEmpty()) return null
 
-                name = info.name
-                cover = info.cover
-                val rawSongs = ArrayList<Any?>()
-                val infoRaw = firstPage["info"]
-                if (infoRaw is List<*>) {
-                    for (e in infoRaw) rawSongs.add(e)
-                }
-                val totalRaw = firstPage["total"]
-                val total = if (totalRaw is Number) totalRaw.toInt() else 0
-                val pages = ceil(total / 300.0).toInt()
-                if (pages > 1) {
-                    val rest = coroutineScope {
-                        (2..pages).map { p ->
-                            async { fetchSongPage(globalId, p, 300) }
-                        }.awaitAll()
-                    }
-                    for (page in rest) {
-                        val pageInfo = page["info"]
-                        if (pageInfo is List<*>) {
-                            for (e in pageInfo) rawSongs.add(e)
-                        }
-                    }
-                }
+    val (names, ids) = kugouPlaylistSingers(item["singerinfo"])
+    val album = item["albuminfo"] as? Map<*, *>
+    val albumName = decodeHtmlEntities(
+        kugouFirstNonEmpty(listOf(album?.get("name"), item["album_name"])),
+    )
+    val albumId = (item["album_id"] ?: "").toString().takeIf { it.isNotEmpty() && it != "0" }
+    val cover = kugouFirstNonEmpty(listOf(item["cover"], album?.get("cover")))
+        .replace("{size}", "800")
+    val millis = (item["timelen"] as? Number)?.toLong() ?: 0L
 
-                // CDN 补充封面与专辑名
-                val enrichMap = HashMap<String, KugouCdnEnrich>()
-                try {
-                    val ct2 = System.currentTimeMillis().toString()
-                    val params2 = linkedMapOf(
-                        "appid" to "1058",
-                        "clienttime" to ct2,
-                        "clientver" to "20000",
-                        "global_collection_id" to globalId,
-                        "mid" to ct2,
-                        "module" to "playlist",
-                        "page" to "1",
-                        "pagesize" to "300",
-                        "specialid" to "0",
-                        "srcappid" to "2919",
-                        "type" to "0",
-                    )
-                    val sig2 = signParams(params2, kugouKeyB, "")
-                    val qs2 = params2.entries.joinToString("&") {
-                        "${it.key}=${it.value}"
-                    }
-                    val cdnData = httpGetJson(
-                        "https://pubsongscdn.kugou.com/v2/get_other_list_file" +
-                            "?$qs2&signature=$sig2",
-                        headers = mapOf(
-                            "User-Agent" to
-                                "Mozilla/5.0 (iPhone; CPU iPhone OS 11_0)",
-                            "Referer" to
-                                "https://m3ws.kugou.com/share/index.php",
-                        ),
-                    )
-                    if (kugouNumEq(cdnData["error_code"], 0)) {
-                        val cdnDataField = cdnData["data"]
-                        val cdnInfo = if (cdnDataField is Map<*, *>) {
-                            cdnDataField["info"]
-                        } else {
-                            null
-                        }
-                        if (cdnInfo is List<*>) {
-                            for (s in cdnInfo) {
-                                if (s !is Map<*, *>) continue
-                                val h = (s["hash"] ?: "").toString()
-                                if (h.isNotEmpty()) {
-                                    val albuminfo = s["albuminfo"]
-                                    enrichMap[h.uppercase()] = KugouCdnEnrich(
-                                        cover = (s["cover"] ?: "").toString(),
-                                        albumName = (if (albuminfo is Map<*, *>) {
-                                            albuminfo["name"] ?: ""
-                                        } else {
-                                            ""
-                                        }).toString(),
-                                        publishDate = (s["publish_date"] ?: "")
-                                            .toString(),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } catch (_: Throwable) {
-                    // 与 Dart 一致：忽略
-                }
+    return Song(
+        id = "kugou:$hash",
+        title = title,
+        artist = names.joinToString(" / ").ifEmpty { "未知歌手" },
+        cover = cover,
+        album = albumName.ifEmpty { null },
+        albumId = albumId,
+        duration = (millis / 1000L).toInt(),
+        platform = MusicPlatform.kugou,
+        playUrl = "",
+        qualities = getKuGouQualities(item),
+        qualitySizes = getKuGouQualitySizes(item),
+        releaseDate = (item["publish_date"] ?: "").toString().ifEmpty { null },
+        albumArtist = names.firstOrNull(),
+        artistNames = names,
+        artistIds = ids,
+    )
+}
 
-                val built = ArrayList<Song>()
-                for (s in rawSongs) {
-                    val m = kugouAsMap(s) ?: continue
-                    val hash = (m["hash"] ?: "").toString().uppercase()
-                    val enriched = enrichMap[hash]
-                    val filename = m["filename"] as? String
-                    val artist = decodeHtmlEntities(
-                        kugouFirstNonEmpty(
-                            listOf(
-                                m["singername"],
-                                filename?.split(" - ")?.firstOrNull(),
-                                "未知歌手",
-                            ),
-                        ),
-                    )
-                    val parts = filename?.split(" - ")
-                    val titlePart = if (parts != null && parts.size > 1) {
-                        kugouReExt.replace(parts[1], "")
-                    } else {
-                        null
-                    }
-                    val transParam = m["trans_param"]
-                    built.add(
-                        Song(
-                            id = "kugou:${m["hash"] ?: ""}",
-                            title = decodeHtmlEntities(
-                                kugouFirstNonEmpty(
-                                    listOf(m["songname"], titlePart, "未知歌曲"),
-                                ),
-                            ),
-                            artist = artist,
-                            cover = kugouFirstNonEmpty(
-                                listOf(
-                                    m["cover"],
-                                    enriched?.cover,
-                                    if (transParam is Map<*, *>) {
-                                        transParam["union_cover"]
-                                    } else {
-                                        null
-                                    },
-                                ),
-                            ).replace("{size}", "800"),
-                            album = decodeHtmlEntities(
-                                kugouFirstNonEmpty(
-                                    listOf(m["album_name"], enriched?.albumName),
-                                ),
-                            ),
-                            albumId = kugouOptString(m["album_id"]),
-                            duration = parseSongDuration(
-                                firstTruthy(
-                                    listOf(m["timelen"], m["duration"]),
-                                ),
-                            ),
-                            platform = MusicPlatform.kugou,
-                            playUrl = "",
-                            qualities = getKuGouQualities(m),
-                            qualitySizes = getKuGouQualitySizes(m),
-                            releaseDate = kugouOptString(
-                                firstTruthy(
-                                    listOf(
-                                        enriched?.publishDate,
-                                        m["_publish_date"],
-                                    ),
-                                ),
-                            ),
-                            albumArtist = artist,
-                        ),
-                    )
-                }
-                songs = built
-            }
-        } else {
-            // 数字 ID 路径
-            val pid = kugouReNonDigit.replace(input, "")
-            val page = fetchSpecialPage(pid)
-            name = page.name
-            cover = page.cover
-            val built = ArrayList<Song>()
-            for (s in page.songs) {
-                val m = kugouAsMap(s) ?: continue
-                val filename = m["filename"] as? String
-                val artist = decodeHtmlEntities(
-                    kugouFirstNonEmpty(
-                        listOf(
-                            m["singername"],
-                            filename?.split(" - ")?.firstOrNull(),
-                            "未知歌手",
-                        ),
-                    ),
-                )
-                val parts = filename?.split(" - ")
-                val titlePart = if (parts != null && parts.size > 1) {
-                    kugouReExt.replace(parts[1], "")
-                } else {
-                    null
-                }
-                built.add(
-                    Song(
-                        id = "kugou:${m["hash"] ?: ""}",
-                        title = decodeHtmlEntities(
-                            kugouFirstNonEmpty(
-                                listOf(m["songname"], titlePart, "未知歌曲"),
-                            ),
-                        ),
-                        artist = artist,
-                        cover = kugouFirstNonEmpty(listOf(m["cover"], m["_cover"]))
-                            .replace("{size}", "800"),
-                        album = decodeHtmlEntities(
-                            kugouFirstNonEmpty(
-                                listOf(m["album_name"], m["_album_name"]),
-                            ),
-                        ),
-                        albumId = kugouOptString(m["album_id"]),
-                        duration = parseSongDuration(
-                            firstTruthy(listOf(m["timelen"], m["duration"])),
-                        ),
-                        platform = MusicPlatform.kugou,
-                        playUrl = "",
-                        qualities = getKuGouQualities(m),
-                        qualitySizes = getKuGouQualitySizes(m),
-                        releaseDate = kugouOptString(m["_publish_date"]),
-                        albumArtist = artist,
-                    ),
-                )
-            }
-            songs = built
+/** `singerinfo[]` → (`names`, `ids`)，两个列表等长且下标对应。 */
+internal fun kugouPlaylistSingers(raw: Any?): Pair<List<String>, List<String>> {
+    val list = raw as? List<*> ?: return emptyList<String>() to emptyList()
+    val pairs = list.mapNotNull { it as? Map<*, *> }
+        .map {
+            decodeHtmlEntities((it["name"] ?: "").toString()) to (it["id"] ?: "").toString()
         }
-
-        if (songs.isEmpty()) return null
-        // 歌单接口不含 Hi-Res → 批量补 `audio_info`（`hash_high`/`filesize_high`）
-        songs = enrichKugouQualities(songs)
-        return Playlist(
-            id = input,
-            name = name,
-            creator = "",
-            cover = cover,
-            platform = MusicPlatform.kugou,
-            songs = songs,
-            songCount = songs.size,
-        )
-    } catch (_: Throwable) {
-        return null
-    }
+        .filter { (name, id) -> name.isNotEmpty() && id.isNotEmpty() && id != "0" }
+    return pairs.map { it.first } to pairs.map { it.second }
 }

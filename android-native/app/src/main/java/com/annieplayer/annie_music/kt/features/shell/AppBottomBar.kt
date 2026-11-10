@@ -33,14 +33,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -48,7 +46,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -65,12 +62,12 @@ import com.annieplayer.annie_music.kt.ui.theme.AppEasing
 import com.annieplayer.annie_music.kt.ui.theme.AppFontSize
 import com.annieplayer.annie_music.kt.ui.theme.AppIconSize
 import com.annieplayer.annie_music.kt.ui.theme.AppRadius
-import com.annieplayer.annie_music.kt.ui.theme.AppShadow
 import com.annieplayer.annie_music.kt.ui.theme.AppSize
 import com.annieplayer.annie_music.kt.ui.theme.AppSpacing
 import com.annieplayer.annie_music.kt.ui.theme.LocalCoverThemePalette
 import com.annieplayer.annie_music.kt.widgets.BarGlassSpec
 import com.annieplayer.annie_music.kt.widgets.LocalLibraryGlyph
+import com.annieplayer.annie_music.kt.widgets.MediaLibraryGlyph
 import com.annieplayer.annie_music.kt.widgets.MiniProgressBar
 import com.annieplayer.annie_music.kt.widgets.MovingText
 import com.annieplayer.annie_music.kt.widgets.PlaylistParseGlyph
@@ -267,17 +264,17 @@ fun AppBottomBar(
                     .alpha(1f - morph),
                 icon = { tint -> HomeGlyph(modifier = Modifier.size(AppIconSize.icon22), tint = tint) },
             )
-            // 主页右侧：歌单解析 tab（左侧成组排列；迷你态随其它 tab 一起淡出并禁点，
-            // 避免淡出后残留的透明热区截走点击）
+            // 主页右侧：收藏媒体库 tab（图标是「书页 + 书身 + 音符」的资料库形，
+            // 与右侧本地曲库的「书身 + 音符」刻意区分）
             BottomBarTab(
-                selected = selectedTab == AppTab.PlaylistParse,
+                selected = selectedTab == AppTab.Favorites,
                 enabled = !isMiniPlayer,
-                onClick = { onSelectTab(AppTab.PlaylistParse) },
+                onClick = { onSelectTab(AppTab.Favorites) },
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = BottomBarSidePadding + AppSize.bottomBarTabHitSize)
                     .alpha(1f - morph),
-                icon = { tint -> PlaylistParseGlyph(modifier = Modifier.size(AppIconSize.icon22), tint = tint) },
+                icon = { tint -> MediaLibraryGlyph(modifier = Modifier.size(AppIconSize.icon22), tint = tint) },
             )
             BottomBarTab(
                 selected = selectedTab == AppTab.Library,
@@ -324,14 +321,6 @@ private fun BottomBarCover(
     Box(
         modifier = modifier
             .size(AppSize.bottomBarCoverSize)
-            .dropShadow(
-                shape = coverShape,
-                shadow = Shadow(
-                    radius = AppShadow.blurXl,
-                    color = AppColors.black.copy(alpha = 0.50f),
-                    offset = DpOffset(x = 0.dp, y = AppShadow.headerOffsetY),
-                ),
-            )
             .clip(coverShape)
             .background(AppColors.whiteA03)
             .border(AppBorder.thin, AppColors.whiteA15, coverShape)
@@ -430,16 +419,9 @@ private fun BottomBarGlass(
 
     Box(
         modifier = modifier
-            // LunaBeat `am4.f`：radius 24dp, offset (0, 4dp), black 12%
-            .dropShadow(
-                shape = shape,
-                shadow = Shadow(
-                    radius = 24.dp,
-                    color = AppColors.black.copy(alpha = 0.12f),
-                    offset = DpOffset(x = 0.dp, y = 4.dp),
-                ),
-            )
-            // 玻璃杯壁：整层内容都过一遍边缘折射，但只在距边 24dp 以内生效
+            // 投影（LunaBeat `am4.f`：radius 24dp / offset (0,4dp) / black 12%）已全局移除：
+            // 它是 RenderEffect，每次都渲染屏 + 模糊 + resolve，单层 1–2 ms/帧
+            // 玻璃形状裁剪（原 `refractionGlass` 的 AGSL 折射同样已移除，只剩 clip）
             .refractionGlass(
                 shape = shape,
                 height = BarGlassSpec.REFRACTION_HEIGHT_DP.dp,
